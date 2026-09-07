@@ -286,4 +286,8 @@ void db_init_room(int h) {
    * added by ALTER for tables created before it existed; the duplicate-column
    * error on a table that already has it is ignored (db_exec never throws). */
   db_exec(h, "ALTER TABLE messages ADD COLUMN read_sent INTEGER NOT NULL DEFAULT 0", 0);
+  /* Whether this message carries an `xr:` field (9.2.1): its content is
+   * partly obfuscated, so it renders tappable with a tip. ALTER for older
+   * tables; the duplicate-column error is ignored (db_exec never throws). */
+  db_exec(h, "ALTER TABLE messages ADD COLUMN obf INTEGER NOT NULL DEFAULT 0", 0);
 }

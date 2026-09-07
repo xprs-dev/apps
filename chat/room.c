@@ -144,7 +144,7 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
                      const char *sender, unsigned long long ts, const char *body,
                      const char *parent, const char *via, const char *auth,
                      int enc, const char *rid, const char *status, int sys,
-                     int priv) {
+                     int priv, int obf) {
   char t[8]; fmt_time_at(t, ts);
   /* 1400: a 900-byte body doubles under escaping in the worst case, and the
    * old 640 silently truncated the JSON, which the host then refused. */
@@ -166,8 +166,23 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
   if (enc) s_cat(m, ",\"enc\":true", sizeof(m));
   else if (id[0] != '#' && !sys) s_cat(m, ",\"plain\":true", sizeof(m));
   if (priv) s_cat(m, ",\"private\":true", sizeof(m));
+  if (obf) s_cat(m, ",\"obfuscated\":true,\"tip\":\"Tap to reveal hidden text\"", sizeof(m));
   if (sys) s_cat(m, ",\"sys\":true", sizeof(m));
   s_cat(m, ",\"backfill\":true}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+
+/* Reveal a redacted message's text in place, for the OPEN room only (9.2.1).
+ * Transient: the stored row keeps its bars, so the message re-locks on the next
+ * open -- the reader always taps, only the passphrase persists. */
+void room_reveal(const char *mid, const char *text) {
+  if (!mid || !mid[0] || !g_open[0]) return;
+  static char m[1400];
+  s_cpy(m, "{\"type\":\"ui.convo.reveal\",\"id\":\"", sizeof(m));
+  jesc(m, sizeof(m), g_open);
+  s_cat(m, "\",\"mid\":\"", sizeof(m)); jesc(m, sizeof(m), mid);
+  s_cat(m, "\",\"text\":\"", sizeof(m)); jesc(m, sizeof(m), text ? text : "");
+  s_cat(m, "\"}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
 
@@ -351,7 +366,7 @@ int room_admit(const room_msg_t *m) {
                  m->ts ? m->ts : hal_time_epoch(), m->body,
                  m->parent ? m->parent : "", m->via ? m->via : "",
                  m->auth ? m->auth : "", m->enc, m->rid ? m->rid : "",
-                 m->status ? m->status : "", m->sys, priv);
+                 m->status ? m->status : "", m->sys, priv, m->obf);
         /* The row is already stored (read_sent=0), so flushing acks it now --
          * the page engine is the one that knows it is being read on screen. */
         room_flush_reads(h);
@@ -371,8 +386,9 @@ int room_admit(const room_msg_t *m) {
     pj_str(&p, m->mid); pj_str(&p, m->dir); pj_str(&p, sender); pj_int(&p, (long long)ts);
     pj_str(&p, body); pj_str(&p, parent); pj_str(&p, via); pj_str(&p, auth);
     pj_int(&p, m->enc ? 1 : 0); pj_str(&p, rid); pj_str(&p, status); pj_int(&p, m->sys ? 1 : 0);
-    if (db_exec(h, "INSERT INTO messages(mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys)"
-                   " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", pj_done(&p)) != 0) return -1; }
+    pj_int(&p, m->obf ? 1 : 0);
+    if (db_exec(h, "INSERT INTO messages(mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys,obf)"
+                   " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", pj_done(&p)) != 0) return -1; }
 
   int created = room_ensure(m->room, m->title);
   int count = (!m->replay && in && !m->sys && !s_eq(m->room, g_open)) ? 1 : 0;
@@ -401,7 +417,7 @@ int room_admit(const room_msg_t *m) {
   emit_upsert(m->room, !m->replay, 0);
   int priv = (m->room[0] != '#') && room_is_private(m->room);
   emit_msg(m->room, m->mid, m->dir, sender, ts, body, parent, via, auth,
-           m->enc, rid, status, m->sys, priv);
+           m->enc, rid, status, m->sys, priv, m->obf);
   if (!m->replay) {
     if (created > 0 || !s_eq(g_top, m->room)) room_rail();
     if (in && !m->sys) notify_msg(m->room, sender, body, m->mid);
@@ -432,7 +448,7 @@ static void emit_tail(const char *id, int h) {
   int limit = TAIL, n = -2;
   while (limit >= 12) {
     pj_t p; pj_init(&p); pj_int(&p, limit);
-    n = db_query(h, "SELECT mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys FROM "
+    n = db_query(h, "SELECT mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys,obf FROM "
                     "(SELECT * FROM messages ORDER BY seq DESC LIMIT ?) ORDER BY seq ASC",
                  pj_done(&p), g_q, sizeof(g_q));
     if (n != -2) break;
@@ -452,7 +468,8 @@ static void emit_tail(const char *id, int h) {
     jstr(row, "auth", auth, sizeof(auth)); jstr(row, "rid", rid, sizeof(rid));
     jstr(row, "status", status, sizeof(status));
     emit_msg(id, mid, dir, sender, (unsigned long long)jint(row, "ts"), body, parent, via,
-             auth, (int)jint(row, "enc"), rid, status, (int)jint(row, "sys"), priv);
+             auth, (int)jint(row, "enc"), rid, status, (int)jint(row, "sys"), priv,
+             (int)jint(row, "obf"));
   }
   /* Hearts on those bubbles. */
   pj_t p; pj_init(&p); pj_int(&p, limit);

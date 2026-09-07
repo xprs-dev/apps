@@ -55,6 +55,8 @@ extern int32_t (*g_hk_broadcast)(const char*,uint32_t,const char*,uint32_t,const
 extern int32_t (*g_hk_read)(const char*,uint32_t);
 extern int32_t (*g_hk_groups)(char*,uint32_t);
 extern int32_t (*g_hk_roster)(const char*,uint32_t,char*,uint32_t);
+extern int32_t (*g_hk_unlock)(const char*,uint32_t,const char*,uint32_t);
+extern int32_t (*g_hk_redact)(const char*,uint32_t,const char*,uint32_t,const char*,uint32_t);
 
 /* the section-5 identifier, from the wapp's own xprs.c */
 void xprs_id(const char *wire, unsigned len, char out[7]);
@@ -329,6 +331,66 @@ static int32_t hk_roster(const char* gid,uint32_t gl,char* o,uint32_t cap){
   memcpy(o,buf,n); return n;
 }
 
+/* ── §9.2.1 obfuscation: a scripted stand-in core (no crypto in C) ──────
+ * hk_unlock models the core's answer to a tap: an empty passphrase tries what
+ * the sim has "remembered", a supplied one is checked and remembered if right;
+ * the answer is pushed on xprs.unlock, exactly as the async core would. The
+ * real PBKDF2/AES is proven in the Dart test; here we prove the wapp's tap →
+ * prompt → reveal → remember behaviour. */
+#define BAR "\xe2\x96\x88"                 /* █ U+2588 */
+static char g_sim_correct[64] = "";        /* the passphrase that opens it */
+static char g_sim_stored[64]  = "";        /* what the "core" has remembered */
+static char g_sim_text[256]   = "";        /* the revealed plaintext */
+
+static int32_t hk_unlock(const char* id,uint32_t il,const char* pass,uint32_t pl){
+  int ok=0;
+  if(pl>0){
+    char p[64]={0}; memcpy(p, pass, pl<63?pl:63);
+    if(!strcmp(p,g_sim_correct)){ ok=1; snprintf(g_sim_stored,sizeof g_sim_stored,"%s",p); }
+  } else if(g_sim_stored[0] && !strcmp(g_sim_stored,g_sim_correct)){
+    ok=1;                                   /* opened silently by a stored one */
+  }
+  char row[400];
+  if(ok) snprintf(row,sizeof row,"{\"id\":\"%.*s\",\"ok\":true,\"text\":\"%s\"}",(int)il,id,g_sim_text);
+  else   snprintf(row,sizeof row,"{\"id\":\"%.*s\",\"ok\":false}",(int)il,id);
+  event_push("xprs.unlock", row);
+  return 0;
+}
+
+static int32_t hk_redact(const char* c,uint32_t cl,const char* t,uint32_t tl,
+                         const char* pass,uint32_t pl){
+  char barred[512]; int bi=0; char plain[512]; int qi=0;
+  for(uint32_t i=0;i<tl;){
+    if(i+1<tl && t[i]=='(' && t[i+1]=='('){
+      i+=2; int n=0;
+      while(i+1<tl && !(t[i]==')'&&t[i+1]==')')){ plain[qi++]=t[i++]; n++; }
+      if(i+1<tl) i+=2;
+      for(int k=0;k<n;k++){ barred[bi++]='\xe2'; barred[bi++]='\x96'; barred[bi++]='\x88'; }
+    } else { barred[bi++]=t[i]; plain[qi++]=t[i]; i++; }
+  }
+  barred[bi]=0; plain[qi]=0;
+  if(pl>0){ int n=pl<63?pl:63; memcpy(g_sim_correct,pass,n); g_sim_correct[n]=0; }
+  else snprintf(g_sim_correct,sizeof g_sim_correct,"################");
+  snprintf(g_sim_stored,sizeof g_sim_stored,"%s",g_sim_correct);   /* author remembers */
+  snprintf(g_sim_text,sizeof g_sim_text,"%s",plain);
+  char row[700];
+  snprintf(row,sizeof row,"{\"convo\":\"%.*s\",\"id\":\"rdct01\",\"m\":\"%s\"}",(int)cl,c,barred);
+  event_push("xprs.redacted", row);
+  return 0;
+}
+
+static void load(int ni);
+/* deliver a 1:1 message carrying bars + the obfuscated flag to node ni. */
+static void deliver_obf(int ni,const char* from,const char* id,const char* barred){
+  load(ni);
+  char row[700];
+  snprintf(row,sizeof row,
+    "{\"call\":\"%s\",\"content\":\"%s\",\"id\":\"%s\",\"ts\":1700000000,"
+    "\"sig\":\"verified\",\"bearer\":\"rns\",\"obfuscated\":true}", from,barred,id);
+  event_push("xprs.message", row);
+  module_handle_event();
+}
+
 /* ─────────────────────── driving the nodes ──────────────────────── */
 
 static int add_node(const char* call){
@@ -394,6 +456,7 @@ static int g_pass=0, g_fail=0;
 static void reset_world(void){
   if(cur>=0){ module_destroy(); cur=-1; }
   NN=0; GN=0; AUTHN=0; g_seq=0;
+  g_sim_correct[0]=g_sim_stored[0]=g_sim_text[0]=0;
   system("rm -rf /tmp/chat_sim");
 }
 
@@ -552,16 +615,93 @@ static void t_direct_react(void){
   (void)A;
 }
 
+/* A redacted message: obfuscated with a tip, opened only by a tap, and only
+ * after the right passphrase -- which is then remembered so the next one opens
+ * without a prompt, but STILL needs a tap. */
+static void t_obfuscated(void){
+  printf("obfuscated text — tap, passphrase, reveal, remember\n");
+  reset_world();
+  int A=add_node("X1ANNA"), B=add_node("X1BOBB");
+  snprintf(g_sim_correct,sizeof g_sim_correct,"secret");
+  snprintf(g_sim_text,sizeof g_sim_text,"meet Max at pier2");
+
+  /* A redacted 1:1 message arrives at B. */
+  deliver_obf(B,"X1ANNA","rx01","meet " BAR BAR BAR " at " BAR BAR BAR BAR BAR);
+  open_room(B,"X1ANNA");
+  CHECK(cap_contains("\"obfuscated\":true"));
+  CHECK(cap_contains("Tap to reveal"));
+  CHECK(!cap_contains("pier2"));                 /* the secret is not shown */
+
+  /* Tap: no passphrase remembered yet, so the wapp is asked for one. */
+  cap_clear();
+  ui(B,"{\"command\":\"reveal\",\"reveal_mid\":\"rx01\"}");
+  pump(B);                                        /* drain the xprs.unlock answer */
+  CHECK(cap_contains("\"type\":\"ui.prompt\""));
+  CHECK(cap_contains("xrpw:rx01"));
+
+  /* A wrong passphrase does not open it. */
+  cap_clear();
+  ui(B,"{\"command\":\"prompt\",\"prompt_id\":\"xrpw:rx01\",\"prompt_input\":\"nope\"}");
+  pump(B);
+  CHECK(!cap_contains("ui.convo.reveal"));
+
+  /* The right one reveals it, and is remembered. */
+  cap_clear();
+  ui(B,"{\"command\":\"prompt\",\"prompt_id\":\"xrpw:rx01\",\"prompt_input\":\"secret\"}");
+  pump(B);
+  CHECK(cap_contains("ui.convo.reveal"));
+  CHECK(cap_contains("meet Max at pier2"));
+
+  /* A SECOND redacted message: a tap opens it with the remembered passphrase,
+   * with NO prompt -- but the tap is still required. */
+  deliver_obf(B,"X1ANNA","rx02","code " BAR BAR BAR BAR);
+  cap_clear();
+  ui(B,"{\"command\":\"reveal\",\"reveal_mid\":\"rx02\"}");
+  pump(B);
+  CHECK(cap_contains("ui.convo.reveal"));         /* revealed... */
+  CHECK(!cap_contains("ui.prompt"));              /* ...without asking again */
+
+  /* Reopening the room shows it obfuscated again: reveal is never persisted. */
+  cap_clear();
+  open_room(B,"X1ANNA");
+  CHECK(cap_contains("\"obfuscated\":true"));
+  (void)A;
+}
+
+/* Composing: typing ((secret)) asks for a passphrase, then the author's own
+ * bubble is admitted obfuscated (openable at a tap, since it is now remembered). */
+static void t_compose_obf(void){
+  printf("obfuscated text — composing with ((...))\n");
+  reset_world();
+  int A=add_node("X1ANNA"); add_node("X1BOBB");
+
+  send(A,"X1BOBB","meet ((Max)) at ((pier2))");
+  CHECK(cap_contains("\"type\":\"ui.prompt\""));
+  CHECK(cap_contains("xrmk:X1BOBB"));
+  CHECK(cap_contains("\"passphrases\":true"));   /* host shows the key picker */
+
+  cap_clear();
+  ui(A,"{\"command\":\"prompt\",\"prompt_id\":\"xrmk:X1BOBB\",\"prompt_input\":\"secret\"}");
+  pump(A);                                        /* drain xprs.redacted */
+  open_room(A,"X1BOBB");
+  CHECK(cap_contains("\"obfuscated\":true"));      /* the author's own barred echo */
+  CHECK(!cap_contains("pier2"));
+  (void)A;
+}
+
 int main(void){
   mock_set_time(1700000000ULL);
   g_hk_identity=hk_identity; g_hk_send=hk_send; g_hk_message=hk_message;
   g_hk_broadcast=hk_broadcast; g_hk_read=hk_read; g_hk_groups=hk_groups; g_hk_roster=hk_roster;
+  g_hk_unlock=hk_unlock; g_hk_redact=hk_redact;
 
   t_direct();
   t_emoji();
   t_group();
   t_group_react();
   t_direct_react();
+  t_obfuscated();
+  t_compose_obf();
   t_group_restart();
   t_local();
 

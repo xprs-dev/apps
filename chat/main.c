@@ -49,6 +49,8 @@
 /* ── state ──────────────────────────────────────────────────────────── */
 static char g_call[16] = "N0CALL";   /* replaced at init by hal_identity() */
 static int  g_chan_local = 1;        /* Settings: the Local room switch (KV "chan") */
+static char g_redact_text[900];      /* marked ((..)) text awaiting a compose passphrase (9.2.1) */
+static const char *s_find(const char *hay, const char *needle);
 static uint64_t g_xroom_fill_at;     /* epoch of the last archive refill */
 
 static int is_self_call(const char *c) {
@@ -167,10 +169,10 @@ static void xgroups_refresh(void) {
 static int admit(const char *room, const char *mid, const char *dir,
                  const char *sender, const char *body, const char *parent,
                  const char *via, const char *auth, int enc, uint64_t ts,
-                 const char *rid, const char *status, int replay) {
+                 const char *rid, const char *status, int replay, int obf) {
   char title[48]; room_title(room, title, sizeof(title));
   room_msg_t m = { room, title, mid, dir, sender, body, parent, via, auth,
-                   rid, status, ts, enc, 0, replay };
+                   rid, status, ts, enc, obf, 0, replay };
   return room_admit(&m);
 }
 /* A muted, centered line inside a conversation -- not words anybody said. */
@@ -178,7 +180,7 @@ static void sysnote(const char *room, const char *text) {
   char h[5]; msg_id(room, text, h);
   char mid[40] = "sys:"; char nb[24]; u_lltoa(hal_time_epoch(), nb);
   s_cat(mid, nb, sizeof(mid)); s_cat(mid, ":", sizeof(mid)); s_cat(mid, h, sizeof(mid));
-  room_msg_t m = { room, 0, mid, "in", "", text, "", "", "", "", "", 0, 0, 1, 0 };
+  room_msg_t m = { room, 0, mid, "in", "", text, "", "", "", "", "", 0, 0, 0, 1, 0 };
   room_admit(&m);
 }
 /* A reply marker on a wire with room for a section 5 id: "+<6hex> text". */
@@ -291,7 +293,7 @@ static void xroom_backfill(void) {
     char parent[8] = ""; wire_key(wire, "r", parent, sizeof(parent));
     if (admit(XROOM_LOCAL, id, mine ? "out" : "in", mine ? g_call : from, body, parent,
               bearer, s_eq(sig, "verified") ? "verified" : "", 0,
-              (uint64_t)jint(slice, "ts"), "", "", 1) == 1)
+              (uint64_t)jint(slice, "ts"), "", "", 1, 0) == 1)
       kept++;
   }
   char lg[96] = "[chat] local backfill: read=";
@@ -305,6 +307,23 @@ static void send_message(const char *id, const char *text_in) {
   char text[900];
   s_cpy(text, text_in, sizeof(text));
   if (!id[0] || !text[0] || !room_renderable(id)) return;
+
+  /* 9.2.1: a message with ((...)) spans is aired obfuscated. The core builds
+   * the bars and the `xr:` blob (it needs a passphrase); the wapp only asks for
+   * one and hands over the marked text. Offered for a directed conversation
+   * (1:1 or a closed group); the Local room's undirected redaction is not yet. */
+  if ((xgroup_is(id) || xprs_is_station(id)) &&
+      s_find(text, "((") && s_find(text, "))")) {
+    s_cpy(g_redact_text, text, sizeof(g_redact_text));
+    char pm[320] = "{\"type\":\"ui.prompt\",\"id\":\"xrmk:";
+    s_cat(pm, id, sizeof(pm));
+    s_cat(pm, "\",\"title\":\"Hide part of this message\",\"body\":\"Enter a "
+              "passphrase (leave blank for the default), or pick one you have used "
+              "before.\",\"passphrases\":true,\"input\":{\"hint\":"
+              "\"passphrase\",\"max\":64}}", sizeof(pm));
+    hal_msg_send(pm, s_len(pm));
+    return;
+  }
 
   /* The Local room: a t:message broadcast the core composes, or a
    * t:reaction (6.5) naming a bubble's section 5 id. */
@@ -330,7 +349,7 @@ static void send_message(const char *id, const char *text_in) {
       notify("warning", "Could not send");
       return;
     }
-    admit(id, mid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0);
+    admit(id, mid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0, 0);
     return;
   }
 
@@ -376,7 +395,7 @@ static void send_message(const char *id, const char *text_in) {
     if (rc == -2) { notify("warning", "You can post here once you accept the invitation"); return; }
     if (rc != 0) { notify("warning", "Could not send"); return; }
     char gmid[7]; xprs_id(wire, s_len(wire), gmid);
-    admit(id, gmid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0);
+    admit(id, gmid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0, 0);
     return;
   }
 
@@ -394,7 +413,7 @@ static void send_message(const char *id, const char *text_in) {
     char gmid[7]; xprs_id(wire, s_len(wire), gmid);
     char parent[5]; const char *disp;
     thread_parse(text, parent, &disp);
-    admit(id, gmid, "out", g_call, disp, parent, "", "verified", 0, 0, "", "", 0);
+    admit(id, gmid, "out", g_call, disp, parent, "", "verified", 0, 0, "", "", 0, 0);
     return;
   }
 
@@ -436,7 +455,7 @@ static void send_message(const char *id, const char *text_in) {
   if (form <= 0) { notify("warning", "Could not send"); return; }
   if (mid[0]) room_tx_note(mid, id);
   admit(id, mid[0] ? mid : "", "out", g_call, text, "", "", "verified", form == 1, 0,
-        mid, "sent", 0);
+        mid, "sent", 0, 0);
 }
 
 /* ── What the core routes to us ───────────────────────────────────────── */
@@ -452,6 +471,10 @@ static void on_core_packet(const char *topic, const char *row) {
   jstr(row, "id", id, sizeof(id));
   jstr(row, "bearer", bearer, sizeof(bearer));
   jstr(row, "sig", sigv, sizeof(sigv));
+  /* 9.2.1: a packet carrying an `xr:` field has obfuscated content -- the only
+   * honest marker (bars in the text are not). It rides through to the row so a
+   * bubble renders tappable with a tip; the reveal itself is the core's. */
+  int obf = jbool(row, "obfuscated");
   if (!from[0] || is_self_call(from)) return;
   /* A part is not a message (6.6) and a sealed body is not readable: both
    * are the core's to finish, and it re-delivers the result. */
@@ -514,7 +537,7 @@ static void on_core_packet(const char *topic, const char *row) {
       log1(lg);
       return;
     }
-    admit(XROOM_LOCAL, id, "in", from, m, parent, bearer, auth, 0, ts, "", "", 0);
+    admit(XROOM_LOCAL, id, "in", from, m, parent, bearer, auth, 0, ts, "", "", 0, obf);
     return;
   }
 
@@ -529,7 +552,7 @@ static void on_core_packet(const char *topic, const char *row) {
   if (like_parse(m, tgt, &unlike)) { room_react(gid, tgt, from, unlike, 0); return; }
   char par4[5]; const char *disp;
   thread_parse(m, par4, &disp);
-  admit(gid, id, "in", from, disp, parent[0] ? parent : par4, bearer, auth, 0, ts, "", "", 0);
+  admit(gid, id, "in", from, disp, parent[0] ? parent : par4, bearer, auth, 0, ts, "", "", 0, obf);
 }
 
 static void on_core_event(const char *topic, const char *row) {
@@ -590,11 +613,46 @@ static void on_core_event(const char *topic, const char *row) {
   /* The read half of 13.7 is recorded by room_admit (a live inbound 1:1 is
    * queued in the room's database) and aired when the user opens the thread
    * (room_open -> room_flush_reads). Nothing to do here. */
+  int obf = jbool(row, "obfuscated");
   admit(room, mid, "in", call, body, parent, bearer,
-        s_eq(sigv, "verified") ? "verified" : "", jbool(row, "sealed"), ts, "", "", 0);
+        s_eq(sigv, "verified") ? "verified" : "", jbool(row, "sealed"), ts, "", "", 0, obf);
 }
 
 static void push_group_members(const char *gid);
+
+/* 9.2.1: the core answered a reveal request. On success it reassembled the
+ * hidden text; show it in place, transiently, for the open room only. On
+ * failure no remembered passphrase fit -- ask the reader for one. */
+static void on_xr_unlock(const char *row) {
+  char id[24] = "";
+  jstr(row, "id", id, sizeof(id));
+  if (!id[0]) return;
+  if (jbool(row, "ok")) {
+    static char text[900];
+    jstr(row, "text", text, sizeof(text));
+    room_reveal(id, text);
+    return;
+  }
+  char pm[200] = "{\"type\":\"ui.prompt\",\"id\":\"xrpw:";
+  s_cat(pm, id, sizeof(pm));
+  s_cat(pm, "\",\"title\":\"Hidden text\",\"body\":\"Enter the passphrase to "
+            "reveal this message.\",\"input\":{\"hint\":\"passphrase\",\"max\":64}}",
+        sizeof(pm));
+  hal_msg_send(pm, s_len(pm));
+}
+
+/* 9.2.1: the core aired the author's redacted message; admit our own barred
+ * copy, obfuscated like everyone sees it and openable at a tap (our passphrase
+ * is now remembered). */
+static void on_xr_redacted(const char *row) {
+  char convo[48] = "", id[24] = "";
+  static char m[900];
+  jstr(row, "convo", convo, sizeof(convo));
+  jstr(row, "id", id, sizeof(id));
+  jstr(row, "m", m, sizeof(m));
+  if (!convo[0] || !id[0]) return;
+  admit(convo, id, "out", g_call, m, "", "", "verified", 0, 0, "", "", 0, 1);
+}
 
 static void drain_core_events(void) {
   static char row[3200];
@@ -611,6 +669,8 @@ static void drain_core_events(void) {
       if (xgroup_is(open)) push_group_members(open);
       continue;
     }
+    if (s_eq(topic, "xprs.unlock")) { on_xr_unlock(row); continue; }
+    if (s_eq(topic, "xprs.redacted")) { on_xr_redacted(row); continue; }
     on_core_event(topic, row);
   }
 }
@@ -893,7 +953,8 @@ static void do_open(const char *buf) {
 
 /* ── module entry points ──────────────────────────────────────────────── */
 void module_init(void) {
-  static const char *topics[] = { "xprs.message", "xprs.reaction", "xprs.status.tx", "core.groups" };
+  static const char *topics[] = { "xprs.message", "xprs.reaction", "xprs.status.tx",
+                                  "core.groups", "xprs.unlock", "xprs.redacted" };
   for (unsigned i = 0; i < sizeof(topics) / sizeof(topics[0]); i++)
     hal_event_subscribe(topics[i], s_len(topics[i]));
   char id[16];
@@ -997,13 +1058,34 @@ void module_handle_event(void) {
     char c[16] = ""; jstr(buf, "profile_target", c, sizeof(c));
     if (c[0]) do_unblock(c);
   }
+  else if (s_eq(cmd, "reveal")) {
+    /* 9.2.1: a person tapped a redacted bubble. Ask the core to open it by its
+     * section 5 id, trying the remembered passphrases first (empty pass). The
+     * answer arrives on xprs.unlock -- reveal, or a prompt for a passphrase. */
+    char mid[24] = ""; jstr(buf, "reveal_mid", mid, sizeof(mid));
+    if (mid[0]) hal_xprs_unlock(mid, s_len(mid), "", 0);
+  }
   else if (s_eq(cmd, "prompt")) {
-    char pid[24] = "", val[24] = "";
+    char pid[56] = "", val[24] = "";
     jstr(buf, "prompt_id", pid, sizeof(pid));
     jstr(buf, "prompt_value", val, sizeof(val));
     if (s_pre(pid, "prof:")) {
       if (s_eq(val, "block")) do_block(pid + 5);
       else if (s_eq(val, "unblock")) do_unblock(pid + 5);
+    }
+    else if (s_pre(pid, "xrpw:")) {
+      /* A passphrase for a redacted message: try it, and the core remembers it
+       * if it opens the message (9.2.1). */
+      char pw[80] = ""; jstr(buf, "prompt_input", pw, sizeof(pw));
+      hal_xprs_unlock(pid + 5, s_len(pid + 5), pw, s_len(pw));
+    }
+    else if (s_pre(pid, "xrmk:")) {
+      /* The passphrase to obfuscate the message the author is composing. */
+      char pw[80] = ""; jstr(buf, "prompt_input", pw, sizeof(pw));
+      if (g_redact_text[0])
+        hal_xprs_redact(pid + 5, s_len(pid + 5), g_redact_text,
+                        s_len(g_redact_text), pw, s_len(pw));
+      g_redact_text[0] = 0;
     }
   }
   else if (s_eq(cmd, "chan_apply")) {

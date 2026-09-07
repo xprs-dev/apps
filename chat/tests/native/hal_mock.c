@@ -44,6 +44,8 @@ int32_t (*g_hk_broadcast)(const char*,uint32_t,const char*,uint32_t,const char*,
 int32_t (*g_hk_read)(const char*,uint32_t) = 0;
 int32_t (*g_hk_groups)(char*,uint32_t) = 0;
 int32_t (*g_hk_roster)(const char*,uint32_t,char*,uint32_t) = 0;
+int32_t (*g_hk_unlock)(const char*,uint32_t,const char*,uint32_t) = 0;
+int32_t (*g_hk_redact)(const char*,uint32_t,const char*,uint32_t,const char*,uint32_t) = 0;
 void mock_set_root(const char* r){ static char b[256]; snprintf(b,sizeof(b),"%s",r); g_root=b; }
 
 /* ---- capture of hal_msg_send ---- */
@@ -118,6 +120,8 @@ void mock_set_history(const char* json){ snprintf(g_history,sizeof(g_history),"%
 static int32_t g_send_rc = 0;
 void mock_set_send_rc(int32_t rc){ g_send_rc = rc; }
 int32_t hal_xprs_send(const char* w,uint32_t l){ if(g_hk_send) return g_hk_send(w,l); if(g_send_rc) return g_send_rc; if(l>=sizeof(g_last_wire)) return -1; memcpy(g_last_wire,w,l); g_last_wire[l]=0; return 0; }
+int32_t hal_xprs_unlock(const char* id,uint32_t il,const char* pass,uint32_t pl){ if(g_hk_unlock) return g_hk_unlock(id,il,pass,pl); return 0; }
+int32_t hal_xprs_redact(const char* c,uint32_t cl,const char* t,uint32_t tl,const char* p,uint32_t pl){ if(g_hk_redact) return g_hk_redact(c,cl,t,tl,p,pl); return 0; }
 int32_t hal_xprs_message(const char* to,uint32_t tl,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){ if(g_hk_message) return g_hk_message(to,tl,t,l,priv,id,cap); (void)to;(void)tl;(void)t;(void)l; snprintf(id,cap,"m%05d",++g_bcast_n); return priv?1:2; }
 int32_t hal_xprs_broadcast(const char* t,uint32_t l,const char* s,uint32_t sl,const char* r,uint32_t rl,char* id,uint32_t cap){ if(g_hk_broadcast) return g_hk_broadcast(t,l,s,sl,r,rl,id,cap); (void)t;(void)l;(void)s;(void)sl;(void)r;(void)rl; snprintf(id,cap,"b%05d",++g_bcast_n); return 2; }
 static char g_reads[2048]; static int g_reads_n=0;

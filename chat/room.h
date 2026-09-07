@@ -31,6 +31,7 @@ typedef struct {
   const char *status;   /* "sent" | "delivered" | "read" | "" */
   unsigned long long ts;/* sender epoch; 0 = now */
   int enc;              /* body travelled sealed */
+  int obf;              /* carries an xr: field (9.2.1): tap to reveal */
   int sys;              /* a system note, not words */
   int replay;           /* archive refill: store only -- no unread, no notify */
 } room_msg_t;
@@ -49,6 +50,9 @@ int room_renderable(const char *id);
 
 /* THE DOOR. 1 stored and shown, 0 filtered or already held, -1 no database. */
 int room_admit(const room_msg_t *m);
+
+/* Reveal a redacted message in the open room (9.2.1); transient, not stored. */
+void room_reveal(const char *mid, const char *text);
 
 /* The user opened [id]: repaint it from the database (clear + newest tail),
  * mark it read. */

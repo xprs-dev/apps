@@ -1451,6 +1451,46 @@ int32_t hal_xprs_status(const char *text, uint32_t text_len,
 __attribute__((import_module("hal"), import_name("xprs_send")))
 int32_t hal_xprs_send(const char *wire, uint32_t wire_len);
 
+/* OPEN A REDACTED MESSAGE (9.2.1). A message with ((...)) spans arrives with
+ * bars (U+2588) in its text and its hidden pieces in an `xr:` field the wapp
+ * never sees. This asks the core to open ONE, by its section 5 identifier.
+ *
+ * [id] is that identifier, as delivered on the event bus. [pass] is a
+ * passphrase the reader typed, or NULL/0 to try the ones the core has
+ * remembered plus the default (sixteen '#'). The wapp holds no key, no cipher
+ * and no `xr:` blob -- all of it is the core's (9.1/9.2.1).
+ *
+ * ASYNCHRONOUS: the key derivation is deliberately slow (PBKDF2, 100000
+ * iterations) and must not stall the engine, so this returns 0 at once (or -1
+ * for an empty id) and the ANSWER arrives on the `xprs.unlock` event:
+ *   {"id":..,"ok":true,"text":"<the revealed message>"}   opened, OR
+ *   {"id":..,"ok":false}                                  none of the tried
+ *                                                         passphrases fit.
+ * A passphrase the reader typed that opens the message is remembered by the
+ * core, so the next redacted message opens without a prompt -- but the reader
+ * still taps every time (persistence removes the prompt, never the tap). */
+__attribute__((import_module("hal"), import_name("xprs_unlock")))
+int32_t hal_xprs_unlock(const char *id, uint32_t id_len,
+                        const char *pass, uint32_t pass_len);
+
+/* AIR A MESSAGE WITH HIDDEN SPANS (9.2.1). The author marked secrets as
+ * ((secret)); this hands the marked text and a passphrase to the core, which
+ * turns each span into bars, builds the `xr:` blob, signs and airs the packet.
+ *
+ * [convo] is the conversation id (a callsign, or a group's "#X5...."); [text]
+ * is the marked text; [pass] is the author's passphrase, or NULL/0 for the
+ * default. The wapp builds no wire and runs no cipher.
+ *
+ * ASYNCHRONOUS (same slow derivation): returns 0 at once, and the author's own
+ * barred copy comes back on the `xprs.redacted` event
+ *   {"convo":..,"id":..,"m":"<the barred text>"}
+ * to admit as the outgoing bubble -- obfuscated like everyone else sees it, and
+ * openable with one tap because the author's passphrase is now remembered. */
+__attribute__((import_module("hal"), import_name("xprs_redact")))
+int32_t hal_xprs_redact(const char *convo, uint32_t convo_len,
+                        const char *text, uint32_t text_len,
+                        const char *pass, uint32_t pass_len);
+
 /* SAY SOMETHING TO SOMEBODY. THE ONLY WAY A WAPP TRANSMITS.
  *
  * The wapp supplies the words and the recipient's callsign. The core composes
