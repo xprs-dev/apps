@@ -40,6 +40,7 @@
  */
 
 #include "../hal/xprs_wasm_hal.h"
+#include "../hal/people_finder.h"
 
 /* ── String helpers ──────────────────────────────────────────────────── */
 static unsigned str_len(const char *s) { unsigned n = 0; while (s[n]) n++; return n; }
@@ -282,9 +283,88 @@ static void push_directory(void) {
     set_field_raw("dir_plugged", str_eq(vol, "always") ? "false" : "true");
 }
 
+/* ── My archivers (XPRS 36 + 13.12): the devices I trust to keep copies of my
+ *    messages and answer "where can I find X1..". The one list this station
+ *    pushes copies to AND declares daily as t:mailbox hold:. Edited here with
+ *    the shared callsign finder (../hal/people_finder.h). ─────────────────── */
+
+/* Render the SAVED list into the "myarch" people field, each with a Remove. */
+static void push_myarch(void) {
+    static char reply[2048];
+    int n = hal_xprs_archivers(reply, sizeof(reply) - 1);
+    if (n < 0) n = 0;
+    reply[n] = '\0';
+    /* {"list":["X3RLY7",..],"auto":true} — pull the array, then walk it; and
+     * reflect the auto-select flag onto its switch. */
+    static char list[2048]; list[0] = '\0';
+    json_raw(reply, "list", list, sizeof(list));
+    char autos[8] = ""; json_raw(reply, "auto", autos, sizeof(autos));
+    set_field_raw("auto", str_eq(autos, "false") ? "false" : "true");
+    str_copy(g_msg,
+        "{\"type\":\"ui.people.set\",\"field\":\"myarch\",\"sections\":[{"
+        "\"title\":\"My archivers\",\"items\":[", sizeof(g_msg));
+    const char *p = list; int first = 1;
+    while (*p) {
+        if (*p != '"') { p++; continue; }
+        p++;
+        char call[24]; int k = 0;
+        while (*p && *p != '"' && k < 23) call[k++] = *p++;
+        call[k] = '\0';
+        if (*p == '"') p++;
+        if (!call[0]) continue;
+        if (!first) str_cat(g_msg, ",", sizeof(g_msg));
+        first = 0;
+        str_cat(g_msg, "{\"id\":\"go:", sizeof(g_msg));
+        str_cat(g_msg, call, sizeof(g_msg));
+        str_cat(g_msg, "\",\"title\":\"", sizeof(g_msg));
+        str_cat(g_msg, call, sizeof(g_msg));
+        str_cat(g_msg, "\",\"subtitle\":\"holds copies of my messages\","
+                       "\"icon\":\"archive\",\"buttons\":[{\"icon\":"
+                       "\"delete\",\"action\":\"myarch_remove\",\"tip\":"
+                       "\"Remove\"}]}", sizeof(g_msg));
+    }
+    str_cat(g_msg, "]}]}", sizeof(g_msg));
+    send_msg(g_msg);
+}
+
+/* Add or remove [call] from the saved list, then persist via the XPRS HAL. */
+static void arch_mutate(const char *call, int add) {
+    static char reply[2048];
+    int n = hal_xprs_archivers(reply, sizeof(reply) - 1);
+    if (n < 0) n = 0;
+    reply[n] = '\0';
+    static char list[2048]; list[0] = '\0';
+    json_raw(reply, "list", list, sizeof(list));
+    static char csv[2048]; csv[0] = '\0';
+    const char *p = list; int found = 0;
+    while (*p) {
+        if (*p != '"') { p++; continue; }
+        p++;
+        char c[24]; int k = 0;
+        while (*p && *p != '"' && k < 23) c[k++] = *p++;
+        c[k] = '\0';
+        if (*p == '"') p++;
+        if (!c[0]) continue;
+        int same = str_eq(c, call);
+        if (same) found = 1;
+        if (same && !add) continue;           /* drop the one being removed */
+        if (csv[0]) str_cat(csv, ",", sizeof(csv));
+        str_cat(csv, c, sizeof(csv));
+    }
+    if (add && !found) {
+        if (csv[0]) str_cat(csv, ",", sizeof(csv));
+        str_cat(csv, call, sizeof(csv));
+    }
+    static char kv[2100];
+    str_copy(kv, "archivers=", sizeof(kv));
+    str_cat(kv, csv, sizeof(kv));
+    hal_xprs_set_pref(kv, str_len(kv));
+}
+
 static void refresh(void) {
     push_dashboard();
     push_directory();
+    push_myarch();
 }
 
 static void set_pref(const char *kv) {
@@ -404,6 +484,34 @@ int32_t module_handle_event(void) {
         const char *id = "sweep:all";
         hal_archive_drop(id, str_len(id));
         push_dashboard();
+    } else if (str_eq(cmd, "myarch_search")) {
+        /* Empty query shows the saved list; a query searches heard callsigns
+         * with the shared finder (36.3 — the list is the operator's choice). */
+        char q[64] = "";
+        json_raw(buf, "myarch_query", q, sizeof(q));
+        if (q[0]) pf_render("myarch", q, 0);
+        else push_myarch();
+    } else if (str_eq(cmd, "myarch_tap")) {
+        /* Tapping a search result adds it (idempotent); a saved row's tap is a
+         * harmless re-add. */
+        char call[24];
+        if (pf_pick(buf, "myarch", call, sizeof(call))) {
+            const char *c = call[0] == '#' ? call + 1 : call; /* archivers are stations */
+            arch_mutate(c, 1);
+            push_myarch();
+        }
+    } else if (str_eq(cmd, "auto_changed")) {
+        char a[8] = ""; json_raw(buf, "auto", a, sizeof(a));
+        char kv[24]; str_copy(kv, "archiverAuto=", sizeof(kv));
+        str_cat(kv, str_eq(a, "true") ? "1" : "0", sizeof(kv));
+        hal_xprs_set_pref(kv, str_len(kv));
+    } else if (str_eq(cmd, "myarch_remove")) {
+        char call[24];
+        if (pf_pick(buf, "myarch", call, sizeof(call))) {
+            const char *c = call[0] == '#' ? call + 1 : call;
+            arch_mutate(c, 0);
+            push_myarch();
+        }
     }
     return 0;
 }

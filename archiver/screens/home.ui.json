@@ -88,7 +88,7 @@
     "$": "screen",
     "name": "Directory",
     "icon": "hub",
-    "tip": "Tells the network which devices hold the posts and files of each npub. It stores addresses, never the content \u2014 a directory that goes offline costs the network a phone book, not a library.",
+    "tip": "Tells the network which devices hold the posts and files of each npub. It stores addresses, never the content — a directory that goes offline costs the network a phone book, not a library.",
     "children": [
       {
         "$": "field",
@@ -112,5 +112,29 @@
         "apply": "dir_plugged_changed"
       }
     ]
+  },
+  {
+    "$": "screen",
+    "name": "My archivers",
+    "icon": "cloud_upload",
+    "tip": "The devices you trust to keep copies of your messages and answer \"where can I find you\". This station sends them a copy and announces them once a day (t:mailbox). Type a callsign to add one; tap the bin to remove.",
+    "children": [
+      {
+        "$": "field",
+        "name": "auto",
+        "$type": "bool",
+        "label": "Auto-select an archiver",
+        "tip": "When on and you have chosen none, a volunteer node keeps your messages. Add a callsign to choose your own instead.",
+        "default": true,
+        "apply": "auto_changed"
+      },
+      {
+        "$": "field",
+        "name": "myarch",
+        "$type": "people",
+        "empty": "No archiver chosen. With Auto-select on, a volunteer node keeps your messages; search a callsign to choose your own."
+      }
+    ],
+    "search": true
   }
 ]

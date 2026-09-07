@@ -43,6 +43,7 @@
 #include "room.h"
 #include "thread.h"
 #include "xprs.h"
+#include "people_finder.h"
 
 #define XROOM_LOCAL "#LOCAL"
 
@@ -694,147 +695,18 @@ static void drain_core_events(void) {
  * In Search, "#GROUP" typed in opens that group. A tap starts the room. */
 static char g_find_q[64], g_sa_q[64];
 
-#define PEOPLE_MAX 128
-typedef struct { char call[16]; char seen[24]; char bearer[12]; int local; } person_t;
-static person_t g_people[PEOPLE_MAX];
-static int g_people_n;
-
-/* First occurrence of [needle] in [hay], or 0. */
+/* First occurrence of [needle] in [hay], or 0. Used by the ((..)) redaction
+ * check (send_message) and by the shared finder's include; kept local. */
 static const char *s_find(const char *hay, const char *needle) {
   for (const char *p = hay; *p; p++) if (s_pre(p, needle)) return p;
   return 0;
 }
-/* The [idx]-th string of the JSON array under [key]: "tags":["a","b"]. */
-static int jarr_str(const char *obj, const char *key, int idx, char *out, unsigned cap) {
-  out[0] = 0;
-  char pat[32] = "\"";
-  s_cat(pat, key, sizeof(pat)); s_cat(pat, "\":[", sizeof(pat));
-  const char *p = s_find(obj, pat);
-  if (!p) return 0;
-  p += s_len(pat);
-  for (int i = 0; ; i++) {
-    while (*p == ' ' || *p == ',') p++;
-    if (*p != '"') return 0;
-    p++;
-    unsigned o = 0;
-    while (*p && *p != '"') {
-      if (*p == '\\' && p[1]) p++;
-      if (i == idx && o < cap - 1) out[o++] = *p;
-      p++;
-    }
-    if (*p == '"') p++;
-    if (i == idx) { out[o] = 0; return 1; }
-  }
-}
 
-static void people_collect(const char *q) {
-  g_people_n = 0;
-  char want[24] = ""; int j = 0;
-  for (int i = 0; q[i] && j < 23; i++) if (q[i] != ' ') want[j++] = s_up(q[i]);
-  want[j] = 0;
-  static char st[16384];
-  int n = hal_xprs_stations(st, sizeof(st) - 1);
-  if (n < 0) {
-    /* The host answers -required when the buffer is too small. */
-    static int said;
-    if (!said) { said = 1;
-      char lg[96] = "[chat] stations reply needs "; char nb[16]; u_itoa((unsigned)(-n), nb);
-      s_cat(lg, nb, sizeof(lg)); s_cat(lg, " bytes, buffer is 16383", sizeof(lg)); log1(lg); }
-    return;
-  }
-  if (n <= 0) return;
-  st[n] = 0;
-  /* Sections, by title: the two local ones ("Heard over the air", "Heard
-   * this hour") and "On Reticulum". Each holds an "items" array; walk it to
-   * its ']'. */
-  const char *p = st; int section = 0;
-  while ((p = s_find(p, "\"title\":\"")) != 0 && section < 3) {
-    int local = !s_pre(p + 9, "On Reticulum");
-    p = s_find(p, "\"items\":[");
-    if (!p) break;
-    p += 9;
-    char row[600];
-    while (*p) {
-      while (*p == ' ' || *p == ',') p++;
-      if (*p == ']' || !*p) break;
-      const char *cur = p;
-      if (!next_object(&cur, row, sizeof(row))) break;
-      p = cur;
-      char call[24]; jstr(row, "id", call, sizeof(call));
-      if (!call[0] || !xprs_is_station(call) || is_self_call(call)) continue;
-      if (want[0]) {
-        char up_call[24]; s_cpy(up_call, call, sizeof(up_call));
-        for (int i = 0; up_call[i]; i++) up_call[i] = s_up(up_call[i]);
-        if (!s_find(up_call, want)) continue;
-      }
-      int dup = 0;
-      for (int i = 0; i < g_people_n; i++) if (s_eq(g_people[i].call, call)) { dup = 1; break; }
-      if (dup || g_people_n >= PEOPLE_MAX) continue;
-      person_t *e = &g_people[g_people_n++];
-      s_cpy(e->call, call, sizeof(e->call));
-      jarr_str(row, "tags", 0, e->seen, sizeof(e->seen));
-      jarr_str(row, "tags", 1, e->bearer, sizeof(e->bearer));
-      e->local = local;
-    }
-    section++;
-  }
-}
-static void people_row(char *o, unsigned sz, const person_t *e) {
-  /* A closed group heard on the air is a group, not a person: it opens the
-   * #X5 room (go:#...), tagged, so tapping it enters the group and not a 1:1
-   * with the group's address. */
-  int grp = e->call[0] == 'X' && e->call[1] == '5';
-  s_cat(o, "{\"id\":\"go:", sz); if (grp) s_cat(o, "#", sz); jesc(o, sz, e->call);
-  s_cat(o, "\",\"title\":\"", sz); jesc(o, sz, e->call);
-  s_cat(o, "\",\"subtitle\":\"", sz);
-  if (e->seen[0]) jesc(o, sz, e->seen); else s_cat(o, "heard", sz);
-  if (e->bearer[0]) { s_cat(o, " - ", sz); jesc(o, sz, e->bearer); }
-  s_cat(o, "\",\"icon\":\"", sz); s_cat(o, grp ? "tag" : "person", sz);
-  s_cat(o, "\"}", sz);
-}
+/* New-chat / Search: the generic callsign finder, now shared with other wapps
+ * (../hal/people_finder.h). Same ui.people.set panel and the same `go:` ids as
+ * before -- only the implementation moved out so any wapp can reuse it. */
 static void render_people(const char *field, const char *q, int allow_group) {
-  static char o[16384]; const unsigned sz = sizeof(o);
-  char want[24] = ""; int j = 0;
-  for (int i = 0; q[i] && j < 23; i++) if (q[i] != ' ') want[j++] = s_up(q[i]);
-  want[j] = 0;
-  people_collect(q);
-  s_cpy(o, "{\"type\":\"ui.people.set\",\"field\":\"", sz);
-  s_cat(o, field, sz);
-  s_cat(o, "\",\"sections\":[", sz);
-  int first_section = 1;
-  if (allow_group && want[0] == '#' && want[1]) {
-    s_cat(o, "{\"title\":\"Group\",\"items\":[{\"id\":\"go:", sz); jesc(o, sz, want);
-    s_cat(o, "\",\"title\":\"", sz); jesc(o, sz, want);
-    s_cat(o, "\",\"subtitle\":\"Open this group\",\"icon\":\"tag\"}]}", sz);
-    first_section = 0;
-  }
-  for (int pass = 1; pass >= 0; pass--) {   /* nearby first, then Reticulum */
-    int any = 0;
-    for (int i = 0; i < g_people_n; i++) if (g_people[i].local == pass) { any = 1; break; }
-    /* A callsign nobody has heard yet is still somebody: custody waits. */
-    int typed = pass == 0 && want[0] != '#' && xprs_is_station(want) && !is_self_call(want);
-    if (typed) { for (int i = 0; i < g_people_n; i++) if (s_eq(g_people[i].call, want)) typed = 0; }
-    if (!any && !typed) continue;
-    if (!first_section) s_cat(o, ",", sz);
-    first_section = 0;
-    s_cat(o, pass ? "{\"title\":\"Nearby\",\"items\":[" : "{\"title\":\"On Reticulum\",\"items\":[", sz);
-    int first = 1;
-    for (int i = 0; i < g_people_n; i++) {
-      if (g_people[i].local != pass) continue;
-      if (!first) s_cat(o, ",", sz);
-      first = 0;
-      people_row(o, sz, &g_people[i]);
-    }
-    if (typed) {
-      if (!first) s_cat(o, ",", sz);
-      s_cat(o, "{\"id\":\"go:", sz); jesc(o, sz, want);
-      s_cat(o, "\",\"title\":\"Message ", sz); jesc(o, sz, want);
-      s_cat(o, "\",\"subtitle\":\"Not heard yet - delivery waits for them\",\"icon\":\"person_add\"}", sz);
-    }
-    s_cat(o, "]}", sz);
-  }
-  s_cat(o, "]}", sz);
-  hal_msg_send(o, s_len(o));
+  pf_render(field, q, allow_group);
 }
 /* The member panel (rooms widget, field "room_members"). The host draws it
  * from whatever we last pushed, so we push it whenever a group room opens --

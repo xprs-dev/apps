@@ -1611,9 +1611,22 @@ int32_t hal_xprs_group_roster(const char *group, uint32_t group_len,
 
 /* Set a spool tunable "key=value": archive (0/1), archiveMaxMb,
  * archiveMaxDays, serveHistory (0/1 — answer cmd:history and say
- * serve:history in the beacon). 0 ok, -1 unknown key or bad value. */
+ * serve:history in the beacon), archivers (CSV of callsigns), archiverAuto (0/1 — auto-select an
+ * archiver when none is listed) — the chosen archiver devices, this station's
+ * chosen archiver devices, the one list it pushes copies to (36) AND declares
+ * daily as t:mailbox hold: (13.12); empty clears it). 0 ok, -1 unknown key or
+ * bad value. */
 __attribute__((import_module("hal"), import_name("xprs_set_pref")))
 int32_t hal_xprs_set_pref(const char *kv, uint32_t kv_len);
+
+/* Read this station's archiver settings back, as a JSON object:
+ *   {"list":["X3RLY7",..],"auto":true}
+ * `list` is the chosen archiver devices in preference order (set with
+ * `archivers=`); `auto` is the auto-select flag (set with `archiverAuto=`): when
+ * true and `list` is empty, the station lets a volunteer node keep its messages.
+ * Negated required size when [out_cap] is too small, as with the other reads. */
+__attribute__((import_module("hal"), import_name("xprs_archivers")))
+int32_t hal_xprs_archivers(char *out, uint32_t out_cap);
 
 /* Browse a nearby station's custody store and take chosen messages with you.
  * Kick-off-and-poll (a dial takes seconds; a HAL call may not stall the
