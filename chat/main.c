@@ -461,6 +461,29 @@ static void send_message(const char *id, const char *text_in) {
 
 /* ── What the core routes to us ───────────────────────────────────────── */
 
+/* A shared file's reference travels in the `file:` FIELD, outside the caption
+ * (XPRS.md 7.7.7), so it survives a sealed 1:1 where the caption does not. The
+ * host draws an attachment from a token in the message text, so put it back
+ * there -- once, and only if the caption does not already carry it (older
+ * builds left it in the text). The wapp never sees a byte: the token names
+ * bytes the CORE fetches, stores and reports progress on. */
+static int s_in(const char *hay, const char *needle) {
+  if (!needle[0]) return 1;
+  for (const char *h = hay; *h; h++) {
+    const char *a = h, *b = needle;
+    while (*a && *b && *a == *b) { a++; b++; }
+    if (!*b) return 1;
+  }
+  return 0;
+}
+
+static void body_add_file(char *body, unsigned cap, const char *ref) {
+  if (!ref[0] || s_in(body, ref)) return;
+  if (body[0]) s_cat(body, " ", cap);
+  s_cat(body, "file:", cap);
+  s_cat(body, ref, cap);
+}
+
 /* A packet delivered as HEARD: the wire's fields, its section 5 identifier
  * and its provenance. Undirected traffic and open-group bulletins render from
  * here. A 1:1 and a closed-group post arrive in the other shape, with
@@ -512,7 +535,13 @@ static void on_core_packet(const char *topic, const char *row) {
   }
   if (!s_eq(topic, "xprs.message")) return;
   char m[900] = "";
-  if (!jfield(row, "m", m, sizeof(m)) || !m[0]) return;
+  char fref[80] = "";
+  jfield(row, "file", fref, sizeof(fref));
+  /* A picture sent without a caption is a message. It has no `m:` at all
+   * (7.6 splits only the caption), so requiring one dropped it silently. */
+  if (!jfield(row, "m", m, sizeof(m)) && !fref[0]) return;
+  if (!m[0] && !fref[0]) return;
+  body_add_file(m, sizeof(m), fref);
   /* A closed group's callsign is an X5 station by 6.3's naming, but a post to
    * it is a PLAIN BROADCAST (13.11.3, "a group is an address, not a boundary")
    * and renders HERE like an open-group bulletin, filtered by the roster
@@ -581,9 +610,15 @@ static void on_core_event(const char *topic, const char *row) {
    * literal: this branch used to hardcode "rns", so every 1:1 read
    * "Reticulum" whatever carried it. Empty = no tag, never a guess. */
   jstr(row, "bearer", bearer, sizeof(bearer));
+  /* The attachment the core named for us (7.7.7). Present on the decoded
+   * shape as its own key, because a sealed 1:1's caption is not where a
+   * reference can travel. */
+  char fref[80] = "";
+  jstr(row, "file", fref, sizeof(fref));
   /* Two shapes reach us on xprs.message. `content` marks the finished one:
    * a 1:1 or a closed-group post the core reassembled and unsealed. */
-  if (!jstr(row, "content", content, sizeof(content)) || !content[0]) {
+  if (!jstr(row, "content", content, sizeof(content)) ||
+      (!content[0] && !fref[0])) {
     on_core_packet(topic, row);
     return;
   }
@@ -604,13 +639,16 @@ static void on_core_event(const char *topic, const char *row) {
   }
   char mid[24];
   if (id[0]) s_cpy(mid, id, sizeof(mid));
-  else { char dk[5]; msg_id(call, content, dk); s_cpy(mid, "c:", sizeof(mid)); s_cat(mid, dk, sizeof(mid)); }
+  /* No identifier from the core: derive one. A caption-less picture has no
+   * text to derive from, so the reference is what names it. */
+  else { char dk[5]; msg_id(call, content[0] ? content : fref, dk); s_cpy(mid, "c:", sizeof(mid)); s_cat(mid, dk, sizeof(mid)); }
   uint64_t ts = (uint64_t)jint(row, "ts");
   if (ts > 100000000000ULL) ts /= 1000;   /* milliseconds from some sources */
   char parent[8] = "";
   static char body[900];
   s_cpy(body, content, sizeof(body));
   if (room[0] == '#') strip_reply6(body, parent);
+  body_add_file(body, sizeof(body), fref);
   /* The read half of 13.7 is recorded by room_admit (a live inbound 1:1 is
    * queued in the room's database) and aired when the user opens the thread
    * (room_open -> room_flush_reads). Nothing to do here. */

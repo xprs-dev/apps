@@ -564,6 +564,71 @@ TEST(a_closed_group_post_renders_from_either_shape_the_core_delivers) {
   CHECK(cap_count("ui.convo.msg") == 1);
 }
 
+TEST(a_shared_file_reaches_the_bubble_on_both_shapes_and_only_once) {
+  fresh();
+  /* 7.7.7: the reference travels as the `file:` FIELD, outside the caption, so
+   * it survives a sealed 1:1. The host draws an attachment from a token in the
+   * message text, so the wapp puts it back there -- once. The wapp never sees
+   * a byte and never asks for one: the CORE fetches, stores and reports. */
+  const char *ref = "abcdefghijklmnopqrstuvwxyz0123456789_-ABCDE.jpg";
+
+  /* The decoded shape (a 1:1), caption and file. */
+  cap_clear();
+  { char row[640];
+    snprintf(row, sizeof(row),
+      "{\"id\":\"fl0001\",\"type\":\"message\",\"from\":\"9fe08ecd\",\"call\":\"X1PEER\","
+      "\"sig\":\"verified\",\"to\":\"\",\"content\":\"look at this\",\"file\":\"%s\","
+      "\"size\":\"18kB\",\"name\":\"beach.jpg\",\"title\":\"X1PEER\",\"ts\":1700000500,"
+      "\"forUs\":true,\"bearer\":\"rns\",\"sealed\":false}", ref);
+    event_push("xprs.message", row); }
+  module_handle_event();
+  CHECK(cap_count("ui.convo.msg") == 1);
+  CHECK(cap_contains("file:abcdefghijklmnopqrstuvwxyz0123456789_-ABCDE.jpg"));
+
+  /* A picture sent with NO caption is still a message: there is no `m:` at
+   * all, and requiring one dropped it silently. */
+  cap_clear();
+  { char row[640];
+    snprintf(row, sizeof(row),
+      "{\"id\":\"fl0002\",\"type\":\"message\",\"from\":\"9fe08ecd\",\"call\":\"X1PEER\","
+      "\"sig\":\"verified\",\"to\":\"\",\"content\":\"\",\"file\":\"%s\","
+      "\"title\":\"X1PEER\",\"ts\":1700000600,\"forUs\":true,\"bearer\":\"rns\","
+      "\"sealed\":false}", ref);
+    event_push("xprs.message", row); }
+  module_handle_event();
+  CHECK(cap_count("ui.convo.msg") == 1);
+
+  /* The heard-packet shape (a group post): the field arrives in `fields`. */
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5ROOM\"}");
+  module_handle_event();
+  cap_clear();
+  { char row[700];
+    snprintf(row, sizeof(row),
+      "{\"id\":\"fl0003\",\"type\":\"message\",\"from\":\"X1PEER\",\"to\":\"X5ROOM\","
+      "\"fields\":[[\"t\",\"message\"],[\"f\",\"X1PEER\"],[\"d\",\"X5ROOM\"],"
+      "[\"file\",\"%s\"],[\"size\",\"18kB\"],[\"m\",\"in the group\"]],"
+      "\"scope\":\"global\",\"bearer\":\"lan\",\"sig\":\"verified\"}", ref);
+    event_push("xprs.message", row); }
+  module_handle_event();
+  CHECK(cap_count("ui.convo.msg") == 1);
+  CHECK(cap_contains("file:abcdefghijklmnopqrstuvwxyz0123456789_-ABCDE.jpg"));
+
+  /* An older build left the token in the caption. It must not end up twice. */
+  cap_clear();
+  { char row[700];
+    snprintf(row, sizeof(row),
+      "{\"id\":\"fl0004\",\"type\":\"message\",\"from\":\"9fe08ecd\",\"call\":\"X1PEER\","
+      "\"sig\":\"verified\",\"to\":\"\",\"content\":\"here file:%s\",\"file\":\"%s\","
+      "\"title\":\"X1PEER\",\"ts\":1700000700,\"forUs\":true,\"bearer\":\"rns\","
+      "\"sealed\":false}", ref, ref);
+    event_push("xprs.message", row); }
+  module_handle_event();
+  { const char *t = cap_find("ui.convo.msg"); int n = 0;
+    CHECK(t != 0);
+    for (const char *h = strstr(t, "file:abcdefg"); h; h = strstr(h + 1, "file:abcdefg")) n++;
+    CHECK(n == 1); }
+}
+
 TEST(a_message_read_live_in_the_open_room_flushes_its_receipt_now) {
   fresh();
   mock_reads_clear();
@@ -639,6 +704,7 @@ int main(void) {
   run_the_member_panel_lists_the_roster_when_a_group_opens();
   run_a_group_we_belong_to_gets_a_room_the_moment_it_exists();
   run_a_closed_group_post_renders_from_either_shape_the_core_delivers();
+  run_a_shared_file_reaches_the_bubble_on_both_shapes_and_only_once();
   run_a_message_read_live_in_the_open_room_flushes_its_receipt_now();
   run_opening_a_thread_acks_read_for_older_unacked_messages_too();
   run_rooms_survive_a_restart_and_kv_is_cleaned_once();

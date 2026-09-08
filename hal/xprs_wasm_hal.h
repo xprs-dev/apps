@@ -401,14 +401,39 @@ uint32_t hal_storage_request(int32_t unused);
 __attribute__((import_module("hal"), import_name("fs_home")))
 uint32_t hal_fs_home(char *out_buf, uint32_t out_len);
 
-/* Try to obtain the bytes for a token from known sources (Blossom servers,
- * then the torrent swarm). Asynchronous: returns 1 when the lookup started
- * (or the file is already local); poll hal_media_meta to see it arrive. */
-/* Obtain the bytes for a token: scan the LAN for a Blossom peer that has it,
- * then the BitTorrent swarm via any recorded infohash. Asynchronous: 1 = the
- * lookup started (or already local); poll hal_media_meta for arrival. */
+/* Ask the core for the bytes behind a token. Asynchronous: 1 = the request was
+ * taken (or the file is already held); watch `core.media` for the answer.
+ *
+ * THE CORE CHOOSES THE LANE. It looks in the store first (a file obtained once
+ * is never fetched again), then picks by size and by what actually reaches a
+ * holder: the packet lane for small files, which crosses a public hub; the
+ * bulk lane where a BLE session or a LAN peer exists; Reticulum, Blossom or
+ * the swarm over the internet. A wapp asking for a file states a want, not a
+ * route (docs/architecture.md section 3). */
 __attribute__((import_module("hal"), import_name("media_fetch")))
 uint32_t hal_media_fetch(const char *token, uint32_t token_len);
+
+/* What the core is doing about one reference → JSON, or 0 if the token does
+ * not parse:
+ *
+ *   {"state":"absent|seeking|fetching|ready|failed",
+ *    "received":<bytes so far>, "total":<bytes expected>,
+ *    "size":<announced size>, "name":"...", "ext":"jpg",
+ *    "original":"<token>"}
+ *
+ * `original` is the full-resolution file a carried preview stands for, and is
+ * empty when the message carries the file itself (XPRS.md 7.7.7). Read it on a
+ * `core.media` event, not on a timer. */
+__attribute__((import_module("hal"), import_name("media_state")))
+uint32_t hal_media_state(const char *token, uint32_t token_len,
+                         char *out_buf, uint32_t out_len);
+
+/* Hand a held file to whatever this device uses to view that type. 1 = the
+ * export started; 0 = the token does not parse or the bytes are not held yet.
+ * The bytes go from the store to a temporary file on a worker isolate; they
+ * never pass through the wapp. */
+__attribute__((import_module("hal"), import_name("media_open")))
+uint32_t hal_media_open(const char *token, uint32_t token_len);
 
 /* Fetch from a magnet: link (the cross-internet path). [expected] is an
  * optional file:token to verify the downloaded content against. */
@@ -868,6 +893,9 @@ int32_t hal_lib_call(const char *lib_id, uint32_t lib_id_len,
  *       core.rns.graph       announced Reticulum nodes and their hubs
  *       core.mesh.topology   the BLE neighbour table and its routes
  *       core.archive         the archive's counters and what is held
+ *       core.media           a shared file moved: it arrived, its transfer
+ *                            advanced, or it failed. Read hal_media_state for
+ *                            the reference you are drawing.
  *
  * A wapp that subscribes to what it draws can declare
  * `module_tick_interval_ms() = 0` and have no clock at all. Before these
