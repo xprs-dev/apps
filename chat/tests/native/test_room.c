@@ -347,6 +347,32 @@ TEST(actions_reach_their_handlers) {
   CHECK(!room_known("#OTHER"));
 }
 
+/* A time with no day is unreadable once you scroll: 09:41 could be this
+ * morning or last month. Every message says which calendar day it fell on, in
+ * the reader's own time, and the host draws a separator where that changes. */
+TEST(a_message_says_which_day_it_belongs_to) {
+  fresh();
+  local_packet("X1PEER", "day001", "what day was this", "local");
+  const char *m = cap_find("ui.convo.msg");
+  CHECK(m && strstr(m, "\"time\":\"10:00\""));
+  CHECK(m && strstr(m, "\"date\":\"2026-09-04\""));
+}
+
+/* The arithmetic, at the boundaries it is usually wrong at: the epoch itself,
+ * either side of a midnight, the century leap day that is a leap year, an
+ * ordinary leap day, and the turn of a year. */
+TEST(the_calendar_date_is_exact_at_every_awkward_boundary) {
+  char b[12];
+  fmt_date_at(b, 0);          CHECK(strcmp(b, "1970-01-01") == 0);
+  fmt_date_at(b, 86399);      CHECK(strcmp(b, "1970-01-01") == 0);
+  fmt_date_at(b, 86400);      CHECK(strcmp(b, "1970-01-02") == 0);
+  fmt_date_at(b, 951782400);  CHECK(strcmp(b, "2000-02-29") == 0);
+  fmt_date_at(b, 1709164800); CHECK(strcmp(b, "2024-02-29") == 0);
+  fmt_date_at(b, 1735689599); CHECK(strcmp(b, "2024-12-31") == 0);
+  fmt_date_at(b, 1735689600); CHECK(strcmp(b, "2025-01-01") == 0);
+  fmt_date_at(b, 1788516000); CHECK(strcmp(b, "2026-09-04") == 0);
+}
+
 TEST(a_reply_buffer_too_small_halves_the_tail) {
   fresh();
   for (int i = 0; i < 40; i++) {
@@ -619,6 +645,8 @@ int main(void) {
   run_actions_reach_their_handlers();
   run_a_reply_buffer_too_small_halves_the_tail();
   run_a_room_file_name_is_safe_and_stable();
+  run_a_message_says_which_day_it_belongs_to();
+  run_the_calendar_date_is_exact_at_every_awkward_boundary();
   printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

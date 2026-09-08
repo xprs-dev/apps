@@ -89,6 +89,8 @@ void blocked_publish(void);
 
 /* Shared with main.c */
 void fmt_time_at(char *b, unsigned long long epoch);
+/* YYYY-MM-DD in the reader's local time, for the host's day separators. */
+void fmt_date_at(char *b, unsigned long long epoch);
 void log1(const char *line);
 
 #endif /* CHAT_ROOM_H */

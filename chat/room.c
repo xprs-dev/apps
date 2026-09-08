@@ -97,6 +97,49 @@ void fmt_time_at(char *b, unsigned long long e) {
   b[3] = (char)('0' + mm / 10); b[4] = (char)('0' + mm % 10); b[5] = 0;
 }
 
+/* The calendar day a message belongs to, local time, as YYYY-MM-DD.
+ *
+ * A time alone tells the reader nothing about WHEN: scrolling back through a
+ * conversation, "09:41" could be this morning or a month ago. The host draws a
+ * day separator wherever this changes between one message and the next, the
+ * way every chat application does, and says "Today" or "Yesterday" itself --
+ * that is a rendering decision, and the wapp's job is only to say which day a
+ * message fell on. It is the wapp's because only the wapp knows the reader's
+ * offset from UTC, and the same instant is two different days either side of
+ * midnight.
+ *
+ * Days-to-civil is the usual shifted-era arithmetic (era = 400 years), which
+ * needs no library and no table and is exact for every date this format can
+ * carry. There is no libc here to ask.
+ */
+void fmt_date_at(char *b, unsigned long long e) {
+  if (!g_tz_known) { g_tz_min = hal_time_utc_offset(); g_tz_known = 1; }
+  long long secs = (long long)e + (long long)g_tz_min * 60;
+  long long z = secs / 86400;
+  if (secs % 86400 < 0) z -= 1;          /* floor, not truncate */
+  z += 719468;                            /* shift the epoch to 0000-03-01 */
+  long long era = (z >= 0 ? z : z - 146096) / 146097;
+  unsigned long long doe = (unsigned long long)(z - era * 146097);
+  unsigned long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  long long y = (long long)yoe + era * 400;
+  unsigned long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  unsigned long long mp = (5 * doy + 2) / 153;
+  unsigned long long d = doy - (153 * mp + 2) / 5 + 1;
+  unsigned long long mo = mp + (mp < 10 ? 3 : -9);
+  if (mo <= 2) y += 1;
+  b[0] = (char)('0' + (int)((y / 1000) % 10));
+  b[1] = (char)('0' + (int)((y / 100) % 10));
+  b[2] = (char)('0' + (int)((y / 10) % 10));
+  b[3] = (char)('0' + (int)(y % 10));
+  b[4] = '-';
+  b[5] = (char)('0' + (int)(mo / 10));
+  b[6] = (char)('0' + (int)(mo % 10));
+  b[7] = '-';
+  b[8] = (char)('0' + (int)(d / 10));
+  b[9] = (char)('0' + (int)(d % 10));
+  b[10] = 0;
+}
+
 /* ── the view (ui.* out) ──────────────────────────────────────────── */
 static const char *via_label(const char *via) {
   if (!via || !via[0]) return "";
@@ -146,6 +189,7 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
                      int enc, const char *rid, const char *status, int sys,
                      int priv, int obf) {
   char t[8]; fmt_time_at(t, ts);
+  char dstr[12]; fmt_date_at(dstr, ts);
   /* 1400: a 900-byte body doubles under escaping in the worst case, and the
    * old 640 silently truncated the JSON, which the host then refused. */
   static char m[1400];
@@ -155,6 +199,7 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
   s_cat(m, "\",\"from\":\"", sizeof(m)); jesc(m, sizeof(m), sender);
   s_cat(m, "\",\"text\":\"", sizeof(m)); jesc(m, sizeof(m), body);
   s_cat(m, "\",\"time\":\"", sizeof(m)); s_cat(m, t, sizeof(m));
+  s_cat(m, "\",\"date\":\"", sizeof(m)); s_cat(m, dstr, sizeof(m));
   s_cat(m, "\",\"key\":\"", sizeof(m)); jesc(m, sizeof(m), mid);
   s_cat(m, "\",\"mid\":\"", sizeof(m)); jesc(m, sizeof(m), mid);
   s_cat(m, "\"", sizeof(m));
