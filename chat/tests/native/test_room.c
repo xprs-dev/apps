@@ -182,6 +182,28 @@ TEST(replay_from_the_archive_is_silent) {
   CHECK(cap_count("ui.convo.msg") == 2);
 }
 
+#define BAR3 "\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88"   /* three U+2588 bars */
+
+/* 6.2.1: a Local post carrying `xr:` is obfuscated, and the archive is the only
+ * thing that says so after a restart -- the live path is told by the core. The
+ * backfill used to admit every replayed row with obf=0, so the bars survived
+ * but the tap that opens them did not. */
+TEST(a_backfilled_redaction_keeps_its_bars) {
+  fresh();
+  mock_set_history(
+    "[{\"ts\":1700000100,\"bearer\":\"ble\",\"from\":\"X1PEER\",\"to\":\"\",\"type\":\"message\",\"id\":\"h10001\",\"own\":false,\"sig\":\"verified\",\"wire\":\"t:message f:X1PEER ts:2026-09-04_10:01:00 scope:local xr:AAECAwQFBgcICQoLzz m:meet " BAR3 "\"},"
+    "{\"ts\":1700000000,\"bearer\":\"ble\",\"from\":\"X1PEER\",\"to\":\"\",\"type\":\"message\",\"id\":\"h10000\",\"own\":false,\"sig\":\"verified\",\"wire\":\"t:message f:X1PEER ts:2026-09-04_10:00:00 scope:local m:plain one\"}]");
+  module_destroy(); cap_clear(); log_clear();
+  module_init();
+  CHECK(cap_count("ui.convo.msg") == 2);
+  CHECK(cap_count("\"obfuscated\":true") == 1);   /* the redacted one, and only it */
+  { int found = 0;
+    for (int i = 0; i < cap_n(); i++)
+      if (strstr(cap_nth(i), "\"obfuscated\":true") && strstr(cap_nth(i), "Tap to reveal"))
+        found = 1;
+    CHECK(found); }
+}
+
 TEST(a_blocked_sender_never_enters) {
   fresh();
   inbox_set("{\"command\":\"rooms_block\",\"rooms_blockcall\":\"x1spam\"}");
@@ -691,6 +713,7 @@ int main(void) {
   run_open_repaints_from_the_database_newest_fifty();
   run_a_message_for_the_open_room_does_not_count();
   run_replay_from_the_archive_is_silent();
+  run_a_backfilled_redaction_keeps_its_bars();
   run_a_blocked_sender_never_enters();
   run_hide_forgets_a_message_for_good();
   run_a_one_to_one_arrives_by_callsign_and_creates_its_room();

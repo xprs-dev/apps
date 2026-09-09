@@ -1505,15 +1505,21 @@ int32_t hal_xprs_unlock(const char *id, uint32_t id_len,
  * ((secret)); this hands the marked text and a passphrase to the core, which
  * turns each span into bars, builds the `xr:` blob, signs and airs the packet.
  *
- * [convo] is the conversation id (a callsign, or a group's "#X5...."); [text]
- * is the marked text; [pass] is the author's passphrase, or NULL/0 for the
- * default. The wapp builds no wire and runs no cipher.
+ * [convo] is the conversation id, and it decides how the packet is addressed:
+ * a station's callsign or a group's "#X5...." is addressed (`d:`), while
+ * "#LOCAL" is the undirected room and goes out scoped instead (13.11.1:
+ * `scope:local`, no `d:`). [text] is the marked text; [pass] is the author's
+ * passphrase, or NULL/0 for the default. The wapp builds no wire, runs no
+ * cipher, and does not decide how the bytes travel.
  *
  * ASYNCHRONOUS (same slow derivation): returns 0 at once, and the author's own
  * barred copy comes back on the `xprs.redacted` event
- *   {"convo":..,"id":..,"m":"<the barred text>"}
+ *   {"convo":..,"id":..,"m":"<the barred text>","ok":true}
  * to admit as the outgoing bubble -- obfuscated like everyone else sees it, and
- * openable with one tap because the author's passphrase is now remembered. */
+ * openable with one tap because the author's passphrase is now remembered.
+ * A refusal (nothing marked, no room in a packet, no standing in that group)
+ * arrives on the same event as {"convo":..,"ok":false} and carries no id: the
+ * message did NOT go out, and the wapp should say so. */
 __attribute__((import_module("hal"), import_name("xprs_redact")))
 int32_t hal_xprs_redact(const char *convo, uint32_t convo_len,
                         const char *text, uint32_t text_len,

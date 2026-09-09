@@ -292,9 +292,14 @@ static void xroom_backfill(void) {
     char body[400];
     if (!wire_body(wire, body, sizeof(body))) continue;
     char parent[8] = ""; wire_key(wire, "r", parent, sizeof(parent));
+    /* 9.2.1: an `xr:` field means part of this is behind a passphrase. The live
+     * path is told so by the core (`obfuscated`); the archive hands over the
+     * wire, so read it from there or the bars stop being tappable after a
+     * restart. wire_key truncates into a small buffer and still answers 1. */
+    char xrv[8]; int obf = wire_key(wire, "xr", xrv, sizeof(xrv)) ? 1 : 0;
     if (admit(XROOM_LOCAL, id, mine ? "out" : "in", mine ? g_call : from, body, parent,
               bearer, s_eq(sig, "verified") ? "verified" : "", 0,
-              (uint64_t)jint(slice, "ts"), "", "", 1, 0) == 1)
+              (uint64_t)jint(slice, "ts"), "", "", 1, obf) == 1)
       kept++;
   }
   char lg[96] = "[chat] local backfill: read=";
@@ -311,16 +316,18 @@ static void send_message(const char *id, const char *text_in) {
 
   /* 9.2.1: a message with ((...)) spans is aired obfuscated. The core builds
    * the bars and the `xr:` blob (it needs a passphrase); the wapp only asks for
-   * one and hands over the marked text. Offered for a directed conversation
-   * (1:1 or a closed group); the Local room's undirected redaction is not yet. */
-  if ((xgroup_is(id) || xprs_is_station(id)) &&
+   * one and hands over the marked text. Every room it can be said in: a 1:1, a
+   * closed group, and the Local room -- where the core airs it undirected
+   * (scope:local, no d:) instead of addressed. Local used to fall through to
+   * the plain broadcast below, which aired the secret in the clear. */
+  if ((xroom_is(id) || xgroup_is(id) || xprs_is_station(id)) &&
       s_find(text, "((") && s_find(text, "))")) {
     s_cpy(g_redact_text, text, sizeof(g_redact_text));
-    char pm[320] = "{\"type\":\"ui.prompt\",\"id\":\"xrmk:";
+    char pm[384] = "{\"type\":\"ui.prompt\",\"id\":\"xrmk:";
     s_cat(pm, id, sizeof(pm));
     s_cat(pm, "\",\"title\":\"Hide part of this message\",\"body\":\"Enter a "
               "passphrase (leave blank for the default), or pick one you have used "
-              "before.\",\"passphrases\":true,\"input\":{\"hint\":"
+              "before.\",\"passphrases\":true,\"confirm\":\"Hide\",\"input\":{\"hint\":"
               "\"passphrase\",\"max\":64}}", sizeof(pm));
     hal_msg_send(pm, s_len(pm));
     return;
@@ -672,10 +679,11 @@ static void on_xr_unlock(const char *row) {
     room_reveal(id, text);
     return;
   }
-  char pm[200] = "{\"type\":\"ui.prompt\",\"id\":\"xrpw:";
+  char pm[256] = "{\"type\":\"ui.prompt\",\"id\":\"xrpw:";
   s_cat(pm, id, sizeof(pm));
   s_cat(pm, "\",\"title\":\"Hidden text\",\"body\":\"Enter the passphrase to "
-            "reveal this message.\",\"input\":{\"hint\":\"passphrase\",\"max\":64}}",
+            "reveal this message.\",\"confirm\":\"Reveal\",\"input\":{\"hint\":"
+            "\"passphrase\",\"max\":64}}",
         sizeof(pm));
   hal_msg_send(pm, s_len(pm));
 }
@@ -689,6 +697,10 @@ static void on_xr_redacted(const char *row) {
   jstr(row, "convo", convo, sizeof(convo));
   jstr(row, "id", id, sizeof(id));
   jstr(row, "m", m, sizeof(m));
+  /* The core refused it (too long to fit, or no standing in that group): there
+   * is no packet and there will be no bubble, so say so rather than leave the
+   * composer looking like it swallowed the message. */
+  if (!jbool_def(row, "ok", 1)) { notify("warning", "Could not send"); return; }
   if (!convo[0] || !id[0]) return;
   admit(convo, id, "out", g_call, m, "", "", "verified", 0, 0, "", "", 0, 1);
 }

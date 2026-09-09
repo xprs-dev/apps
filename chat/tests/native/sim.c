@@ -86,6 +86,13 @@ static node_t N[MAXNODE]; static int NN;
 static grp_t  G[MAXGRP];  static int GN;
 static int cur = -1;                              /* loaded node, or -1 */
 static int g_seq = 0;                             /* id counter for 1:1 / local */
+/* The last text the core was asked to AIR IN THE CLEAR (hk_broadcast), so a
+ * test can prove a marked message never took that door. */
+static char g_last_clear[512] = "";
+/* Set to make the scripted core refuse the next redaction (too long to fit, no
+ * standing in that group): the wapp is told on the same event, with ok:false. */
+static int g_redact_refuse = 0;
+
 
 /* id -> author callsign, so a read receipt goes back to who sent it */
 static struct { char id[16]; char author[8]; } AUTH[1024]; static int AUTHN;
@@ -274,8 +281,9 @@ static int32_t hk_message(const char* to,uint32_t tl,const char* text,uint32_t l
 /* the Local room — an undirected broadcast to all in earshot. */
 static int32_t hk_broadcast(const char* text,uint32_t l,const char* scope,uint32_t sl,
                             const char* reply,uint32_t rl,char* id,uint32_t cap){
-  (void)l;(void)scope;(void)sl;(void)reply;(void)rl;
+  (void)scope;(void)sl;(void)reply;(void)rl;
   const char* from = cur>=0 ? N[cur].call : "X1TEST";
+  snprintf(g_last_clear,sizeof g_last_clear,"%.*s",(int)l,text);
   char mid[16]; snprintf(mid,sizeof mid,"b%05d",++g_seq);
   snprintf(id,cap,"%s",mid);
   char row[1400];
@@ -359,6 +367,11 @@ static int32_t hk_unlock(const char* id,uint32_t il,const char* pass,uint32_t pl
 
 static int32_t hk_redact(const char* c,uint32_t cl,const char* t,uint32_t tl,
                          const char* pass,uint32_t pl){
+  if(g_redact_refuse){
+    char row[120]; snprintf(row,sizeof row,"{\"convo\":\"%.*s\",\"ok\":false}",(int)cl,c);
+    event_push("xprs.redacted", row);
+    return 0;
+  }
   char barred[512]; int bi=0; char plain[512]; int qi=0;
   for(uint32_t i=0;i<tl;){
     if(i+1<tl && t[i]=='(' && t[i+1]=='('){
@@ -373,9 +386,28 @@ static int32_t hk_redact(const char* c,uint32_t cl,const char* t,uint32_t tl,
   else snprintf(g_sim_correct,sizeof g_sim_correct,"################");
   snprintf(g_sim_stored,sizeof g_sim_stored,"%s",g_sim_correct);   /* author remembers */
   snprintf(g_sim_text,sizeof g_sim_text,"%s",plain);
+  char convo[48]; snprintf(convo,sizeof convo,"%.*s",(int)cl,c);
+  char mid[16]; snprintf(mid,sizeof mid,"r%05d",++g_seq);
   char row[700];
-  snprintf(row,sizeof row,"{\"convo\":\"%.*s\",\"id\":\"rdct01\",\"m\":\"%s\"}",(int)cl,c,barred);
+  snprintf(row,sizeof row,"{\"convo\":\"%s\",\"id\":\"%s\",\"m\":\"%s\",\"ok\":true}",
+           convo,mid,barred);
   event_push("xprs.redacted", row);
+  /* The Local room is undirected (13.11.1): the core airs it scope:local with
+   * no d:, so everyone in earshot gets the barred wire, flagged obfuscated by
+   * its `xr:` field. A 1:1 or a group is the addressed shape and the other
+   * hooks already carry those. */
+  if(!strcmp(convo,"#LOCAL")){
+    const char* from = cur>=0 ? N[cur].call : "X1TEST";
+    char out[1400];
+    snprintf(out,sizeof out,
+      "{\"id\":\"%s\",\"type\":\"message\",\"from\":\"%s\",\"to\":\"\",\"scope\":\"local\","
+      "\"sealed\":false,\"bearer\":\"lan\",\"sig\":\"verified\",\"obfuscated\":true,"
+      "\"fields\":[[\"t\",\"message\"],[\"f\",\"%s\"],[\"ts\",\"" STAMP "\"],[\"m\",\"",
+      mid,from,from);
+    jesc_into(out,sizeof out,barred); strncat(out,"\"]]}",sizeof out-strlen(out)-1);
+    for(int i=0;i<NN;i++) if(strcmp(N[i].call,from)) enqueue(i,"xprs.message",out);
+    remember_author(mid,from);
+  }
   return 0;
 }
 
@@ -689,6 +721,69 @@ static void t_compose_obf(void){
   (void)A;
 }
 
+/* THE LOCAL ROOM REDACTS TOO (6.2.1). It used to be the one room where
+ * ((secret)) fell through to a plain broadcast and aired the secret in the
+ * clear. The passphrase prompt is also proven answerable with NOTHING typed,
+ * which is what "leave blank for the default" means. */
+static void t_compose_obf_local(void){
+  printf("obfuscated text — composing in the Local room\n");
+  reset_world();
+  int A=add_node("X1ANNA"), B=add_node("X1BOBB");
+  g_last_clear[0]=0;
+
+  send(A,"#LOCAL","meet ((Max)) at the pier");
+  CHECK(cap_contains("\"type\":\"ui.prompt\""));
+  CHECK(cap_contains("xrmk:#LOCAL"));
+  CHECK(cap_contains("\"confirm\""));            /* a button to press */
+  CHECK(!strstr(g_last_clear,"Max"));            /* nothing aired yet... */
+
+  /* Blank passphrase: the default (################). The prompt is answerable
+   * with an empty field, so the core -- not the wapp -- picks the default. */
+  cap_clear();
+  ui(A,"{\"command\":\"prompt\",\"prompt_id\":\"xrmk:#LOCAL\",\"prompt_input\":\"\"}");
+  pump(A);
+  open_room(A,"#LOCAL");
+  CHECK(cap_contains("\"obfuscated\":true"));    /* the author's own barred echo */
+  CHECK(!cap_contains("Max"));
+  CHECK(!strstr(g_last_clear,"Max"));            /* ...and never in the clear */
+  CHECK(!strstr(g_last_clear,"(("));
+
+  /* It reaches the room: B sees bars and a tip, not the word. */
+  cap_clear(); pump(B); open_room(B,"#LOCAL");
+  CHECK(cap_contains("\"obfuscated\":true"));
+  CHECK(cap_contains("Tap to reveal"));
+  CHECK(!cap_contains("Max"));
+
+  /* A tap opens it with the default, which every station has. */
+  char mid[24]="";
+  CHECK(cap_field("\"obfuscated\":true","mid",mid,sizeof mid));
+  cap_clear();
+  { char c[128]; snprintf(c,sizeof c,"{\"command\":\"reveal\",\"reveal_mid\":\"%s\"}",mid);
+    ui(B,c); }
+  pump(B);
+  CHECK(cap_contains("ui.convo.reveal"));
+  CHECK(cap_contains("meet Max at the pier"));
+  (void)A;
+}
+
+/* A redaction the core refuses (no room in a packet, no standing in a group)
+ * is SAID, not swallowed: the composer used to show nothing at all. */
+static void t_compose_obf_refused(void){
+  printf("obfuscated text — a refusal is said out loud\n");
+  reset_world();
+  add_node("X1ANNA"); add_node("X1BOBB");
+  int A=0;
+
+  g_redact_refuse=1;
+  send(A,"X1BOBB","meet ((Max)) at the pier");
+  cap_clear();
+  ui(A,"{\"command\":\"prompt\",\"prompt_id\":\"xrmk:X1BOBB\",\"prompt_input\":\"secret\"}");
+  pump(A);
+  CHECK(cap_contains("Could not send"));
+  CHECK(!cap_contains("ui.convo.msg"));
+  g_redact_refuse=0;
+}
+
 int main(void){
   mock_set_time(1700000000ULL);
   g_hk_identity=hk_identity; g_hk_send=hk_send; g_hk_message=hk_message;
@@ -702,6 +797,8 @@ int main(void){
   t_direct_react();
   t_obfuscated();
   t_compose_obf();
+  t_compose_obf_local();
+  t_compose_obf_refused();
   t_group_restart();
   t_local();
 
