@@ -922,6 +922,17 @@ void module_handle_event(void) {
     if (id[0] && text[0]) send_message(id, text);
   }
   else if (s_eq(cmd, "rooms_open") || s_eq(cmd, "conversations_open")) do_open(buf);
+  /* The host names a thread it just deep-linked into: "open X1WATT, and by the
+   * way that is what to call it". It has been sending this since the graph
+   * grew a Message button and nothing here read it, so the name fell on the
+   * floor and a thread opened from a profile showed whatever the rail had.
+   * Mail has had the handler all along; chat never did. */
+  else if (s_eq(cmd, "convo_name")) {
+    char id[48] = "", title[64] = "";
+    jstr(buf, "convo_name_id", id, sizeof(id));
+    jstr(buf, "convo_name", title, sizeof(title));
+    if (id[0] && title[0]) { room_set_title(id, title); room_rail(); }
+  }
   else if (s_eq(cmd, "nav_back")) room_left();
   else if (s_eq(cmd, "rooms_close") || s_eq(cmd, "conversations_close")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));

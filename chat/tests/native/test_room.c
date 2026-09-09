@@ -586,6 +586,37 @@ TEST(a_closed_group_post_renders_from_either_shape_the_core_delivers) {
   CHECK(cap_count("ui.convo.msg") == 1);
 }
 
+TEST(the_host_can_open_a_1to1_with_a_station_and_name_it) {
+  fresh();
+  /* Tapping "Message" on a device in the Mesh screen deep-links here: open a
+   * conversation with that callsign, creating it if it has never existed, and
+   * name it. A station heard on a radio has no key and no LXMF address — the
+   * callsign is the whole address (6.3, 13.7), and the thread must appear
+   * ready to type into. `convo_name` used to fall off the end of the dispatch
+   * chain and be discarded. */
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"X3DCK0\"}");
+  module_handle_event();
+  inbox_set("{\"command\":\"convo_name\",\"convo_name_id\":\"X3DCK0\","
+            "\"convo_name\":\"X3DCK0 (mast)\"}");
+  module_handle_event();
+
+  /* The newest rail frame, not the one the open produced. */
+  const char *rail = cap_nth(cap_n() - 1);
+  CHECK(cap_contains("X3DCK0 (mast)"));
+  CHECK(rail != 0);
+
+  /* And it is a real conversation: a message typed into it renders as ours
+   * and goes out addressed to that callsign — no key, no LXMF address, just
+   * the callsign. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"X3DCK0\","
+            "\"rooms_input\":\"are you awake\"}");
+  module_handle_event();
+  CHECK(cap_count("ui.convo.msg") == 1);
+  CHECK(cap_contains("\"dir\":\"out\""));
+  CHECK(cap_contains("are you awake"));
+}
+
 TEST(a_shared_file_reaches_the_bubble_on_both_shapes_and_only_once) {
   fresh();
   /* 7.7.7: the reference travels as the `file:` FIELD, outside the caption, so
@@ -727,6 +758,7 @@ int main(void) {
   run_the_member_panel_lists_the_roster_when_a_group_opens();
   run_a_group_we_belong_to_gets_a_room_the_moment_it_exists();
   run_a_closed_group_post_renders_from_either_shape_the_core_delivers();
+  run_the_host_can_open_a_1to1_with_a_station_and_name_it();
   run_a_shared_file_reaches_the_bubble_on_both_shapes_and_only_once();
   run_a_message_read_live_in_the_open_room_flushes_its_receipt_now();
   run_opening_a_thread_acks_read_for_older_unacked_messages_too();
