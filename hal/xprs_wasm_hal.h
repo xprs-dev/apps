@@ -1662,6 +1662,27 @@ int32_t hal_xprs_set_pref(const char *kv, uint32_t kv_len);
 __attribute__((import_module("hal"), import_name("xprs_archivers")))
 int32_t hal_xprs_archivers(char *out, uint32_t out_cap);
 
+/* What this station keeps, and for whom (XPRS.md 12's three tiers) -> JSON.
+ *
+ *   {"public":bool,          keeps strangers' packets, announces serve:archive
+ *    "alwaysOn":bool,        the further promise; false unless public is on
+ *    "alwaysOnStored":bool,  the raw switch, so a screen can show it greyed
+ *    "keepFollowed":bool, "keepChatter":bool,
+ *    "quotaMb":n, "maxDays":n,        the STRANGERS' limits; mine and the
+ *                                     people I follow are exempt from both
+ *    "records":{"own":n,"followed":n,"stranger":n,"total":n},
+ *    "bytes":n, "bytesText":"…", "quotaText":"…", "fullFrac":0..1,
+ *    "followedCallsigns":n,
+ *    "asksLastHour":n, "answered":n, "refused":n,
+ *    "announced":"archive,files"|"",   what the beacon actually claims
+ *    "named":["X3ARC1",…]}             archivers the operator wrote down
+ *
+ * There is no "super": section 13's serve: vocabulary has `archive` and
+ * nothing above it, and 12.9.4 describes an always-on archiver by its
+ * qualities rather than by a rank. Read it when `core.archive` fires. */
+__attribute__((import_module("hal"), import_name("xprs_archive")))
+int32_t hal_xprs_archive(char *out, uint32_t out_cap);
+
 /* Browse a nearby station's custody store and take chosen messages with you.
  * Kick-off-and-poll (a dial takes seconds; a HAL call may not stall the
  * engine): cmd is JSON —

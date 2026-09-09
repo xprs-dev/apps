@@ -1,15 +1,115 @@
 [
   {
     "$": "screen",
-    "name": "Storage",
-    "icon": "archive",
-    "tip": "Keeps copies of other people's posts and files, so they survive when the device that made them is offline. Nothing of yours is deleted to make room.",
+    "name": "Archive",
+    "icon": "inventory_2",
+    "tip": "XPRS packets — the messages and posts this device writes down. Yours are always kept. Beyond that you decide: the callsigns you follow, and whether strangers get a place too.",
+    "children": [
+      {
+        "$": "field",
+        "name": "archive_dashboard",
+        "$type": "stats"
+      },
+      {
+        "$": "field",
+        "name": "keep_followed",
+        "$type": "bool",
+        "label": "Keep what people I follow say",
+        "tip": "Their messages and posts are kept for as long as you follow them — no limit and no expiry, the same as your own.",
+        "default": true,
+        "apply": "keep_followed_changed"
+      },
+      {
+        "$": "field",
+        "name": "public",
+        "$type": "bool",
+        "label": "Public archiver",
+        "tip": "Keep strangers' packets too, within the limit below, and tell the network so (serve:archive). Off, this device keeps nothing for anybody else and announces nothing.",
+        "default": false,
+        "apply": "public_changed"
+      },
+      {
+        "$": "field",
+        "name": "quota_mb",
+        "$type": "enum",
+        "label": "Limit for strangers",
+        "default": "500",
+        "apply": "quota_mb_changed",
+        "children": [
+          {
+            "$": "option",
+            "name": "100",
+            "label": "100 MB"
+          },
+          {
+            "$": "option",
+            "name": "500",
+            "label": "500 MB"
+          },
+          {
+            "$": "option",
+            "name": "2000",
+            "label": "2 GB"
+          },
+          {
+            "$": "option",
+            "name": "10000",
+            "label": "10 GB"
+          }
+        ]
+      },
+      {
+        "$": "field",
+        "name": "max_days",
+        "$type": "enum",
+        "label": "Forget strangers after",
+        "default": "365",
+        "apply": "max_days_changed",
+        "children": [
+          {
+            "$": "option",
+            "name": "7",
+            "label": "a week"
+          },
+          {
+            "$": "option",
+            "name": "30",
+            "label": "a month"
+          },
+          {
+            "$": "option",
+            "name": "90",
+            "label": "three months"
+          },
+          {
+            "$": "option",
+            "name": "365",
+            "label": "a year"
+          }
+        ]
+      },
+      {
+        "$": "field",
+        "name": "always_on",
+        "$type": "bool",
+        "label": "Always on",
+        "tip": "The further promise a plugged-in machine can make: raised budgets, gossip for every callsign, and a place others deposit mail. Needs Public archiver.",
+        "default": false,
+        "apply": "always_on_changed"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Files",
+    "icon": "folder_shared",
+    "tip": "Files this device hosts for other people, so they survive when the device that made them is offline. Nothing of yours is deleted to make room.",
     "children": [
       {
         "$": "field",
         "name": "enabled",
         "$type": "bool",
-        "label": "Enable",
+        "label": "Host files for others",
         "default": false,
         "apply": "enabled_changed"
       },

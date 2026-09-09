@@ -69,7 +69,7 @@ static void json_cat_escaped(char *d, const char *s, unsigned m) {
 static int  g_xprs_only = 1;       /* show only xprs nodes (+ hubs)  */
 static char g_service[32]  = "";      /* show only nodes with this service */
 static char g_search[64]   = "";      /* substring match on label/id/svc   */
-/* Role bucket: "" (any) | "super" | "archive" | "normal". Deliberately NOT
+/* Role bucket: "" (any) | "alwayson" | "archive" | "normal". Deliberately NOT
  * persisted alongside xonly/svc/q below: the host owns the chip's state and
  * re-initialises it every time the page opens, so a filter remembered here
  * would outlive the chip that shows it -- which is exactly how xonly already

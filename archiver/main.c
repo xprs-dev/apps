@@ -80,7 +80,7 @@ static int json_raw(const char *json, const char *key, char *out, unsigned m) {
 }
 
 /* ── Buffers ─────────────────────────────────────────────────────────── */
-static char g_status[4096];
+static char g_status[6144];
 static char g_msg[12288];
 static char g_reqSpark[1024];
 static char g_bwSpark[1024];
@@ -105,6 +105,26 @@ static void set_field(const char *name, const char *value) {
     str_cat(g_msg, value, sizeof(g_msg));
     str_cat(g_msg, "\"}", sizeof(g_msg));
     send_msg(g_msg);
+}
+
+/* A packet count a phone can read. 155948 in a tile half a screen wide is
+ * rendered "15…", which is not a number -- so anything past four digits is
+ * said in thousands or millions, as a person would say it. */
+static void compact(char *out, int cap, const char *digits) {
+    int len = 0;
+    while (digits[len] >= '0' && digits[len] <= '9') len++;
+    if (len <= 4 || len >= 13) { str_copy(out, digits, cap); return; }
+    const char *suffix = len <= 6 ? "k" : (len <= 9 ? "M" : "G");
+    int keep = len - (len <= 6 ? 3 : (len <= 9 ? 6 : 9)); /* whole units */
+    int i = 0, o = 0;
+    for (; i < keep && o < cap - 4; i++) out[o++] = digits[i];
+    /* One decimal, but never a pointless ".0" and never on a four-digit head. */
+    if (keep <= 2 && digits[keep] != '0' && o < cap - 4) {
+        out[o++] = '.';
+        out[o++] = digits[keep];
+    }
+    out[o] = '\0';
+    str_cat(out, suffix, cap);
 }
 
 /* Append one stat tile (commas are the caller's problem). */
@@ -134,6 +154,113 @@ static void tile(const char *id, const char *label, const char *value,
     }
     if (alert) str_cat(g_msg, ",\"alert\":true", sizeof(g_msg));
     str_cat(g_msg, "}", sizeof(g_msg));
+}
+
+/* THE PACKET ARCHIVE — the three tiers of XPRS.md 12.
+ *
+ * "Every device is an archiver; scale is a setting, not a kind." Mine is
+ * always kept; the callsigns I follow are the middle tier and the reason a
+ * pocket phone keeps anything beyond its own words; strangers are a choice the
+ * operator makes, because silence is not consent.
+ *
+ * The core decides all of that (xprs_archive_policy.dart). This reads one verb
+ * and draws the answer. */
+static void push_archive(void) {
+    int n = hal_xprs_archive(g_status, sizeof(g_status) - 1);
+    if (n <= 0) return;
+    g_status[n] = '\0';
+
+    char pub[8] = "false", always[8] = "false", alwaysRaw[8] = "false";
+    char followed[8] = "true";
+    char quotaMb[16] = "500", maxDays[16] = "365";
+    char own[16] = "0", fol[16] = "0", str[16] = "0", total[16] = "0";
+    char bytes[24] = "0 B", quotaText[24] = "0 B", full[16] = "0";
+    char asks[16] = "0", answered[16] = "0", refused[16] = "0";
+    char announced[32] = "", follows[16] = "0";
+    json_raw(g_status, "public", pub, sizeof(pub));
+    json_raw(g_status, "alwaysOn", always, sizeof(always));
+    json_raw(g_status, "alwaysOnStored", alwaysRaw, sizeof(alwaysRaw));
+    json_raw(g_status, "keepFollowed", followed, sizeof(followed));
+    json_raw(g_status, "quotaMb", quotaMb, sizeof(quotaMb));
+    json_raw(g_status, "maxDays", maxDays, sizeof(maxDays));
+    json_raw(g_status, "own", own, sizeof(own));
+    json_raw(g_status, "followed", fol, sizeof(fol));
+    json_raw(g_status, "stranger", str, sizeof(str));
+    json_raw(g_status, "total", total, sizeof(total));
+    json_raw(g_status, "bytesText", bytes, sizeof(bytes));
+    json_raw(g_status, "quotaText", quotaText, sizeof(quotaText));
+    json_raw(g_status, "fullFrac", full, sizeof(full));
+    json_raw(g_status, "asksLastHour", asks, sizeof(asks));
+    json_raw(g_status, "answered", answered, sizeof(answered));
+    json_raw(g_status, "refused", refused, sizeof(refused));
+    json_raw(g_status, "announced", announced, sizeof(announced));
+    json_raw(g_status, "followedCallsigns", follows, sizeof(follows));
+
+    int isPublic = str_eq(pub, "true");
+
+    str_copy(g_msg,
+             "{\"type\":\"ui.stats.set\",\"field\":\"archive_dashboard\",\"tiles\":[",
+             sizeof(g_msg));
+    char ownC[16], folC[16], strC[16], totalC[16];
+    compact(ownC, sizeof(ownC), own);
+    compact(folC, sizeof(folC), fol);
+    compact(strC, sizeof(strC), str);
+    compact(totalC, sizeof(totalC), total);
+    /* No `unit` on the count tiles: the unit shares the value's line, and on a
+     * phone that squeezed "154k" down to "15…". The word costs nothing in the
+     * hint underneath, where there is a whole line for it. */
+    tile("mine", "Mine", ownC, "", "packets, always kept", "", 0);
+    str_cat(g_msg, ",", sizeof(g_msg));
+    {
+        char hint[48];
+        str_copy(hint, "packets, from ", sizeof(hint));
+        str_cat(hint, follows, sizeof(hint));
+        str_cat(hint, " callsigns", sizeof(hint));
+        tile("followed", "People I follow", folC, "", hint, "", 0);
+    }
+    str_cat(g_msg, ",", sizeof(g_msg));
+    {
+        /* The only shelf the limit bounds, so it is the only one with a bar. */
+        char hint[64];
+        str_copy(hint, isPublic ? "packets, of " : "not kept", sizeof(hint));
+        if (isPublic) str_cat(hint, quotaText, sizeof(hint));
+        tile("strangers", "Strangers", isPublic ? strC : "0", "", hint,
+             isPublic ? full : "", 0);
+    }
+    str_cat(g_msg, ",", sizeof(g_msg));
+    {
+        char hint[32];
+        str_copy(hint, totalC, sizeof(hint));
+        str_cat(hint, " packets", sizeof(hint));
+        tile("total", "On disk", bytes, "", hint, "", 0);
+    }
+    str_cat(g_msg, ",", sizeof(g_msg));
+    {
+        char hint[48];
+        str_copy(hint, answered, sizeof(hint));
+        str_cat(hint, " answered, ", sizeof(hint));
+        str_cat(hint, refused, sizeof(hint));
+        str_cat(hint, " refused", sizeof(hint));
+        tile("asks", "Asked of us", asks, "an hour", hint, "", 0);
+    }
+    str_cat(g_msg, ",", sizeof(g_msg));
+    /* What the beacon actually claims, so the screen and the air agree — the
+     * whole reason this tab exists. */
+    tile("announced", "On the air", announced[0] ? announced : "nothing", "",
+         announced[0] ? "claimed on every beacon"
+                      : "this device announces no role", "", 0);
+    str_cat(g_msg, "]}", sizeof(g_msg));
+    send_msg(g_msg);
+
+    set_field_raw("public", pub);
+    set_field_raw("keep_followed", followed);
+    set_field_raw("always_on", always);
+    set_field(  "quota_mb", quotaMb);
+    set_field(  "max_days", maxDays);
+    /* Always on is a promise only a public archiver can make, so the switch is
+     * greyed until then rather than silently doing nothing. */
+    set_field_raw("always_on__readonly", isPublic ? "false" : "true");
+    (void)alwaysRaw;
 }
 
 static void push_dashboard(void) {
@@ -171,8 +298,15 @@ static void push_dashboard(void) {
     /* How full — the one number that matters, with the bar under it. */
     {
         char hint[64];
-        str_copy(hint, "of ", sizeof(hint));
-        str_cat(hint, quotaText, sizeof(hint));
+        if (on) {
+            str_copy(hint, "of ", sizeof(hint));
+            str_cat(hint, quotaText, sizeof(hint));
+        } else {
+            /* "7.7 MB of off" is not a sentence. With hosting off the number
+             * is what is still on disk from when it was on, and the only
+             * useful thing to say about it is that nothing more will join it. */
+            str_copy(hint, "already here; hosting is off", sizeof(hint));
+        }
         tile("used", "Storage used", usedText, "", hint, on ? full : "", 0);
     }
     str_cat(g_msg, ",", sizeof(g_msg));
@@ -362,6 +496,7 @@ static void arch_mutate(const char *call, int add) {
 }
 
 static void refresh(void) {
+    push_archive();
     push_dashboard();
     push_directory();
     push_myarch();
@@ -450,6 +585,54 @@ int32_t module_handle_event(void) {
         str_cat(kv, state, sizeof(kv));
         hal_node_set_pref(kv, str_len(kv));
         push_directory();
+    /* ── The packet archive: the three tiers of XPRS.md 12. ── */
+    } else if (str_eq(cmd, "public_changed")) {
+        char v[8] = "";
+        json_raw(buf, "public", v, sizeof(v));
+        const char *kv = str_eq(v, "true") ? "public=1" : "public=0";
+        hal_xprs_set_pref(kv, str_len(kv));
+        push_archive();
+    } else if (str_eq(cmd, "always_on_changed")) {
+        /* A promise only a public archiver can make. The core gates it too;
+         * refusing here as well means the switch never shows a state this
+         * station is not actually in. */
+        char v[8] = "", pub[8] = "false";
+        json_raw(buf, "always_on", v, sizeof(v));
+        json_raw(buf, "public", pub, sizeof(pub));
+        if (str_eq(v, "true") && !str_eq(pub, "true")) {
+            set_field_raw("always_on", "false");
+        } else {
+            const char *kv = str_eq(v, "true") ? "alwaysOn=1" : "alwaysOn=0";
+            hal_xprs_set_pref(kv, str_len(kv));
+            push_archive();
+        }
+    } else if (str_eq(cmd, "keep_followed_changed")) {
+        char v[8] = "";
+        json_raw(buf, "keep_followed", v, sizeof(v));
+        const char *kv =
+            str_eq(v, "true") ? "keepFollowed=1" : "keepFollowed=0";
+        hal_xprs_set_pref(kv, str_len(kv));
+        push_archive();
+    } else if (str_eq(cmd, "quota_mb_changed")) {
+        char v[16] = "";
+        json_raw(buf, "quota_mb", v, sizeof(v));
+        if (v[0]) {
+            char kv[32];
+            str_copy(kv, "archiveMaxMb=", sizeof(kv));
+            str_cat(kv, v, sizeof(kv));
+            hal_xprs_set_pref(kv, str_len(kv));
+            push_archive();
+        }
+    } else if (str_eq(cmd, "max_days_changed")) {
+        char v[16] = "";
+        json_raw(buf, "max_days", v, sizeof(v));
+        if (v[0]) {
+            char kv[32];
+            str_copy(kv, "archiveMaxDays=", sizeof(kv));
+            str_cat(kv, v, sizeof(kv));
+            hal_xprs_set_pref(kv, str_len(kv));
+            push_archive();
+        }
     } else if (str_eq(cmd, "enabled_changed")) {
         /* Enabling takes whatever limit the picker shows; disabling means zero,
          * and zero means this device holds nothing for anybody. */
