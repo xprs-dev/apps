@@ -308,6 +308,16 @@ void module_init(void) {
         static const char *t = "core.rns.graph";
         hal_event_subscribe(t, str_len(t));
     }
+    /* AND when a station is heard on the air. The screen counts XPRS devices,
+     * and most of them never announce on Reticulum at all -- a phone two
+     * metres away on BLE moves `core.monitor` and nothing else. Subscribing to
+     * only the announce topic meant a station could arrive, be counted by the
+     * core, and not appear here until some unrelated Reticulum announce
+     * happened to shake the screen. */
+    {
+        static const char *t2 = "core.monitor";
+        hal_event_subscribe(t2, str_len(t2));
+    }
     load_state();
     push_all();
 }

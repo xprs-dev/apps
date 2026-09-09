@@ -88,6 +88,48 @@ int32_t hal_rns_hubs(char *out, uint32_t cap) {
     memcpy(out, s, n); return (int32_t)n;
 }
 
+/* ── the core event bus ────────────────────────────────────────────────────
+ *
+ * Absent until now, while module_init() has called hal_event_subscribe since
+ * the wapp stopped polling — so this harness did not link and every scenario
+ * below was dead code. The wapp redraws on an event and on nothing else, which
+ * makes these three the most important mocks in the file. */
+#define EVQ_MAX 16
+static char g_ev[EVQ_MAX][48];
+static int  g_evn = 0;
+static char g_subs[8][48];
+static int  g_subn = 0;
+
+void event_push(const char* topic) {
+    if (g_evn < EVQ_MAX) snprintf(g_ev[g_evn++], 48, "%s", topic);
+}
+int  event_subscribed(const char* topic) {
+    for (int i = 0; i < g_subn; i++)
+        if (!strcmp(g_subs[i], topic)) return 1;
+    return 0;
+}
+
+int32_t hal_event_subscribe(const char* topic, uint32_t len) {
+    if (g_subn < 8) {
+        int n = (int)len < 47 ? (int)len : 47;
+        memcpy(g_subs[g_subn], topic, n);
+        g_subs[g_subn][n] = 0;
+        g_subn++;
+    }
+    return 0;
+}
+int32_t hal_event_available(void) { return g_evn; }
+int32_t hal_event_recv(char* topic, uint32_t tcap, char* data, uint32_t dcap) {
+    if (g_evn <= 0) return 0;
+    int n = (int)strlen(g_ev[0]);
+    if (n > (int)tcap) n = (int)tcap;
+    memcpy(topic, g_ev[0], n);
+    if (dcap > 2) { data[0] = '{'; data[1] = '}'; }
+    for (int i = 1; i < g_evn; i++) memcpy(g_ev[i - 1], g_ev[i], 48);
+    g_evn--;
+    return n;
+}
+
 int32_t hal_rns_nodes(const char *filter, uint32_t filter_len, char *out, uint32_t cap) {
     uint32_t fn = filter_len < sizeof(g_last_filter) - 1 ? filter_len : sizeof(g_last_filter) - 1;
     memcpy(g_last_filter, filter, fn); g_last_filter[fn] = '\0';

@@ -29,20 +29,53 @@ static void check(int cond, const char *name) {
     if (!cond) g_fail = 1;
 }
 
+/* hal_mock.c */
+void event_push(const char* topic);
+int  event_subscribed(const char* topic);
+
 int main(void) {
     printf("mesh native test\n");
 
     module_init();
 
-    /* ── tick streams graph + hubs ── */
-    cap_clear();
-    module_tick();
-    check(cap_contains("\"type\":\"ui.graph.set\""), "tick pushes graph to host");
+    /* ── boot pushes a frame ──
+     *
+     * This used to clear the capture buffer and then assert on module_tick(),
+     * which has been empty since the wapp stopped polling: six assertions on
+     * nothing. What module_init() emitted is the frame that matters. */
+    check(cap_contains("\"type\":\"ui.graph.set\""), "boot pushes graph to host");
     check(cap_contains("\"nodes\""), "graph carries nodes");
     check(cap_contains("\"edges\""), "graph carries edges");
     check(cap_contains("\"type\":\"ui.graph.hubs\""), "hubs forwarded to host");
     check(cap_contains("rns.beleth.net:4242"), "hub endpoint forwarded");
     check(cap_contains("\"connected\":true"), "hub connected flag forwarded");
+
+    /* ── it redraws on a core event, and on nothing else ── */
+    check(event_subscribed("core.rns.graph"), "subscribed to the announce topic");
+    check(event_subscribed("core.monitor"),
+          "subscribed to the station table — most XPRS devices are heard on "
+          "the air and never announce on Reticulum");
+
+    cap_clear();
+    module_tick();
+    check(cap_count() == 0,
+          "a tick draws nothing: tick_interval_ms is 0 and the screen is "
+          "event-driven (a poll here is the regression)");
+
+    cap_clear();
+    event_push("core.rns.graph");
+    module_handle_event();
+    check(cap_contains("\"type\":\"ui.graph.set\""), "an announce redraws");
+
+    cap_clear();
+    event_push("core.monitor");
+    module_handle_event();
+    check(cap_contains("\"type\":\"ui.graph.set\""),
+          "a station heard on the air redraws");
+
+    cap_clear();
+    module_handle_event();
+    check(cap_count() == 0, "an empty queue draws nothing");
 
     /* ── graph_filter from the page persists + re-fetches with the filter ── */
     cap_clear();
