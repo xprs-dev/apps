@@ -194,6 +194,13 @@ A `.ui.json` file may contain a single `app` block (full definition) or one or m
 | `image` | `--avatar path` | file picker | `lv_img` upload | Image file |
 | `file` | `--attach path` | file picker | file icon | Binary attachment |
 
+**`enum` options are `option` CHILDREN, never an `options` array.** The
+renderer reads `field.childrenOf('option')`, and a field whose choices are an
+`"options": [{value, label}]` array has no children — so it draws as a bare
+label with no control at all, no error anywhere. Each option is
+`{"$": "option", "name": "<value>", "label": "<what a person reads>"}`, and
+`name` is the value the wapp is sent.
+
 ### 3.4 Icon Resolution
 
 Every icon block lists renderers from most specific to most generic. The renderer picks the first entry it supports:
@@ -205,6 +212,14 @@ icon {
   text:  [send];             /* CLI, plain email — last resort */
 }
 ```
+
+**A screen's `"icon"` is a NAME, and an unknown one is silent.** Screen and tab
+icons resolve through `geoUiResolveIcon` in the Flutter host, which is a fixed
+switch: a name it does not carry falls back to `Icons.menu`. The Archiver
+shipped with `inventory_2`, `hub` and `cloud_upload` and wore the hamburger on
+three of its four tabs, which reads as a wapp with duplicate tabs rather than
+as a typo. Use a name the resolver has, or add it there — there is no warning
+either way.
 
 ### 3.5 Image Sources
 
