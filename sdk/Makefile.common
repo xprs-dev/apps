@@ -10,22 +10,12 @@
 # Set MODULE_NAME and MODULE_SRCS in your Makefile, then include
 # this file.
 #
-# Requires: WASI_SDK_PATH environment variable pointing to wasi-sdk.
-#
-# When it is not set, look where install-wasi-sdk.sh actually puts it
-# (~/wasi-sdk) before falling back to the system-wide /opt. Defaulting to
-# /opt alone meant `make` from inside a wapp directory died with
-#
-#   make: /opt/wasi-sdk/bin/clang: No such file or directory
-#
-# on a machine where the SDK was installed and working -- the top-level
-# Makefile and build-all.sh both set $(HOME)/wasi-sdk, so only this path was
-# wrong. It reads like a missing toolchain rather than a missing variable,
-# which is a long way to send somebody for a default.
+# Toolchain: wasi-sdk or distro clang + wasi-libc, see toolchain.mk.
 
-WASI_SDK_PATH ?= $(firstword $(wildcard $(HOME)/wasi-sdk /opt/wasi-sdk) /opt/wasi-sdk)
-CC := $(WASI_SDK_PATH)/bin/clang
-HAL_DIR := $(dir $(lastword $(MAKEFILE_LIST)))../hal
+# Read before the include below: MAKEFILE_LIST's last word is then this file.
+SDK_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
+include $(SDK_DIR)toolchain.mk
+HAL_DIR := $(SDK_DIR)../hal
 
 CFLAGS := \
 	--target=wasm32-wasi \
@@ -70,7 +60,6 @@ $(OUTPUT): $(MODULE_SRCS)
 # Only one test file may include main.c in the same link (the rest
 # rely on extern declarations or focus on already-public APIs).
 
-SDK_DIR      := $(dir $(lastword $(MAKEFILE_LIST)))
 TEST_RUNNER  := $(SDK_DIR)wapp_test.c
 TEST_SRCS    := $(wildcard tests/*.c)
 TEST_OUTPUT  := tests.wasm

@@ -19,6 +19,8 @@
 #
 # Environment:
 #   WASI_SDK_PATH  — path to wasi-sdk (default: ~/wasi-sdk)
+#   WASI_SYSROOT   — build with the distro's clang + wasi-libc instead
+#                    (e.g. /usr on Debian); see sdk/toolchain.mk
 
 set -e
 
@@ -30,7 +32,8 @@ WASI_SDK_PATH="${WASI_SDK_PATH:-$HOME/wasi-sdk}"
 export WASI_SDK_PATH
 
 # Verify wasi-sdk
-if [ ! -x "$WASI_SDK_PATH/bin/clang" ]; then
+# (Not needed with WASI_SYSROOT: the distro toolchain, see sdk/toolchain.mk.)
+if [ -z "${WASI_SYSROOT:-}" ] && [ ! -x "$WASI_SDK_PATH/bin/clang" ]; then
     echo "wasi-sdk not found at $WASI_SDK_PATH"
     echo "Run: ./install-wasi-sdk.sh"
     exit 1
@@ -92,7 +95,8 @@ build_wapp() {
     # tests.wasm and tests/ source go in only when present.
     # main.c is bundled too — it lets the App Creator load existing
     # wapps for editing (read_source primitive) and keeps install
-    # archives self-describing.
+    # archives self-describing. licenses/ holds the notices of third-party
+    # code linked into app.wasm, which have to travel with it.
     (
         cd "$dir"
         zip -q -r "$wapp_file" \
@@ -105,6 +109,7 @@ build_wapp() {
             $([ -d web ] && echo web) \
             $([ -d lang ] && echo lang) \
             $([ -d bin ] && echo bin) \
+            $([ -d licenses ] && echo licenses) \
             $([ -f tests.wasm ] && echo tests.wasm) \
             $([ -d tests ] && echo tests)
     )

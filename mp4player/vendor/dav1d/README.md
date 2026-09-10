@@ -6,7 +6,18 @@ Unlike the other vendored decoders it is not built from source by the wapp
 Makefile because dav1d's build is meson-only (it generates config headers and
 compiles the 8/16-bit template sources twice).
 
-To regenerate:
+To regenerate, with whichever toolchain `make` uses (wasi-sdk, or the distro's
+clang + wasi-libc via WASI_SYSROOT, see ../../../sdk/toolchain.mk), plus meson
+and ninja:
+
+    git clone --depth 1 --branch 1.4.3 https://code.videolan.org/videolan/dav1d.git
+    make -C ../.. dav1d DAV1D_SRC=$PWD/dav1d
+
+`build.sh` does what the manual recipe below describes. A from-source build
+(F-Droid) runs it before `make`, so the prebuilt library is never linked
+there.
+
+The manual recipe:
 
     git clone --depth 1 --branch 1.4.3 https://code.videolan.org/videolan/dav1d.git
     pip install meson ninja   # any recent versions

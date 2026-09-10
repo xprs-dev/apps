@@ -8,6 +8,8 @@
 #
 # Environment:
 #   WASI_SDK_PATH  — path to wasi-sdk (default: ~/wasi-sdk)
+#   WASI_SYSROOT   — build with the distro's clang + wasi-libc instead
+#                    (e.g. /usr on Debian); see sdk/toolchain.mk
 
 set -e
 
@@ -18,7 +20,8 @@ WASI_SDK_PATH="${WASI_SDK_PATH:-$HOME/wasi-sdk}"
 export WASI_SDK_PATH
 
 # Verify wasi-sdk
-if [ ! -x "$WASI_SDK_PATH/bin/clang" ]; then
+# (Not needed with WASI_SYSROOT: the distro toolchain, see sdk/toolchain.mk.)
+if [ -z "${WASI_SYSROOT:-}" ] && [ ! -x "$WASI_SDK_PATH/bin/clang" ]; then
     echo "wasi-sdk not found at $WASI_SDK_PATH"
     echo "Run: ./install-wasi-sdk.sh"
     exit 1
