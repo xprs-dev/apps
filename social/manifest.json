@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.social",
-  "version": "0.4.6",
+  "version": "0.4.8",
   "kind": "app",
   "title": "Social",
   "description": "Social -- statuses heard over the air. Post to every radio this device has, follow callsigns, search what this station archived.",

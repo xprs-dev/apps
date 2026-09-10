@@ -194,17 +194,36 @@ int64_t hal_time_epoch(void) { return 1788000000; }
 void hal_log(int32_t level, const char *msg, uint32_t len) {
     (void)level; (void)msg; (void)len;
 }
-static char g_kvbuf[2048] = "";
+/* Per KEY, because the wapp keeps two lists here (the follows and the threads
+ * that are ours) and one shared slot would let each answer with the other's
+ * value — which is not a bug the wapp could ever have. Survives a "restart"
+ * in a test (module_init again) exactly as the host's store does. */
+#define KV_MAX 8
+static struct { char key[32]; char val[2048]; } g_kv[KV_MAX];
+static int g_kvn = 0;
+void kv_clear(void) { g_kvn = 0; }
 int32_t hal_kv_get(const char *k, uint32_t klen, char *out, uint32_t cap) {
-    (void)k; (void)klen;
-    int n = (int)strlen(g_kvbuf);
-    if (n > (int)cap) return -n;
-    memcpy(out, g_kvbuf, n);
-    return n;
+    char key[32];
+    unsigned n = klen < sizeof(key) - 1 ? klen : sizeof(key) - 1;
+    memcpy(key, k, n); key[n] = '\0';
+    for (int i = 0; i < g_kvn; i++) {
+        if (strcmp(g_kv[i].key, key) != 0) continue;
+        int len = (int)strlen(g_kv[i].val);
+        if (len > (int)cap) return -len;
+        memcpy(out, g_kv[i].val, len);
+        return len;
+    }
+    return 0;
 }
 int32_t hal_kv_set(const char *k, uint32_t klen, const char *v, uint32_t vlen) {
-    (void)k; (void)klen;
-    int n = (int)vlen < (int)sizeof(g_kvbuf) - 1 ? (int)vlen : (int)sizeof(g_kvbuf) - 1;
-    memcpy(g_kvbuf, v, n); g_kvbuf[n] = '\0';
+    char key[32];
+    unsigned n = klen < sizeof(key) - 1 ? klen : sizeof(key) - 1;
+    memcpy(key, k, n); key[n] = '\0';
+    int slot = -1;
+    for (int i = 0; i < g_kvn; i++) if (!strcmp(g_kv[i].key, key)) { slot = i; break; }
+    if (slot < 0) { if (g_kvn >= KV_MAX) return -1; slot = g_kvn++; }
+    snprintf(g_kv[slot].key, sizeof(g_kv[slot].key), "%s", key);
+    unsigned m = vlen < sizeof(g_kv[0].val) - 1 ? vlen : sizeof(g_kv[0].val) - 1;
+    memcpy(g_kv[slot].val, v, m); g_kv[slot].val[m] = '\0';
     return 0;
 }

@@ -34,6 +34,7 @@ int  send_calls(void);
 void history_set(const char *json);
 const char *last_query(void);
 void ui_attached(int on);
+void kv_clear(void);
 
 /* main.c */
 int32_t module_init(void);
@@ -48,7 +49,7 @@ static void check(int ok, const char *what) {
 }
 
 static void reset(void) {
-    cap_clear(); events_clear(); publish_clear();
+    cap_clear(); events_clear(); publish_clear(); kv_clear();
     status_fails(0); ui_attached(1); history_set("[]");
 }
 
@@ -160,6 +161,9 @@ int main(void) {
           "tagged with the packet id, which the host dedupes once ever");
     check(cap_contains("X1FRND replied"), "and says who");
     check(cap_count_of("\"type\":\"notify\"") == 1, "exactly once");
+    check(cap_contains("\"view\":\"post:mine002\""),
+          "and names the THREAD to open — a tap that lands on the feed leaves "
+          "the person to go and find what they were just told about");
 
     /* ── a like of our post is a card ── */
     reset();
@@ -173,6 +177,8 @@ int main(void) {
     check(cap_contains("liked your post"), "and the person is told");
     check(cap_contains("\"scope\":\"app\""),
           "in the app, not as a buzz in a pocket");
+    check(cap_contains("\"view\":\"post:mine003\""),
+          "opening the post that was liked");
 
     /* ── our own echo tells us nothing we did not know ── */
     reset();
@@ -232,6 +238,30 @@ int main(void) {
     module_handle_event();
     check(cap_contains("\"mid\":\"old777\""),
           "opening the page still fills the feed with those same posts");
+
+    /* ── the handover: a post made in the page, a reply after it closed ── */
+    reset();
+    inbox_set("{\"command\":\"activity_send\",\"activity_input\":\"just posted\"}");
+    module_handle_event();
+    char mine[32];
+    snprintf(mine, sizeof(mine), "%s", last_status_id());
+    /* The page closes and a FRESH engine takes over. It shares no memory with
+     * the one that made the post, and the post may not be in sqlite yet — the
+     * archive flushes every 20 s — so the spool cannot answer for it either. */
+    cap_clear();
+    history_set("[]");
+    module_init();
+    ui_attached(0);
+    char rwire[200];
+    snprintf(rwire, sizeof(rwire),
+             "t:status f:X1FRND ts:2026-09-10_09:09:00 r:%s m:hello?", mine);
+    deliver("xprs.status", "han001", "X1FRND", rwire);
+    module_handle_event();
+    check(cap_contains("\"type\":\"notify\""),
+          "a reply after the page closed still reaches the operator: the "
+          "threads that are ours are written down, not held in one engine");
+    check(cap_contains("\"view\":\"post:"),
+          "and it still names the thread to open");
 
     /* ── a reply goes out as a status naming its parent ── */
     reset();

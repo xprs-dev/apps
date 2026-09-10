@@ -211,10 +211,49 @@ static int my_thread(const char *id) {
         if (str_eq(g_mine[i], id)) return 1;
     return 0;
 }
+static int g_mine_dirty = 0;
 static void mark_mine(const char *id) {
     if (!id || !id[0] || my_thread(id)) return;
     str_copy(g_mine[g_nmine % MINE_MAX], id, 20);
     g_nmine++;
+    g_mine_dirty = 1;
+}
+
+/* The ring OUTLIVES this engine, which is why it is written down.
+ *
+ * A page engine and the background one do not share memory: closing Social
+ * hands over to a fresh headless engine that knows nothing, and a post made a
+ * minute earlier may not even be in sqlite yet (the archive flushes every
+ * 20 s). A reply to it then arrived at an engine that had never heard of the
+ * conversation, and the operator was told nothing. */
+#define MINE_KEY "xprs.mine.ids"
+static void mine_load(void) {
+    uint32_t n = hal_kv_get(MINE_KEY, str_len(MINE_KEY), g_kv, sizeof(g_kv) - 1);
+    if (n == 0 || n >= sizeof(g_kv)) return;
+    g_kv[n] = '\0';
+    char one[20]; unsigned o = 0;
+    for (const char *p = g_kv; ; p++) {
+        if (*p && *p != ',') { if (o < sizeof(one) - 1) one[o++] = *p; continue; }
+        one[o] = '\0';
+        if (one[0] && g_nmine < MINE_MAX) {
+            str_copy(g_mine[g_nmine % MINE_MAX], one, 20);
+            g_nmine++;
+        }
+        o = 0;
+        if (!*p) break;
+    }
+    g_mine_dirty = 0;
+}
+static void mine_save(void) {
+    if (!g_mine_dirty) return;
+    g_mine_dirty = 0;
+    g_kv[0] = '\0';
+    int n = g_nmine < MINE_MAX ? g_nmine : MINE_MAX;
+    for (int i = 0; i < n; i++) {
+        if (i) str_cat(g_kv, ",", sizeof(g_kv));
+        str_cat(g_kv, g_mine[i], sizeof(g_kv));
+    }
+    hal_kv_set(MINE_KEY, str_len(MINE_KEY), g_kv, str_len(g_kv));
 }
 
 /* ── Speaking on the air ─────────────────────────────────────────────────
@@ -418,8 +457,11 @@ static void follow_remove_call(const char *raw) {
  * the host routes it. `tag` is the packet's section 5 identifier, which the
  * notification service dedupes once ever and across restarts -- so a backfill
  * cannot replay yesterday's replies as today's buzzes. */
+/* [thread] is the post the notification is ABOUT — the conversation to open
+ * when it is tapped, as `post:<id>`. Without it the tap lands on the feed and
+ * the person has to go and find what they were just told about. */
 static void notify_about(const char *tag, const char *who, const char *what,
-                         const char *scope) {
+                         const char *scope, const char *thread) {
     /* Rare by construction — a reply or a like naming something of ours — so
      * one line each is a record of what the operator was told, not chatter. */
     {
@@ -437,6 +479,10 @@ static void notify_about(const char *tag, const char *who, const char *what,
     str_cat(g_msg, tag, sizeof(g_msg));
     str_cat(g_msg, "\",\"scope\":\"", sizeof(g_msg));
     str_cat(g_msg, scope, sizeof(g_msg));
+    if (thread && thread[0]) {
+        str_cat(g_msg, "\",\"view\":\"post:", sizeof(g_msg));
+        str_cat(g_msg, thread, sizeof(g_msg));
+    }
     str_cat(g_msg, "\"}", sizeof(g_msg));
     send_msg(g_msg);
 }
@@ -638,7 +684,7 @@ static void row_from_event(const char *row, int live, int draw) {
         if (draw) push_react(tgt, person, add, ours);
         /* Somebody liked something of ours. A card, not a buzz in a pocket. */
         if (live && add && !ours && my_thread(tgt))
-            notify_about(id, person, " liked your post", "app");
+            notify_about(id, person, " liked your post", "app", tgt);
         return;
     }
     if (!str_eq(type, "status")) return;
@@ -663,8 +709,10 @@ static void row_from_event(const char *row, int live, int draw) {
                     followed(person) ? "following" : "xprs");
 
     /* Somebody answered in a conversation we are part of. */
+    /* The thread is the parent's: opening it shows what was said and the
+     * answer under it, which is the exchange the person was told about. */
     if (live && !ours && my_thread(parent))
-        notify_about(id, person, " replied to you", "both");
+        notify_about(id, person, " replied to you", "both", parent);
 }
 
 /* Which conversations are ours, learned from the spool at startup.
@@ -747,8 +795,12 @@ int32_t module_init(void) {
     }
     follows_load();
     /* Which threads are ours, so a reply arriving before anybody opens the
-     * page is still recognised as somebody answering us. */
+     * page is still recognised as somebody answering us. What we wrote down
+     * first (it survives the handover between this engine and the page's),
+     * then the spool for anything older than the note. */
+    mine_load();
     mine_from_spool();
+    mine_save();
     {
         char l[64];
         str_copy(l, "[social] up, threads of mine: ", sizeof(l));
@@ -789,9 +841,11 @@ static void drain_core_events(void) {
         if (str_eq(topic, "xprs.status") || str_eq(topic, "xprs.reaction"))
             row_from_event(data, 1, attached);
     }
+    mine_save();
     if (!refill || !attached) return;
     feed_from_spool("activity",
         "{\"limit\":60,\"types\":[\"status\",\"reaction\"]}", "");
+    mine_save();
 }
 
 /* No clock: a feed changes when a packet is spooled, and the core says so. */
@@ -859,7 +913,7 @@ int32_t module_handle_event(void) {
                             "verified", "", 1, "xprs");
             } else {
                 hal_log(4, "[social] post refused by the core", 33);
-                notify_about("", "", "Could not post", "app");
+                notify_about("", "", "Could not post", "app", "");
             }
         }
 
@@ -953,6 +1007,8 @@ int32_t module_handle_event(void) {
         /* Still honest: section 27 has no repost packet. */
         hal_log(4, "[social] no XPRS packet for repost", 34);
     }
+    /* Once per pass, and only when something changed. */
+    mine_save();
     return 0;
 }
 
