@@ -1,12 +1,12 @@
 {
   "id": "tools.xprs.social",
-  "version": "0.4.8",
+  "version": "0.5.0",
   "kind": "app",
   "title": "Social",
   "description": "Social -- statuses heard over the air. Post to every radio this device has, follow callsigns, search what this station archived.",
   "summary": "A social feed built from XPRS t:status traffic (section 27): posts ride every active bearer, the feed is what this station heard, and following is by callsign. No internet and no relays.",
   "icon": "media/icons/social.svg",
-  "color": "#7B2FF7",
+  "color": "#16A34A",
   "tags": [
     "social",
     "xprs",

@@ -426,6 +426,31 @@ static int followed(const char *call) {
     return 0;
 }
 
+/* Is this a callsign at all (section 3)? `X` or `CT`-style prefix, then
+ * letters and digits, 4..9 characters.
+ *
+ * Guarded because two of the host's profile screens hand over whatever the
+ * card was keyed by, which for a NOSTR-authored row is an `npub1…`. Stored as
+ * a "callsign" it would sit in the follow list forever, matching no post and
+ * telling the operator they follow somebody they do not. */
+static int callsign_shaped(const char *c) {
+    int n = 0;
+    for (const char *p = c; *p; p++, n++) {
+        int alnum = (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9');
+        if (!alnum) return 0;
+    }
+    if (n < 4 || n > 9) return 0;
+    /* A callsign starts with a letter and carries at least one digit. */
+    if (!(c[0] >= 'A' && c[0] <= 'Z')) return 0;
+    for (const char *p = c; *p; p++)
+        if (*p >= '0' && *p <= '9') return 1;
+    return 0;
+}
+
+/* Defined with the other UI pushes; the follow list edits below announce
+ * themselves through it. */
+static void push_followstate(const char *call, int on);
+
 static void follow_add_call(const char *raw) {
     char call[CALL_MAX]; unsigned o = 0;
     /* A suffix names a device; following is a person (section 3.1). */
@@ -434,9 +459,15 @@ static void follow_add_call(const char *raw) {
         call[o++] = uc(*p);
     }
     call[o] = '\0';
-    if (!call[0] || followed(call) || g_nfollow >= FOLLOW_MAX) return;
+    if (!call[0] || !callsign_shaped(call) || followed(call) ||
+        g_nfollow >= FOLLOW_MAX) {
+        if (call[0] && !callsign_shaped(call))
+            hal_log(4, "[social] not a callsign — not followed", 39);
+        return;
+    }
     str_copy(g_follow[g_nfollow++], call, CALL_MAX);
     follows_save();
+    push_followstate(call, 1);
 }
 
 static void follow_remove_call(const char *raw) {
@@ -448,6 +479,7 @@ static void follow_remove_call(const char *raw) {
         for (int j = i; j + 1 < g_nfollow; j++) str_copy(g_follow[j], g_follow[j + 1], CALL_MAX);
         g_nfollow--;
         follows_save();
+        push_followstate(call, 0);
         return;
     }
 }
@@ -746,7 +778,25 @@ static void mine_from_spool(void) {
 }
 
 /* ── Following panel ─────────────────────────────────────────────────── */
+/* Tell the host we follow (or no longer follow) [call].
+ *
+ * The list is OURS — following is local and never a packet (XPRS.md 16.2) —
+ * but the feed the host renders has a "Following" tab, and it cannot narrow
+ * anything by a list it has never been shown. The host keeps its copy in
+ * memory only, so this is re-sent on every `ready`: after a restart it knew
+ * nobody, and the tab was empty however many people were followed here. */
+static void push_followstate(const char *call, int on) {
+    str_copy(g_msg, "{\"type\":\"social.followstate\",\"callsign\":\"", sizeof(g_msg));
+    str_cat(g_msg, call, sizeof(g_msg));
+    str_cat(g_msg, "\",\"on\":", sizeof(g_msg));
+    str_cat(g_msg, on ? "true" : "false", sizeof(g_msg));
+    str_cat(g_msg, "}", sizeof(g_msg));
+    send_msg(g_msg);
+}
+
 static void push_follows(void) {
+    for (int i = 0; i < g_nfollow; i++) push_followstate(g_follow[i], 1);
+
     str_copy(g_msg, "{\"type\":\"ui.people.set\",\"field\":\"follows_list\",\"sections\":"
                     "[{\"title\":\"Following (", sizeof(g_msg));
     char cnt[8]; int v = g_nfollow, o = 0; char tmp[8];
@@ -794,6 +844,15 @@ int32_t module_init(void) {
         hal_event_subscribe(t, str_len(t));
     }
     follows_load();
+    /* Say who we follow, HERE.
+     *
+     * Not a ui.* message — the host reads this whether or not a page has
+     * attached, and drains the outbox immediately after init. It cannot wait
+     * for `ready`: nothing in the host sends that command, so the branch that
+     * handles it has never run, and the host's copy of the follow list (memory
+     * only) stayed empty through every launch — which is what emptied the
+     * Following tab. */
+    for (int i = 0; i < g_nfollow; i++) push_followstate(g_follow[i], 1);
     /* Which threads are ours, so a reply arriving before anybody opens the
      * page is still recognised as somebody answering us. What we wrote down
      * first (it survives the handover between this engine and the page's),

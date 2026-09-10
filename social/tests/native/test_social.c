@@ -263,6 +263,71 @@ int main(void) {
     check(cap_contains("\"view\":\"post:"),
           "and it still names the thread to open");
 
+    /* ── following: the wapp owns the list and says so ── */
+    reset();
+    module_init();
+    cap_clear();
+    inbox_set("{\"command\":\"profile_follow\",\"profile_target\":\"X1ARKL\"}");
+    module_handle_event();
+    check(cap_contains("\"type\":\"social.followstate\""),
+          "following a callsign tells the host, which renders the tab");
+    check(cap_contains("\"callsign\":\"X1ARKL\",\"on\":true"), "by name, on");
+    check(cap_contains("\"field\":\"follows_list\""),
+          "and the Following panel is redrawn");
+
+    /* A post from them is labelled as theirs; a stranger's is not. */
+    cap_clear();
+    deliver("xprs.status", "fol001", "X1ARKL",
+            "t:status f:X1ARKL ts:2026-09-10_11:00:00 m:hello from a friend");
+    module_handle_event();
+    check(cap_contains("\"source\":\"following\""),
+          "a followed callsign's post is labelled following");
+    cap_clear();
+    deliver("xprs.status", "str001", "X3ZZZZ",
+            "t:status f:X3ZZZZ ts:2026-09-10_11:00:01 m:hello from a stranger");
+    module_handle_event();
+    check(cap_contains("\"source\":\"xprs\"") &&
+              !cap_contains("\"source\":\"following\""),
+          "and a stranger's is not");
+
+    /* Unfollowing says so too. */
+    cap_clear();
+    inbox_set("{\"command\":\"profile_unfollow\",\"profile_target\":\"X1ARKL\"}");
+    module_handle_event();
+    check(cap_contains("\"callsign\":\"X1ARKL\",\"on\":false"),
+          "unfollowing tells the host too");
+
+    /* ── the list survives, and is re-announced on ready ── */
+    reset();                 /* a fresh engine, same kv */
+    module_init();
+    cap_clear();
+    inbox_set("{\"command\":\"ready\"}");
+    module_handle_event();
+    check(!cap_contains("social.followstate"),
+          "nobody followed: nothing to announce");
+
+    reset();
+    module_init();
+    inbox_set("{\"command\":\"profile_follow\",\"profile_target\":\"X1ARKL\"}");
+    module_handle_event();
+    cap_clear();
+    module_init();           /* the app restarts: a new engine, the same kv */
+    check(cap_contains("\"callsign\":\"X1ARKL\",\"on\":true"),
+          "a new engine announces the list AT INIT — the host's copy is memory "
+          "only, and nothing in the host ever sends a `ready` command, so "
+          "waiting for one left the Following tab empty on every launch");
+
+    /* ── an npub is not a callsign ── */
+    reset();
+    module_init();
+    cap_clear();
+    inbox_set("{\"command\":\"follow_add\",\"follow_input\":"
+              "\"npub1arklg83wnqy4s6stnl65hl9dt980xf\"}");
+    module_handle_event();
+    check(!cap_contains("social.followstate"),
+          "a profile sheet handing over an npub follows nobody: it would sit "
+          "in the list forever matching no post");
+
     /* ── a reply goes out as a status naming its parent ── */
     reset();
     inbox_set("{\"command\":\"activity_reply\",\"activity_target_mid\":\"abc123\","
