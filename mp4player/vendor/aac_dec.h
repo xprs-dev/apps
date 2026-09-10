@@ -1,7 +1,8 @@
-// Minimal AAC-LC/HE decode wrapper over fdk-aac (RAW transport: the mp4
-// AudioSpecificConfig is supplied once, then each AAC access unit decodes to
-// interleaved 16-bit PCM). Used for AAC audio inside mp4/m4a so videos get
-// sound and m4a plays.
+// Minimal AAC-LC/HE/HEv2 decode wrapper over the PacketVideo decoder
+// (vendor/pvaac/, RAW transport: the mp4 AudioSpecificConfig is supplied once,
+// then each AAC access unit decodes to interleaved 16-bit PCM, always two
+// channels). Used for AAC audio inside mp4/m4a so videos get sound and m4a
+// plays.
 #ifndef PLAYER_AAC_DEC_H
 #define PLAYER_AAC_DEC_H
 
@@ -12,7 +13,7 @@ extern "C" {
 #endif
 
 typedef struct {
-  void* h; // HANDLE_AACDECODER
+  void* h; // decoder state (aac_dec.cpp)
 } AacDec;
 
 // Open with the AudioSpecificConfig (mp4 dsi). Returns 1 on success.

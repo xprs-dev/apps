@@ -36,7 +36,7 @@ extern "C" {
 #include "wels/codec_def.h"
 
 #include "audio_pcm.h"   // mp3/wav/flac/ogg-vorbis → s16 PCM
-#include "aac_dec.h"     // AAC (in mp4/m4a) → s16 PCM (fdk-aac)
+#include "aac_dec.h"     // AAC (in mp4/m4a) → s16 PCM (PacketVideo, vendor/pvaac)
 #include "opus_dec.h"    // ogg-opus → s16 PCM (libopus + libogg)
 #include "webm_dec.h"    // WebM (VP8/VP9 video + Opus audio) — libnestegg + libvpx
 #include "hevc_dec.h"    // HEVC/H.265 (in mp4/mov) — libde265

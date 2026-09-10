@@ -8,12 +8,10 @@
 # Build:  cd wapps && WASI_SDK_PATH=$HOME/wasi-sdk make -C mp4player
 #   (or)  cd wapps/mp4player && WASI_SDK_PATH=$HOME/wasi-sdk make
 
-WASI_SDK_PATH ?= /opt/wasi-sdk
-CXX  := $(WASI_SDK_PATH)/bin/clang++
-CC   := $(WASI_SDK_PATH)/bin/clang
+include ../sdk/toolchain.mk
 HAL  := ../hal
 OH   := vendor/openh264/codec
-FDK  := vendor/fdkaac
+PVAAC := vendor/pvaac
 VPX  := vendor/vpx
 NEG  := vendor/nestegg
 DE265 := vendor/de265
@@ -31,15 +29,6 @@ INCLUDES := \
 	-I$(OH)/common/inc \
 	-I$(OH)/decoder/core/inc \
 	-I$(OH)/decoder/plus/inc \
-	-I$(FDK)/libAACdec/include \
-	-I$(FDK)/libFDK/include \
-	-I$(FDK)/libSYS/include \
-	-I$(FDK)/libMpegTPDec/include \
-	-I$(FDK)/libPCMutils/include \
-	-I$(FDK)/libSBRdec/include \
-	-I$(FDK)/libDRCdec/include \
-	-I$(FDK)/libSACdec/include \
-	-I$(FDK)/libArithCoding/include \
 	-Ivendor/opuslib/include \
 	-Ivendor/opuslib/celt \
 	-Ivendor/opuslib/silk \
@@ -91,7 +80,7 @@ LDFLAGS := \
 	-Wl,--export=module_tick_interval_ms \
 	-Wl,--strip-all
 
-# C++ sources: main + openh264 (video) + fdk-aac (AAC audio) + aac wrapper +
+# C++ sources: main + openh264 (video) + PacketVideo AAC (audio) + aac wrapper +
 # webm backend (drives libvpx + libnestegg + libopus) + hevc backend
 # (libde265; .cc sources listed separately below).
 CXX_SRCS := \
@@ -103,15 +92,7 @@ CXX_SRCS := \
 	$(wildcard $(OH)/common/src/*.cpp) \
 	$(wildcard $(OH)/decoder/core/src/*.cpp) \
 	$(wildcard $(OH)/decoder/plus/src/*.cpp) \
-	$(wildcard $(FDK)/libAACdec/src/*.cpp) \
-	$(wildcard $(FDK)/libFDK/src/*.cpp) \
-	$(wildcard $(FDK)/libSYS/src/*.cpp) \
-	$(wildcard $(FDK)/libMpegTPDec/src/*.cpp) \
-	$(wildcard $(FDK)/libPCMutils/src/*.cpp) \
-	$(wildcard $(FDK)/libSBRdec/src/*.cpp) \
-	$(wildcard $(FDK)/libDRCdec/src/*.cpp) \
-	$(wildcard $(FDK)/libSACdec/src/*.cpp) \
-	$(wildcard $(FDK)/libArithCoding/src/*.cpp)
+	$(wildcard $(PVAAC)/*.cpp)
 
 # C sources: vendored audio decoders + stubs + libvpx (VP8/VP9) + nestegg +
 # setjmp shim (compiled as C).
@@ -149,11 +130,27 @@ CC_SRCS := $(wildcard $(DE265)/libde265/*.cc)
 
 OBJS := $(CXX_SRCS:.cpp=.o) $(CC_SRCS:.cc=.o) $(C_SRCS:.c=.o)
 
-.PHONY: all clean
+.PHONY: all clean dav1d
 all: $(OUTPUT)
+
+dav1d:
+	@test -n "$(DAV1D_SRC)" || { echo "set DAV1D_SRC to a dav1d 1.4.3 checkout" >&2; exit 1; }
+	WASM_AR="$(WASM_AR)" vendor/dav1d/build.sh "$(DAV1D_SRC)" $(CC)
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# The PacketVideo AAC decoder, with the flags AOSP built it with. Without
+# -fno-strict-aliasing its output is garbage at -O2: see
+# vendor/pvaac/README.xprs.md. aac_dec.cpp shares the decoder's struct layout,
+# so it gets the same defines.
+PVAAC_FLAGS := -I$(PVAAC) -DAAC_PLUS -DHQ_SBR -DPARAMETRICSTEREO \
+	-DOSCL_IMPORT_REF= -DOSCL_EXPORT_REF= -DOSCL_UNUSED_ARG= \
+	-fno-strict-aliasing -Wno-c++11-narrowing
+$(PVAAC)/%.o: $(PVAAC)/%.cpp
+	$(CXX) $(CXXFLAGS) $(PVAAC_FLAGS) -c $< -o $@
+vendor/aac_dec.o: vendor/aac_dec.cpp
+	$(CXX) $(CXXFLAGS) $(PVAAC_FLAGS) -c $< -o $@
 
 %.o: %.cc
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -161,8 +158,11 @@ all: $(OUTPUT)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# dav1d (AV1) links as a prebuilt wasm32-wasi static lib — meson-only build,
-# see vendor/dav1d/README.md for how to regenerate it.
+# dav1d (AV1) links as a wasm32-wasi static library. The committed
+# vendor/dav1d/lib/libdav1d.a is a prebuilt copy, because dav1d's build is
+# meson-only. `make dav1d DAV1D_SRC=<dav1d 1.4.3 checkout>` rebuilds it from
+# source with this same toolchain (needs meson and ninja). A from-source build,
+# F-Droid's, runs that before `make`. See vendor/dav1d/README.md.
 DAV1D_LIB := vendor/dav1d/lib/libdav1d.a
 
 $(OUTPUT): $(OBJS) $(DAV1D_LIB)
