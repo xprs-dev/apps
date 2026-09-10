@@ -81,6 +81,18 @@ Each invocation rewrites `binaries/index.json` to match the
 `.wapp` files actually present, so the store catalog never drifts
 from what's been built.
 
+Without wasi-sdk, the distro toolchain builds the same wapps with nothing
+downloaded. On Debian trixie:
+
+```sh
+apt install make clang-19 lld-19 llvm-19 wasi-libc libclang-rt-19-dev-wasm32 \
+    libc++-19-dev-wasm32 libc++abi-19-dev-wasm32
+WASI_SYSROOT=/usr WASM_CLANG=clang-19 WASM_CLANGXX=clang++-19 WASM_AR=llvm-ar-19 make
+```
+
+This is how F-Droid rebuilds the wapps the app bundles (`sdk/toolchain.mk`,
+and `app/docs/fdroid.md`).
+
 ## Hosting as a wapp store
 
 After `make`, the layout below is everything an XPRS client
@@ -141,3 +153,9 @@ a wapp talks to (storage, messaging, location, file
 associations, notifications…) is specified there. Read it when
 porting a wapp from another runtime, or when implementing a new
 XPRS engine for a new platform.
+
+## License
+
+BSD-3-Clause, copyright Max Brito and XPRS contributors. See [LICENSE](LICENSE).
+mp4player's vendored codecs (`mp4player/vendor/`) and its desktop ffmpeg
+builds (`mp4player/bin/`) keep their own licences, next to each.

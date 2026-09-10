@@ -9,7 +9,7 @@
  * Functions that need hardware return sentinel values when the capability
  * is absent — modules should check *_available_hw() before using.
  *
- * Copyright (c) xprs — Apache-2.0
+ * Copyright (c) Max Brito and XPRS contributors — BSD-3-Clause
  */
 
 #ifndef XPRS_WASM_HAL_H
