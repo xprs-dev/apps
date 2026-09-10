@@ -171,6 +171,14 @@ static int  g_nseen = 0;
 static char g_follow[FOLLOW_MAX][CALL_MAX];
 static int  g_nfollow = 0;
 static char g_query[128] = "";          /* Search box                        */
+
+/* The conversations we are part of: every status of OURS, by id, and the
+ * parent it answered. A reply naming one of these is somebody talking to us,
+ * which is what makes it worth a notification -- and it is a CONTENT question,
+ * so it is answered here rather than in the core. */
+#define MINE_MAX 64
+static char g_mine[MINE_MAX][20];
+static int  g_nmine = 0;
 static char g_kv[1600];                 /* follow list as stored             */
 
 /* Multi-part statuses (section 6.6) arrive as separate packets sharing a head.
@@ -196,6 +204,19 @@ static void mark_seen(const char *id) {
     g_nseen++;
 }
 
+/* ── Our own threads ─────────────────────────────────────────────────── */
+static int my_thread(const char *id) {
+    if (!id || !id[0]) return 0;
+    for (int i = 0; i < g_nmine && i < MINE_MAX; i++)
+        if (str_eq(g_mine[i], id)) return 1;
+    return 0;
+}
+static void mark_mine(const char *id) {
+    if (!id || !id[0] || my_thread(id)) return;
+    str_copy(g_mine[g_nmine % MINE_MAX], id, 20);
+    g_nmine++;
+}
+
 /* ── Speaking on the air ─────────────────────────────────────────────────
  * Likes and replies go OUT from here: a like is a t:reaction (section 6.5)
  * naming the status's section-5 id, a reply is itself a t:status carrying
@@ -215,6 +236,65 @@ static const char *my_call(void) {
 /* Epoch -> "YYYY-MM-DD_hh:mm:ss" UTC (section 4.8). Same civil-date
  * arithmetic the chat wapp uses; exact for any date this will ever stamp. */
 static void two(char *d, int v) { d[0] = (char)('0' + (v / 10) % 10); d[1] = (char)('0' + v % 10); }
+/* Now, as the seconds the feed sorts by. `ts` in a row from the spool is the
+ * unix time (cat_time_fields divides and multiplies it); the wire's
+ * "YYYY-MM-DD_hh:mm:ss" is a different thing and putting one where the other
+ * belongs produced `"t":2026-08-29_10:40:00000`, which is not JSON — the whole
+ * append was dropped by the host and the post never appeared. */
+static void epoch_now(char *out, unsigned cap) {
+    unsigned long long e = (unsigned long long)hal_time_epoch();
+    char tmp[24]; int n = 0;
+    if (e == 0) { str_copy(out, "0", cap); return; }
+    while (e && n < (int)sizeof(tmp)) { tmp[n++] = (char)('0' + (int)(e % 10)); e /= 10; }
+    int o = 0;
+    while (n > 0 && o < (int)cap - 1) out[o++] = tmp[--n];
+    out[o] = '\0';
+}
+
+/* "YYYY-MM-DD_hh:mm:ss" (section 4.8) -> unix seconds, as text.
+ *
+ * The two doors a post arrives through do not agree about `ts`: a row out of
+ * the spool carries the epoch, and a packet delivered live carries the wire's
+ * civil timestamp. The feed sorts on the epoch, and a civil timestamp put
+ * where it belongs produced `"t":2026-09-10_08:32:06000` -- not JSON, so the
+ * host dropped the whole append and a post that HAD arrived never appeared.
+ * Converted here, where the difference is known, so one shape reaches the UI.
+ */
+static void epoch_from_ts(const char *ts, char *out, unsigned cap) {
+    long y = 0, mo = 0, d = 0, hh = 0, mi = 0, ss = 0;
+    const char *p = ts;
+    while (*p >= '0' && *p <= '9') y = y * 10 + (*p++ - '0');
+    if (*p == '-') p++;
+    while (*p >= '0' && *p <= '9') mo = mo * 10 + (*p++ - '0');
+    if (*p == '-') p++;
+    while (*p >= '0' && *p <= '9') d = d * 10 + (*p++ - '0');
+    if (*p == '_') p++;
+    while (*p >= '0' && *p <= '9') hh = hh * 10 + (*p++ - '0');
+    if (*p == ':') p++;
+    while (*p >= '0' && *p <= '9') mi = mi * 10 + (*p++ - '0');
+    if (*p == ':') p++;
+    while (*p >= '0' && *p <= '9') ss = ss * 10 + (*p++ - '0');
+    if (y < 1970 || mo < 1 || mo > 12 || d < 1 || d > 31) {
+        str_copy(out, "0", cap);
+        return;
+    }
+    /* days_from_civil (the inverse of the one stamp_now uses). */
+    long yy = y - (mo <= 2 ? 1 : 0);
+    long era = (yy >= 0 ? yy : yy - 399) / 400;
+    long yoe = yy - era * 400;
+    long doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    long days = era * 146097 + doe - 719468;
+    long long e = (long long)days * 86400 + hh * 3600 + mi * 60 + ss;
+    if (e < 0) e = 0;
+    char tmp[24]; int n = 0;
+    if (e == 0) { str_copy(out, "0", cap); return; }
+    while (e && n < (int)sizeof(tmp)) { tmp[n++] = (char)('0' + (int)(e % 10)); e /= 10; }
+    int o = 0;
+    while (n > 0 && o < (int)cap - 1) out[o++] = tmp[--n];
+    out[o] = '\0';
+}
+
 static void stamp_now(char *out, unsigned cap) {
     if (cap < 20) { out[0] = '\0'; return; }
     unsigned long long e = hal_time_epoch();
@@ -331,6 +411,34 @@ static void follow_remove_call(const char *raw) {
         follows_save();
         return;
     }
+}
+
+/* ── Notifications (app/docs/notifications.md) ───────────────────────────
+ * There is no hal_notify: a notification is a message TYPE on the outbox, and
+ * the host routes it. `tag` is the packet's section 5 identifier, which the
+ * notification service dedupes once ever and across restarts -- so a backfill
+ * cannot replay yesterday's replies as today's buzzes. */
+static void notify_about(const char *tag, const char *who, const char *what,
+                         const char *scope) {
+    /* Rare by construction — a reply or a like naming something of ours — so
+     * one line each is a record of what the operator was told, not chatter. */
+    {
+        char l[96];
+        str_copy(l, "[social] notify ", sizeof(l));
+        str_cat(l, who, sizeof(l));
+        str_cat(l, what, sizeof(l));
+        hal_log(6, l, str_len(l));
+    }
+    str_copy(g_msg, "{\"type\":\"notify\",\"level\":\"info\",\"title\":\"Social\",\"body\":\"",
+             sizeof(g_msg));
+    str_cat(g_msg, who, sizeof(g_msg));
+    str_cat(g_msg, what, sizeof(g_msg));
+    str_cat(g_msg, "\",\"tag\":\"", sizeof(g_msg));
+    str_cat(g_msg, tag, sizeof(g_msg));
+    str_cat(g_msg, "\",\"scope\":\"", sizeof(g_msg));
+    str_cat(g_msg, scope, sizeof(g_msg));
+    str_cat(g_msg, "\"}", sizeof(g_msg));
+    send_msg(g_msg);
 }
 
 /* ── The feed ────────────────────────────────────────────────────────── */
@@ -470,6 +578,7 @@ static void feed_from_spool(const char *field, const char *query,
                 char whole[2200] = "";
                 for (int i = 0; i < g->total; i++) str_cat(whole, g->part[i], sizeof(whole));
                 mark_seen(id);
+                if (str_eq(own, "true")) { mark_mine(id); mark_mine(parent); }
                 feed_append(field, person, whole, id, parent, ts, sig, bearer, str_eq(own, "true"), source);
                 continue;
             }
@@ -477,7 +586,114 @@ static void feed_from_spool(const char *field, const char *query,
 
         if (seen(id)) continue;
         mark_seen(id);
+        if (str_eq(own, "true")) { mark_mine(id); mark_mine(parent); }
         feed_append(field, person, body, id, parent, ts, sig, bearer, str_eq(own, "true"), source);
+    }
+}
+
+/* ── One packet, live ────────────────────────────────────────────────────
+ *
+ * The core publishes every packet it accepts on a topic named after its type
+ * (`xprs.status`, `xprs.reaction`), the moment it has it. That is the same
+ * post the spool will hand back at the next flush, so the row is built the
+ * same way and marked seen under the same section 5 identifier -- whichever
+ * copy arrives first wins, and the other one is a no-op.
+ *
+ * The event carries `wire`, so the parsing below is the parsing feed_from_spool
+ * already does; nothing about a packet is read two different ways here.
+ *
+ * [live] is 1 for a packet arriving now and 0 for the backfill. It decides one
+ * thing only: whether this may raise a notification. A restart re-reads sixty
+ * rows, and a person who opens Social should not be told sixty times.
+ *
+ * [draw] is 0 when no page is attached. A notification is exactly the case
+ * where nobody is looking, so it is decided either way; only the drawing is
+ * skipped. The seen ring is still marked, which costs nothing: opening the
+ * page sends `ready`, which clears the ring and refills from the spool.
+ */
+static void row_from_event(const char *row, int live, int draw) {
+    char type[24] = "";
+    json_raw(row, "type", type, sizeof(type));
+
+    char id[20] = "", from[CALL_MAX] = "", wire[1100] = "";
+    json_raw(row, "id", id, sizeof(id));
+    json_raw(row, "from", from, sizeof(from));
+    json_raw(row, "wire", wire, sizeof(wire));
+    if (!id[0] || !from[0] || !wire[0]) return;
+
+    /* The bare callsign is the person (section 3.1). */
+    char person[CALL_MAX]; unsigned o = 0;
+    for (const char *p = from; *p && *p != '-' && o < sizeof(person) - 1; p++)
+        person[o++] = uc(*p);
+    person[o] = '\0';
+    const int ours = str_eq(person, my_call());
+
+    if (str_eq(type, "reaction")) {
+        char tgt[20] = "", act[12] = "";
+        wire_key(wire, "r", tgt, sizeof(tgt));
+        int add = wire_key(wire, "add", act, sizeof(act)) && str_eq(act, "like");
+        int rem = !add && wire_key(wire, "remove", act, sizeof(act)) && str_eq(act, "like");
+        if (!tgt[0] || (!add && !rem) || seen(id)) return;
+        mark_seen(id);
+        if (draw) push_react(tgt, person, add, ours);
+        /* Somebody liked something of ours. A card, not a buzz in a pocket. */
+        if (live && add && !ours && my_thread(tgt))
+            notify_about(id, person, " liked your post", "app");
+        return;
+    }
+    if (!str_eq(type, "status")) return;
+    if (seen(id)) return;
+
+    char wts[24] = "", ts[24] = "", sig[16] = "", bearer[12] = "", body[1100] = "";
+    json_raw(row, "ts", wts, sizeof(wts));
+    epoch_from_ts(wts, ts, sizeof(ts));
+    json_raw(row, "sig", sig, sizeof(sig));
+    json_raw(row, "bearer", bearer, sizeof(bearer));
+    if (!wire_body(wire, body, sizeof(body))) return;
+
+    char parent[20] = "";
+    wire_key(wire, "r", parent, sizeof(parent));
+
+    mark_seen(id);
+    /* Ours: this post, and the conversation it was an answer in. Somebody who
+     * replies to either is replying to us. */
+    if (ours) { mark_mine(id); mark_mine(parent); }
+    if (draw)
+        feed_append("activity", person, body, id, parent, ts, sig, bearer, ours,
+                    followed(person) ? "following" : "xprs");
+
+    /* Somebody answered in a conversation we are part of. */
+    if (live && !ours && my_thread(parent))
+        notify_about(id, person, " replied to you", "both");
+}
+
+/* Which conversations are ours, learned from the spool at startup.
+ *
+ * Draws nothing and marks nothing as seen: a background engine has no page,
+ * and the ring that decides what has been SHOWN must stay empty so opening
+ * Social still fills the feed. What this fills is the OTHER ring — the posts
+ * of ours a reply could name — without which a station that was restarted
+ * knows none of its own conversations and quietly stops telling its operator
+ * that somebody answered.
+ *
+ * One read of forty rows, once, when the engine starts. */
+static void mine_from_spool(void) {
+    static const char *q = "{\"limit\":40,\"types\":[\"status\"]}";
+    int n = hal_xprs_history(q, str_len(q), g_hist, sizeof(g_hist) - 1);
+    if (n <= 0) return;
+    g_hist[n] = '\0';
+    unsigned pos = 0;
+    while (next_obj(g_hist, &pos, g_row, sizeof(g_row))) {
+        char own[8] = "", id[20] = "", wire[1100] = "";
+        json_raw(g_row, "own", own, sizeof(own));
+        if (!str_eq(own, "true")) continue;
+        json_raw(g_row, "id", id, sizeof(id));
+        json_raw(g_row, "wire", wire, sizeof(wire));
+        if (!id[0]) continue;
+        mark_mine(id);
+        char parent[20] = "";
+        if (wire[0] && wire_key(wire, "r", parent, sizeof(parent)))
+            mark_mine(parent);
     }
 }
 
@@ -517,10 +733,33 @@ int32_t module_init(void) {
      * read every 2.8 seconds on a 700ms clock, whose answer on a quiet radio
      * is always the same sixty rows. */
     {
+        /* Live, per packet type (section 4.2): the core publishes a status the
+         * moment it accepts one, so a post from anybody is on the timeline
+         * without waiting for the archive's flush. */
+        static const char *live = "xprs.status";
+        hal_event_subscribe(live, str_len(live));
+        static const char *react = "xprs.reaction";
+        hal_event_subscribe(react, str_len(react));
+        /* And the backfill: what a restart missed, and the parts that only
+         * become a post once the whole set has arrived. */
         static const char *t = "core.archive";
         hal_event_subscribe(t, str_len(t));
     }
     follows_load();
+    /* Which threads are ours, so a reply arriving before anybody opens the
+     * page is still recognised as somebody answering us. */
+    mine_from_spool();
+    {
+        char l[64];
+        str_copy(l, "[social] up, threads of mine: ", sizeof(l));
+        char n[8]; int v = g_nmine, o = 0;
+        if (v == 0) n[o++] = '0';
+        else { char t[8]; int k = 0; while (v && k < 7) { t[k++] = (char)('0' + v % 10); v /= 10; }
+               while (k > 0) n[o++] = t[--k]; }
+        n[o] = '\0';
+        str_cat(l, n, sizeof(l));
+        hal_log(6, l, str_len(l));
+    }
     /* Nothing is pushed here. A ui.* message sent before the page has
      * attached is read by nobody, and the seen-ring would still have marked
      * those posts as shown — the feed would then be permanently empty with
@@ -528,21 +767,29 @@ int32_t module_init(void) {
     return 0;
 }
 
-/* The spool grew: pull what is new into the feed. */
+/* Something happened: a packet arrived, or the spool grew.
+ *
+ * A live packet is appended on its own -- one row, no query -- and only
+ * `core.archive` costs a spool read. That is the difference between being told
+ * and asking, and it is what a person watching the screen actually feels. */
 static void drain_core_events(void) {
     static char topic[48];
-    static char data[256];
-    int any = 0;
+    /* A delivered packet, not a counter: the row carries the wire, the
+     * provenance and the signature verdict. 256 bytes held none of it. */
+    static char data[4096];
+    int refill = 0;
+    /* Only while somebody is looking: with the page detached these appends go
+     * nowhere, and the seen-ring would eat them (see module_init). */
+    const int attached = hal_ui_attached();
     for (int guard = 0; guard < 16; guard++) {
         if (hal_event_available() == 0) break;
         if (hal_event_recv(topic, sizeof(topic) - 1, data, sizeof(data) - 1) == 0)
             break;
-        any = 1;
+        if (str_eq(topic, "core.archive")) { refill = 1; continue; }
+        if (str_eq(topic, "xprs.status") || str_eq(topic, "xprs.reaction"))
+            row_from_event(data, 1, attached);
     }
-    if (!any) return;
-    /* Only while somebody is looking: with the page detached these appends go
-     * nowhere, and the seen-ring would eat them (see module_init). */
-    if (!hal_ui_attached()) return;
+    if (!refill || !attached) return;
     feed_from_spool("activity",
         "{\"limit\":60,\"types\":[\"status\",\"reaction\"]}", "");
 }
@@ -580,17 +827,41 @@ int32_t module_handle_event(void) {
         feed_from_spool("activity",
             "{\"limit\":120,\"types\":[\"status\",\"reaction\"]}", "");
 
-    /* `activity_send` is deliberately NOT handled here.
-     *
-     * The host airs the status itself, at the composer, because the wapp
-     * round-trip is not reliable enough to be the only path: the same lesson
-     * the NOSTR post took, recorded in wapp_page.dart — a wapp that does not
-     * invoke the publish HAL drops the post silently and the user sees it
-     * vanish. Measured here too: `ready` and the tick both run and fill the
-     * feed, and the very same handler never reaches this branch. One
-     * publisher, host-side, and our own packet returns through the spool like
-     * anyone else's.
-     */
+    } else if (str_eq(cmd, "activity_send")) {
+        /* The post, twice over: on the screen now, on the air in the core's
+         * own time.
+         *
+         * hal_xprs_status composes and signs before it returns and hands back
+         * the section 5 identifier, so the row can be drawn immediately and
+         * keyed on the name the packet already has. The copy that comes back
+         * -- off the air, or out of the spool at the next flush -- carries the
+         * same id and the seen-ring swallows it, so the feed shows it once.
+         *
+         * This used to be aired by the host instead, because a post from here
+         * once vanished. The cause was a 6 KB event buffer that truncated the
+         * text to empty (the buffer above is 24 KB now), not the round trip.
+         * The core still owns every transport decision; this asks it to
+         * publish and says so on screen. */
+        char text[6000] = "";
+        if (json_raw(buf, "activity_input", text, sizeof(text)) && text[0]) {
+            char body[6000];
+            str_copy(body, text, sizeof(body));
+            unescape(body);
+            char mid[24] = "";
+            if (hal_xprs_status(body, str_len(body), 0, 0, 0, 0,
+                                mid, sizeof(mid) - 1) == 0 && mid[0]) {
+                char ts[24]; epoch_now(ts, sizeof(ts));
+                mark_seen(mid);
+                mark_mine(mid);
+                /* `text` is still the escaped form the host sent us, which is
+                 * what feed_append wants. */
+                feed_append("activity", my_call(), text, mid, "", ts,
+                            "verified", "", 1, "xprs");
+            } else {
+                hal_log(4, "[social] post refused by the core", 33);
+                notify_about("", "", "Could not post", "app");
+            }
+        }
 
     } else if (str_eq(cmd, "clear_feed")) {
         g_nseen = 0;
@@ -655,24 +926,27 @@ int32_t module_handle_event(void) {
 
     } else if (str_eq(cmd, "activity_reply")) {
         /* A reply is itself a status carrying r: (section 27). */
-        char mid[20] = "", text[400] = "";
+        char mid[24] = "", text[400] = "", esc[400] = "";
         json_raw(buf, "activity_target_mid", mid, sizeof(mid));
-        json_raw(buf, "activity_input", text, sizeof(text));
+        json_raw(buf, "activity_input", esc, sizeof(esc));
+        str_copy(text, esc, sizeof(text));
         unescape(text);
-        if (mid[0] && text[0] && my_call()[0]) {
-            char ts[24]; stamp_now(ts, sizeof(ts));
-            char wire[600];
-            str_copy(wire, "t:status f:", sizeof(wire));
-            str_cat(wire, my_call(), sizeof(wire));
-            str_cat(wire, " ts:", sizeof(wire)); str_cat(wire, ts, sizeof(wire));
-            str_cat(wire, " r:", sizeof(wire)); str_cat(wire, mid, sizeof(wire));
-            str_cat(wire, " m:", sizeof(wire)); str_cat(wire, text, sizeof(wire));
-            if (str_len(wire) > 250)
-                hal_log(4, "[social] reply too long for one packet", 38);
-            else if (hal_xprs_send(wire, str_len(wire)) != 0)
+        if (mid[0] && text[0]) {
+            /* The same verb as a post, with the parent named: the core builds
+             * `t:status ... r:<parent>`, signs it and splits it if it has to,
+             * which is one less place composing a wire by hand. */
+            char rid[24] = "";
+            if (hal_xprs_status(text, str_len(text), 0, 0, mid, str_len(mid),
+                                rid, sizeof(rid) - 1) == 0 && rid[0]) {
+                char ts[24]; epoch_now(ts, sizeof(ts));
+                mark_seen(rid);
+                mark_mine(rid);
+                mark_mine(mid);      /* we are in this conversation now */
+                feed_append("activity", my_call(), esc, rid, mid, ts,
+                            "verified", "", 1, "xprs");
+            } else {
                 hal_log(4, "[social] reply refused by the core", 34);
-            /* No local echo: the reply returns through the spool like any
-             * other status and threads onto its parent there. */
+            }
         }
 
     } else if (str_eq(cmd, "activity_repost")) {

@@ -1464,11 +1464,22 @@ int32_t hal_mesh_set_pref(const char *kv, uint32_t kv_len);
  * active — BLE5 now, a Reticulum broadcast, LoRa the day a radio exists. The
  * wapp supplies the WORDS ONLY: the core builds the packet, splits long text
  * into section 6.6 parts, signs with the profile key, and chooses transports
- * (scope rules applied core-side). [mood] is an optional section 27.1 word;
- * pass NULL/0 for none. Fire-and-forget; returns 0 queued, -1 empty text. */
+ * (scope rules applied core-side). [mood] is an optional section 27.1 word and
+ * [reply_to] the parent's identifier for a reply (section 27's `r:`); pass
+ * NULL/0 for either.
+ *
+ * The section 5 identifier is written to [id_out] before anything is aired,
+ * like hal_xprs_broadcast. Show your own row keyed on it AT ONCE: airing is
+ * the core's business and takes as long as it takes, and the copy that comes
+ * back — off the air, or out of the spool at the next flush — carries the
+ * same identifier and collapses onto the row you already drew.
+ *
+ * Returns 0 composed (and airing), -1 nothing to publish. */
 __attribute__((import_module("hal"), import_name("xprs_status")))
 int32_t hal_xprs_status(const char *text, uint32_t text_len,
-                        const char *mood, uint32_t mood_len);
+                        const char *mood, uint32_t mood_len,
+                        const char *reply_to, uint32_t reply_to_len,
+                        char *id_out, uint32_t id_cap);
 
 /* Air one caller-composed XPRS wire. The host validates section 4 syntax,
  * signs it when it speaks as this station and carries no sig:, applies the
