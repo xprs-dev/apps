@@ -18,17 +18,17 @@
  * Passwords arrive in `$type:"secret"` fields, which the host never stores,
  * are sealed the moment they are read, and the buffers are cleared.
  *
- * Event-driven, no clock. A command in flight is re-sent from the events
- * that arrive anyway: the station being set up beacons every half minute on
- * the same bearer, and a subscription to `xprs.observation` is held only
- * while something is waiting for an answer.
+ * Event-driven, no clock, and no transport. A command is handed to the core
+ * once; the core airs it again until the station answers (docs/architecture.md
+ * 1: retries are the core's) and says so on `xprs.status.tx` when it never
+ * does. This wapp listens for answers only while it has asked something, and
+ * for identities only while a station is changing its key: an idle phone
+ * hands it nothing but the rare ask to be claimed.
  */
 #include "../hal/xprs_wasm_hal.h"
 #include "wire.h"
 
 #define ST_MAX       8
-#define GIVE_UP_MS   300000ULL    /* 11.4's window: past it nobody is listening */
-#define FINAL_MS     60000ULL     /* a 202 that never becomes a 200 or a 500 */
 
 typedef struct {
     char call[12];
@@ -40,12 +40,12 @@ typedef struct {
     unsigned long long heard_ms;
     int  unowned;                 /* asked to be claimed */
     int  mine;                    /* claimed by this profile */
-    /* The one command in flight to it. */
+    /* The one command in flight to it. The wire is kept only to say it
+     * again after a 408, under a newer stamp. */
     char pend[FW_WIRE_UNSIGNED + 1];
     char pend_id[7];
     char pend_what[8];            /* claim wifi set key zdiag */
-    unsigned long long pend_t0, pend_next;
-    int  pend_tries, pend_408, pend_final;
+    int  pend_408, pend_final;
     char next_x[FW_WIRE_UNSIGNED];/* the second half of a long ssid+pass */
     char rekey_npub[70];          /* following a new key (11.10) */
     unsigned long long last_ts;   /* the last ts: we used with it */
@@ -54,7 +54,7 @@ typedef struct {
 static st_t g_st[ST_MAX];
 static int  g_nst;
 static int  g_sel = -1;
-static int  g_watching;
+static int  g_sub_res, g_sub_tx, g_sub_ids;
 static char g_me[16];
 static char g_my_npub[70];
 
@@ -63,9 +63,6 @@ static char g_my_npub[70];
  * callsign this table names (11.10). */
 static struct { char call[12]; char npub[70]; } g_ids[4];
 static int g_ids_w;
-/* The command last closed by an answer: a station answers on the LAN twice
- * (broadcast, and straight to us), and the second copy is not news. */
-static char g_last_done[7];
 
 static char g_ev[4096];
 static char g_topic[64];
@@ -309,19 +306,27 @@ static void screen_open(const char *name, const char *title)
     say(m);
 }
 
-/* ── Waiting for answers ──────────────────────────────────────────────── */
-static void watch(int on)
+/* ── What to listen to ────────────────────────────────────────────────── */
+static void sub(int *held, int want, const char *topic)
 {
-    static const char t[] = "xprs.observation";
-    if (on && !g_watching) hal_event_subscribe(t, sizeof t - 1);
-    if (!on && g_watching) hal_event_unsubscribe(t, sizeof t - 1);
-    g_watching = on;
+    if (want && !*held) hal_event_subscribe(topic, fw_len(topic));
+    if (!want && *held) hal_event_unsubscribe(topic, fw_len(topic));
+    *held = want;
 }
 
-static void rewatch(void)
+/* Answers only while a command is out, identities only while a station is
+ * changing its key. Everything else on those topics is somebody else's. */
+static void listen(void)
 {
-    for (int i = 0; i < g_nst; i++) if (g_st[i].pend_id[0]) { watch(1); return; }
-    watch(0);
+    int asked = 0, keying = 0;
+    for (int i = 0; i < g_nst; i++) {
+        if (g_st[i].pend_id[0]) asked = 1;
+        if (g_st[i].rekey_npub[0] ||
+            (g_st[i].pend_id[0] && fw_eq(g_st[i].pend_what, "key"))) keying = 1;
+    }
+    sub(&g_sub_res, asked, "xprs.result");
+    sub(&g_sub_tx, asked, "xprs.status.tx");
+    sub(&g_sub_ids, keying, "xprs.identity");
 }
 
 static void stamp_for(st_t *s, char *ts, unsigned cap)
@@ -344,54 +349,19 @@ static int send_cmd(st_t *s, const char *wire, const char *what)
     fw_cpy(s->pend, wire, sizeof s->pend);
     fw_id(wire, fw_len(wire), s->pend_id);
     fw_cpy(s->pend_what, what, sizeof s->pend_what);
-    s->pend_t0 = hal_time_ms();
-    s->pend_next = s->pend_t0 + 30000;
-    s->pend_tries = 0;
     s->pend_final = 0;
-    rewatch();
+    listen();
     return 0;
 }
 
 static void done_pending(st_t *s)
 {
-    if (s->pend_id[0]) fw_cpy(g_last_done, s->pend_id, sizeof g_last_done);
     s->pend[0] = 0;
     s->pend_id[0] = 0;
     s->pend_what[0] = 0;
     s->pend_final = 0;
     s->pend_408 = 0;
-    rewatch();
-}
-
-/* Re-send what is waiting, on the schedule a patient person would keep:
- * +30, +60, +120, +200 seconds, and then say so. The same bytes each time:
- * a sealed body re-sealed would be a different command. */
-static void timers(void)
-{
-    unsigned long long now = hal_time_ms();
-    for (int i = 0; i < g_nst; i++) {
-        st_t *s = &g_st[i];
-        if (!s->pend_id[0]) continue;
-        if (s->pend_final) {
-            if (now - s->pend_t0 > FINAL_MS + 30000) {
-                log_line(s->call, "It took the command but has not said how it ended. Read its stats to see where it is.");
-                done_pending(s);
-            }
-            continue;
-        }
-        if (now - s->pend_t0 > GIVE_UP_MS) {
-            log_line(s->call, "No answer in five minutes. Is it still in range, and powered?");
-            done_pending(s);
-            continue;
-        }
-        if (now >= s->pend_next) {
-            static const unsigned long long step[] = { 30000, 60000, 80000, 100000 };
-            hal_xprs_send(s->pend, fw_len(s->pend));
-            int t = s->pend_tries < 3 ? s->pend_tries : 3;
-            s->pend_tries++;
-            s->pend_next = now + step[t];
-        }
-    }
+    listen();
 }
 
 /* ── Commands to a station ────────────────────────────────────────────── */
@@ -499,27 +469,31 @@ static void take_state(st_t *s, const char *wire)
 static void on_request(const char *row)
 {
     char wire[FW_WIRE_MAX + 1], q[12], call[16], k[80], sig[16];
+    /* Believed only when it is signed by the key it carries and the
+     * callsign derives from that key (11.9): anything else is somebody
+     * inviting this phone to hand a stranger its password. The core's
+     * verdict first, because it is the cheapest test. */
+    if (!fw_json(row, "sig", sig, sizeof sig) || !fw_eq(sig, "verified")) return;
     if (!fw_json(row, "wire", wire, sizeof wire)) return;
     if (!fw_field(wire, "q", q, sizeof q) || !fw_eq(q, "owner")) return;
     if (!fw_field(wire, "f", call, sizeof call)) return;
-    /* Believed only when it is signed by the key it carries and the
-     * callsign derives from that key (11.9): anything else is somebody
-     * inviting this phone to hand a stranger its password. */
-    fw_json(row, "sig", sig, sizeof sig);
-    if (!fw_field(wire, "k", k, sizeof k) || !fw_call_matches(call, k) ||
-        !fw_eq(sig, "verified")) return;
-    int i = add(call);
+    if (!fw_field(wire, "k", k, sizeof k)) return;
+    int known = find(call);
+    /* A station is its key. A callsign is six characters and anyone can
+     * grind a key that derives it in about a thousand tries: a second key
+     * for a callsign we already hold is somebody else, and is not believed
+     * however well it signs. The key we hold was derived when we took it. */
+    if (known >= 0 && g_st[known].npub[0]) {
+        if (!fw_eq(g_st[known].npub, k)) return;
+    } else if (!fw_call_matches(call, k)) {
+        return;
+    }
+    int i = known >= 0 ? known : add(call);
     if (i < 0) return;
     st_t *s = &g_st[i];
-    int news = !s->unowned || s->mine;
-    if (news) {
-        /* Erased and asking again: what we knew of it is what it was. */
-        s->nick[0] = s->wifi[0] = s->ip[0] = s->ap[0] = s->zone[0] = 0;
-        s->fw[0] = s->uptime[0] = s->peers[0] = s->heap[0] = s->reset[0] = 0;
-    }
-    fw_cpy(s->npub, k, sizeof s->npub);
-    s->unowned = 1;
-    s->mine = 0;                   /* erased and asking again: not ours now */
+    s->heard_ms = hal_time_ms();
+    /* How it was heard, for the Station screen when it is next drawn: kept
+     * in memory, written nowhere. */
     fw_json(row, "bearer", s->bearer, sizeof s->bearer);
     char r[12];
     if (fw_json(row, "rssi", r, sizeof r)) {
@@ -527,11 +501,20 @@ static void on_request(const char *row)
         for (const char *p = r + neg; *p >= '0' && *p <= '9'; p++) v = v * 10 + (*p - '0');
         s->rssi = neg ? -v : v;
     }
-    s->heard_ms = hal_time_ms();
+    /* The same ask comes back every half minute until somebody answers it:
+     * only the first one of a run is news, and only news costs anything. */
+    int news = known < 0 || !s->unowned || s->mine;
+    if (!news) return;
+    /* Erased and asking again: what we knew of it is what it was. */
+    s->nick[0] = s->wifi[0] = s->ip[0] = s->ap[0] = s->zone[0] = 0;
+    s->fw[0] = s->uptime[0] = s->peers[0] = s->heap[0] = s->reset[0] = 0;
+    fw_cpy(s->npub, k, sizeof s->npub);
+    s->unowned = 1;
+    s->mine = 0;                   /* erased and asking again: not ours now */
     save();
     push_list();
     if (g_sel == i) push_detail();
-    if (news) {
+    {
         char m[300] = "{\"type\":\"notify\",\"level\":\"info\",\"title\":\"A station nearby can be set up\",\"body\":\"";
         fw_jesc(m, call, sizeof m);
         fw_cat(m, " was just flashed and is waiting for an owner. Open Firmwares to claim it.\",\"tag\":\"firmwares.unowned.", sizeof m);
@@ -541,18 +524,18 @@ static void on_request(const char *row)
     }
 }
 
+/* Heard only while a station is changing its key (listen()). */
 static void on_identity(const char *row)
 {
     char wire[FW_WIRE_MAX + 1], call[16], k[80], sig[16];
+    fw_json(row, "sig", sig, sizeof sig);
+    if (!fw_eq(sig, "verified")) return;
     if (!fw_json(row, "wire", wire, sizeof wire)) return;
     if (!fw_field(wire, "f", call, sizeof call) || !fw_field(wire, "k", k, sizeof k)) return;
     if (!fw_call_matches(call, k)) return;
-    fw_json(row, "sig", sig, sizeof sig);
-    if (fw_eq(sig, "verified")) {
-        fw_cpy(g_ids[g_ids_w].call, call, sizeof g_ids[0].call);
-        fw_cpy(g_ids[g_ids_w].npub, k, sizeof g_ids[0].npub);
-        g_ids_w = (g_ids_w + 1) % 4;
-    }
+    fw_cpy(g_ids[g_ids_w].call, call, sizeof g_ids[0].call);
+    fw_cpy(g_ids[g_ids_w].npub, k, sizeof g_ids[0].npub);
+    g_ids_w = (g_ids_w + 1) % 4;
     for (int i = 0; i < g_nst; i++) {
         st_t *s = &g_st[i];
         if (s->rekey_npub[0] && fw_eq(s->rekey_npub, k)) {
@@ -568,6 +551,7 @@ static void on_identity(const char *row)
             save();
             push_list();
             if (g_sel == i) push_detail();
+            listen();
             return;
         }
     }
@@ -575,18 +559,15 @@ static void on_identity(const char *row)
 
 static void on_result(const char *row)
 {
-    char wire[FW_WIRE_MAX + 1], to[16], from[16], r[8], code[8], m[100];
+    char wire[FW_WIRE_MAX + 1], from[16], r[8], code[8], m[100], v[16];
+    /* The cheap tests first: most answers on the air are somebody else's. */
+    if (!fw_json(row, "forUs", v, sizeof v) || !fw_eq(v, "true")) return;
+    /* An answer is believed only when it is signed by the key the station
+     * is known by (XPRS.md 9.1): the core says whether it is, and anything
+     * else could be anybody claiming the station said yes. */
+    if (!fw_json(row, "sig", v, sizeof v) || !fw_eq(v, "verified")) return;
     if (!fw_json(row, "wire", wire, sizeof wire)) return;
     fw_field(wire, "f", from, sizeof from);
-    if (!fw_field(wire, "d", to, sizeof to) || !fw_eq(to, g_me)) {
-        if (find(from) >= 0) {
-            char l[100] = "firmwares: an answer from ";
-            fw_cat(l, from, sizeof l); fw_cat(l, " to ", sizeof l); fw_cat(l, to, sizeof l);
-            fw_cat(l, ", not to us (", sizeof l); fw_cat(l, g_me, sizeof l); fw_cat(l, ")", sizeof l);
-            hal_log(1, l, fw_len(l));
-        }
-        return;
-    }
     if (!fw_field(wire, "r", r, sizeof r) || !fw_field(wire, "code", code, sizeof code)) return;
     m[0] = 0;
     fw_field(wire, "m", m, sizeof m);
@@ -594,36 +575,23 @@ static void on_result(const char *row)
     int i = -1;
     for (int j = 0; j < g_nst; j++)
         if (g_st[j].pend_id[0] && fw_eq(g_st[j].pend_id, r)) { i = j; break; }
-    if (i < 0) {
-        if (find(from) < 0) return;           /* not a station we set up */
-        if (fw_eq(g_last_done, r)) return;    /* the other copy of an answer */
-        static char said[7];
-        if (fw_eq(said, r)) return;           /* once per answer is enough */
-        fw_cpy(said, r, sizeof said);
-        /* Said once per answer, for /api/log: an answer that matches no
-         * command is the one fact that explains a setup that "hangs". */
-        char l[120] = "firmwares: an answer from ";
-        fw_cat(l, from, sizeof l); fw_cat(l, " to r:", sizeof l); fw_cat(l, r, sizeof l);
-        fw_cat(l, " matches nothing waiting", sizeof l);
-        for (int j = 0; j < g_nst; j++)
-            if (g_st[j].pend_id[0]) { fw_cat(l, " (waiting: ", sizeof l); fw_cat(l, g_st[j].pend_id, sizeof l); fw_cat(l, ")", sizeof l); }
-        hal_log(1, l, fw_len(l));
-        return;
-    }
+    if (i < 0) return;                        /* not something we asked */
     st_t *s = &g_st[i];
+    /* A repeat of the command gets where the station stands again; an
+     * answer that says nothing new is not news. */
+    if (s->pend_final && fw_eq(code, "202")) return;
     if (!fw_eq(from, s->call)) {
         /* Only the station, or the station under its new key, answers: the
          * key its 202 named, or, when that was missed, one it announced and
          * the core verified, answering our key command by its r:. */
-        char k2[16] = "", sig[16];
+        char k2[16] = "";
         const char *nk = 0;
         if (s->rekey_npub[0]) {
             fw_call_of(s->rekey_npub, "X3", k2, sizeof k2);
             if (fw_eq(from, k2)) nk = s->rekey_npub;
         }
-        fw_json(row, "sig", sig, sizeof sig);
         static char rk[80];
-        if (!nk && fw_eq(s->pend_what, "key") && fw_eq(sig, "verified")) {
+        if (!nk && fw_eq(s->pend_what, "key")) {
             /* Its own key, in the answer (11.10), or one it announced. */
             if (fw_field(wire, "k", rk, sizeof rk) && fw_call_matches(from, rk)) nk = rk;
             for (int j = 0; !nk && j < 4; j++)
@@ -720,18 +688,38 @@ static void on_result(const char *row)
     if (g_sel == i) push_detail();
 }
 
+/* The core gave up on a command: nothing final came back in 11.4's
+ * window, however often it was aired. */
+static void on_status(const char *row)
+{
+    char id[8], state[16];
+    if (!fw_json(row, "id", id, sizeof id) || !fw_json(row, "state", state, sizeof state)) return;
+    for (int i = 0; i < g_nst; i++) {
+        st_t *s = &g_st[i];
+        if (!s->pend_id[0] || !fw_eq(s->pend_id, id)) continue;
+        if (fw_eq(state, "unfinished"))
+            log_line(s->call, "It took the command but never said how it ended. Read its stats to see where it is.");
+        else if (fw_eq(state, "unanswered"))
+            log_line(s->call, "No answer in five minutes. Is it still in range, and powered?");
+        else
+            return;
+        done_pending(s);
+        if (g_sel == i) push_detail();
+        return;
+    }
+}
+
 static void drain_events(void)
 {
     while (hal_event_available()) {
         uint32_t n = hal_event_recv(g_topic, sizeof g_topic - 1, g_ev, sizeof g_ev - 1);
         g_ev[n] = 0;
         g_topic[sizeof g_topic - 1] = 0;
-        if (fw_eq(g_topic, "xprs.request"))       on_request(g_ev);
-        else if (fw_eq(g_topic, "xprs.identity")) on_identity(g_ev);
-        else if (fw_eq(g_topic, "xprs.result"))   on_result(g_ev);
-        /* xprs.observation: only a clock, while something waits */
+        if (fw_eq(g_topic, "xprs.request"))        on_request(g_ev);
+        else if (fw_eq(g_topic, "xprs.result"))    on_result(g_ev);
+        else if (fw_eq(g_topic, "xprs.status.tx")) on_status(g_ev);
+        else if (fw_eq(g_topic, "xprs.identity"))  on_identity(g_ev);
     }
-    timers();
 }
 
 /* ── What the person does ─────────────────────────────────────────────── */
@@ -772,7 +760,10 @@ static void on_command(void)
     st_t *s = selected();
     if (!s) return;
     if (!g_me[0]) who_am_i();
-    if (s->pend_id[0]) { log_line(s->call, "Still waiting for its last answer"); return; }
+    /* One command at a time. Once the station has taken one (a 202) it is
+     * working on its own, and a new one may go. */
+    if (s->pend_id[0] && !s->pend_final) { log_line(s->call, "Still waiting for its last answer"); return; }
+    if (s->pend_id[0]) done_pending(s);
 
     if (fw_eq(cmd, "claim")) {
         do_claim(s);
@@ -833,8 +824,10 @@ static void on_command(void)
 /* ── Entry points ─────────────────────────────────────────────────────── */
 int32_t module_init(void)
 {
-    static const char *const topics[] = { "xprs.request", "xprs.identity", "xprs.result" };
-    for (unsigned i = 0; i < 3; i++) hal_event_subscribe(topics[i], fw_len(topics[i]));
+    /* The one thing an idle phone listens for: a station asking to be
+     * claimed. Answers and identities are listened for while asked (listen). */
+    static const char t[] = "xprs.request";
+    hal_event_subscribe(t, sizeof t - 1);
     who_am_i();
     load();
     push_list();

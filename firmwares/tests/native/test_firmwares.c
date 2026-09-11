@@ -8,8 +8,12 @@
  *   - every wire it builds fits 250 bytes once the host has signed it;
  *   - a password reaches hal_encrypt and nothing else: not a wire, not the
  *     KV, not the screen, and the field is cleared;
- *   - it re-sends the identical wire, gives up at five minutes, re-stamps a
- *     408 once, follows a new key, and reads the stats it asked for.
+ *   - it sends a command once and leaves the rest to the core: no clock, no
+ *     re-send, and it hears answers only while it has asked something;
+ *   - it believes an answer only when it is for this phone and verified,
+ *     and a station only under the key it first came with;
+ *   - it re-stamps a 408 once, follows a new key, and reads the stats it
+ *     asked for.
  */
 #include <stdio.h>
 #include <string.h>
@@ -42,14 +46,19 @@ static const char *ST = "X3AB3D";
 static const char *NEW_NPUB = "npub1k7w2qpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jnqp";
 
 static char g_row[1200];
-static const char *row(const char *type, const char *from, const char *sig, const char *wire)
+static const char *row_to(const char *type, const char *from, const char *sig, int for_us,
+                          const char *wire)
 {
     snprintf(g_row, sizeof g_row,
              "{\"id\":\"000000\",\"type\":\"%s\",\"from\":\"%s\",\"to\":\"\",\"ts\":\"\","
-             "\"fields\":[],\"forUs\":false,\"sealed\":false,\"scope\":\"local\","
+             "\"fields\":[],\"forUs\":%s,\"sealed\":false,\"scope\":\"local\","
              "\"bearer\":\"ble\",\"rssi\":-71,\"via\":\"\",\"link\":\"\",\"sig\":\"%s\","
-             "\"wire\":\"%s\"}", type, from, sig, wire);
+             "\"wire\":\"%s\"}", type, from, for_us ? "true" : "false", sig, wire);
     return g_row;
+}
+static const char *row(const char *type, const char *from, const char *sig, const char *wire)
+{
+    return row_to(type, from, sig, 0, wire);
 }
 
 static void deliver(const char *topic, const char *r) { event_push(topic, r); module_handle_event(); }
@@ -62,11 +71,23 @@ static void ask_owner(const char *sig, const char *call, const char *npub)
     deliver("xprs.request", row("request", call, sig, w));
 }
 
-static void result(const char *from, const char *id, const char *tail)
+static void result_as(const char *from, const char *id, const char *sig, int for_us,
+                      const char *tail)
 {
     char w[300];
     snprintf(w, sizeof w, "t:result f:%s d:X1ME77 ts:2026-09-10_12:00:01 r:%s %s", from, id, tail);
-    deliver("xprs.result", row("result", from, "verified", w));
+    deliver("xprs.result", row_to("result", from, sig, for_us, w));
+}
+static void result(const char *from, const char *id, const char *tail)
+{
+    result_as(from, id, "verified", 1, tail);
+}
+
+static void status_tx(const char *id, const char *state)
+{
+    char r[160];
+    snprintf(r, sizeof r, "{\"id\":\"%s\",\"peer\":\"X3AB3D\",\"state\":\"%s\"}", id, state);
+    deliver("xprs.status.tx", r);
 }
 
 static const char *last_aired(void) { return g_aired_n ? g_aired[g_aired_n - 1] : ""; }
@@ -88,9 +109,25 @@ static void test_ask_is_believed_only_when_it_should_be(void)
     CHECK(cap_count("Waiting for an owner") >= 1, "a verified ask lists the station");
     CHECK(cap_count("\"type\":\"notify\"") == 1, "and the person is told");
     CHECK(cap_count("firmwares.unowned.X3AB3D") == 1, "tagged, so the host tells them once ever");
+    int said = cap_count("ui.people.set");
     ask_owner("verified", ST, ST_NPUB);
     CHECK(cap_count("\"type\":\"notify\"") == 1, "a second ask is not a second notification");
+    CHECK(cap_count("ui.people.set") == said, "nor a second list: a repeat is not news");
     CHECK(strstr(kv_dump(), "st.X3AB3D=npub1ab3d") != 0, "kept across the engine's restarts");
+    CHECK(subscribed("xprs.request") && !subscribed("xprs.result") &&
+          !subscribed("xprs.identity") && !subscribed("xprs.observation"),
+          "an idle phone listens for asks and nothing else");
+}
+
+static void test_a_callsign_is_its_key(void)
+{
+    /* Somebody ground a key whose callsign is X3AB3D too: the wapp keeps the
+     * one it knew. The mock's derivation check is real, so the ground key
+     * has to derive for the test to mean anything; here it stands in. */
+    const char *other = "npub1ab3dqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+    int i = find(ST);
+    ask_owner("verified", ST, other);
+    CHECK(fw_eq(g_st[i].npub, ST_NPUB), "the station keeps the key it came with");
 }
 
 static void test_claim(void)
@@ -108,14 +145,19 @@ static void test_claim(void)
     CHECK(strstr(w, "t:command f:X1ME77 d:X3AB3D ts:") == w, "addressed to the station: %s", w);
     CHECK(strstr(w, " cmd:set owner:X1ME77 k:npub1me77") != 0, "claims with our key: %s", w);
     CHECK(strlen(w) + 65 <= 250, "fits once signed (%zu)", strlen(w) + 65);
-    CHECK(subscribed("xprs.observation"), "watching for a clock while it waits");
+    CHECK(subscribed("xprs.result") && subscribed("xprs.status.tx"), "listening for its answer");
+    CHECK(!subscribed("xprs.observation"), "and not for a clock");
 
     char id[7];
     last_id(id);
+    result_as(ST, id, "verified", 0, "code:200 owner:X1ME77 use:all first:none serve:archive");
+    CHECK(cap_count("Claimed.") == 0, "an answer to somebody else is not ours");
+    result_as(ST, id, "unverified", 1, "code:200 owner:X1ME77 use:all first:none serve:archive");
+    CHECK(cap_count("Claimed.") == 0, "an answer nobody can check is not believed");
     result(ST, id, "code:200 owner:X1ME77 use:all first:none serve:archive");
     CHECK(cap_count("Claimed.") == 1, "the person is told it is theirs");
     CHECK(cap_last("\"title\":\"Yours\"") != 0, "and it moves to Yours");
-    CHECK(!subscribed("xprs.observation"), "and the clock is let go");
+    CHECK(!subscribed("xprs.result") && !subscribed("xprs.status.tx"), "and stops listening");
 }
 
 static void test_wifi_sealed_in_one(void)
@@ -166,24 +208,26 @@ static void test_wifi_long_goes_in_two(void)
     CHECK(cap_count("Could not join: wrong password") == 1, "the reason, in its own words");
 }
 
-static void test_retry_and_give_up(void)
+static void test_the_core_delivers(void)
 {
     cap_clear();
     command("{\"command\":\"stats\",\"fields\":{}}");
     int aired = g_aired_n;
-    char first[260];
-    snprintf(first, sizeof first, "%s", last_aired());
-    g_ms += 31000;
-    deliver("xprs.observation", row("observation", ST, "verified", "t:observation f:X3AB3D link:ble"));
-    CHECK(g_aired_n == aired + 1, "re-sent after 30 s");
-    CHECK(strcmp(last_aired(), first) == 0, "the identical wire");
-    g_ms += 10000;
-    deliver("xprs.observation", row("observation", ST, "verified", "t:observation f:X3AB3D link:ble"));
-    CHECK(g_aired_n == aired + 1, "not before its time");
-    g_ms += 300000;
-    deliver("xprs.observation", row("observation", ST, "verified", "t:observation f:X3AB3D link:ble"));
-    CHECK(cap_count("No answer in five minutes") == 1, "and gives up, out loud");
-    CHECK(!subscribed("xprs.observation"), "letting the clock go");
+    char id[7];
+    last_id(id);
+    g_ms += 400000;
+    ask_owner("verified", "X3ZZZZ", ST_NPUB);  /* anything at all arriving */
+    CHECK(g_aired_n == aired, "the wapp never says it twice: re-airing is the core's");
+    status_tx("abcdef", "unanswered");
+    CHECK(cap_count("No answer in five minutes") == 0, "another command's fate is not this one's");
+    status_tx(id, "unanswered");
+    CHECK(cap_count("No answer in five minutes") == 1, "the core gave up, and the person is told");
+    CHECK(!subscribed("xprs.result"), "and nothing is listened for any more");
+    command("{\"command\":\"stats\",\"fields\":{}}");
+    last_id(id);
+    result(ST, id, "code:202");
+    status_tx(id, "unfinished");
+    CHECK(cap_count("never said how it ended") == 1, "taken and never finished is said so");
 }
 
 static void test_408_restamps_once(void)
@@ -222,6 +266,7 @@ static void test_new_key(void)
     cap_clear();
     command("{\"command\":\"identity_apply\",\"fields\":{\"identity\":\"new\",\"nsec\":\"\"}}");
     CHECK(strstr(last_aired(), " cmd:set key:new") != 0, "key:new, in the clear");
+    CHECK(subscribed("xprs.identity"), "identities are heard while the key changes");
     char id[7];
     last_id(id);
     char tail[160];
@@ -234,6 +279,7 @@ static void test_new_key(void)
     CHECK(find("X3K7W2") >= 0 && find(ST) < 0, "the station is followed to its new callsign");
     result("X3K7W2", id, "code:200 wifi:up ip:192.168.1.40 ap:off nick:roof zone:+01:00");
     CHECK(cap_count("New identity in use") == 1, "and its 200 closes it");
+    CHECK(!subscribed("xprs.identity"), "and identities are nobody's business again");
 }
 
 static void test_new_key_202_missed(void)
@@ -309,10 +355,11 @@ int main(void)
     module_init();
     test_keys_are_real_length();
     test_ask_is_believed_only_when_it_should_be();
+    test_a_callsign_is_its_key();
     test_claim();
     test_wifi_sealed_in_one();
     test_wifi_long_goes_in_two();
-    test_retry_and_give_up();
+    test_the_core_delivers();
     test_408_restamps_once();
     test_zdiag();
     test_new_key();
