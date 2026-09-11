@@ -91,7 +91,7 @@ WASI_SYSROOT=/usr WASM_CLANG=clang-19 WASM_CLANGXX=clang++-19 WASM_AR=llvm-ar-19
 ```
 
 This is how F-Droid rebuilds the wapps the app bundles (`sdk/toolchain.mk`,
-and `app/docs/fdroid.md`).
+and `app/docs/f-droid.md`).
 
 ## Hosting as a wapp store
 

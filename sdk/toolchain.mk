@@ -12,7 +12,7 @@
 #       WASI_SYSROOT=/usr with Debian's or Ubuntu's clang, lld, wasi-libc and
 #       libclang-rt-dev-wasm32, plus libc++-dev-wasm32 and
 #       libc++abi-dev-wasm32 for the C++ wapps. Nothing is downloaded, which is
-#       how F-Droid rebuilds the wapps bundled in the app (app/docs/fdroid.md).
+#       how F-Droid rebuilds the wapps bundled in the app (app/docs/f-droid.md).
 #       WASM_CLANG and WASM_CLANGXX name the compilers (default clang and
 #       clang++; clang-18 and clang++-18 are fine). WASM_TOOLCHAIN_FLAGS
 #       passes anything else to both, e.g. -resource-dir when compiler-rt's
