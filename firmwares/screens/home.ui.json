@@ -1,0 +1,141 @@
+[
+  {
+    "$": "screen",
+    "name": "Stations",
+    "icon": "developer_board",
+    "tip": "XPRS stations you own, and freshly flashed ones nearby waiting for an owner.",
+    "children": [
+      {
+        "$": "field",
+        "name": "stations",
+        "$type": "people",
+        "empty": "No station here yet.\n\nFlash one from xprs.dev/firmware and keep this phone close: a new station asks to be claimed over Bluetooth within a quarter of a minute, and shows up here.\n\nA board without Bluetooth: join its WiFi hotspot, XPRS- and its callsign, and it shows up the same way."
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Station",
+    "icon": "memory",
+    "hidden": true,
+    "tip": "Claim it, put it on your network, name it, and see how it is doing.",
+    "children": [
+      {
+        "$": "field",
+        "name": "detail",
+        "$type": "details",
+        "empty": "Pick a station on the Stations screen."
+      },
+      {
+        "$": "action",
+        "name": "claim",
+        "label": "Claim it",
+        "style": "primary",
+        "icon": "how_to_reg",
+        "tip": "Make it yours. The first owner to answer a freshly flashed station owns it."
+      },
+      {
+        "$": "field",
+        "name": "ssid",
+        "$type": "string",
+        "label": "WiFi network",
+        "hint": "The name of your network"
+      },
+      {
+        "$": "field",
+        "name": "wifi_pass",
+        "$type": "secret",
+        "label": "WiFi password",
+        "tip": "Sealed to the station's own key before it leaves this phone, and kept nowhere on it. Leave empty for an open network."
+      },
+      {
+        "$": "action",
+        "name": "wifi_apply",
+        "label": "Join this network",
+        "icon": "wifi"
+      },
+      {
+        "$": "field",
+        "name": "nick",
+        "$type": "string",
+        "label": "Name",
+        "hint": "roof-north",
+        "tip": "Letters, digits, - and _, up to 16."
+      },
+      {
+        "$": "field",
+        "name": "zone",
+        "$type": "string",
+        "label": "Time zone",
+        "hint": "auto, or an offset such as +01:00",
+        "tip": "auto asks a time service once the station is online."
+      },
+      {
+        "$": "field",
+        "name": "hotspot",
+        "$type": "enum",
+        "label": "Its own WiFi hotspot",
+        "default": "same",
+        "children": [
+          { "$": "option", "name": "same", "label": "Leave as it is" },
+          { "$": "option", "name": "on", "label": "On" },
+          { "$": "option", "name": "off", "label": "Off" }
+        ]
+      },
+      {
+        "$": "action",
+        "name": "station_apply",
+        "label": "Save name and settings",
+        "icon": "save"
+      },
+      {
+        "$": "field",
+        "name": "identity",
+        "$type": "enum",
+        "label": "Its identity",
+        "default": "keep",
+        "tip": "A station's callsign comes from its key. A new key is a new callsign; an imported one lets a replacement carry on under an old callsign.",
+        "children": [
+          { "$": "option", "name": "keep", "label": "Keep the key it has" },
+          { "$": "option", "name": "new", "label": "Make a new key" },
+          { "$": "option", "name": "import", "label": "Take a key I have (nsec)" }
+        ]
+      },
+      {
+        "$": "field",
+        "name": "nsec",
+        "$type": "secret",
+        "label": "nsec to import",
+        "tip": "Only for Take a key I have. Sealed to the station and kept nowhere on this phone."
+      },
+      {
+        "$": "action",
+        "name": "identity_apply",
+        "label": "Apply identity",
+        "icon": "key",
+        "confirm": true,
+        "confirm-label": "Change its identity?",
+        "confirm-text": "A new key gives the station a new callsign. It restarts, and anyone who knew it by its old callsign has to learn the new one."
+      },
+      {
+        "$": "action",
+        "name": "stats",
+        "label": "Read stats",
+        "icon": "monitor_heart"
+      },
+      {
+        "$": "field",
+        "name": "log",
+        "$type": "log",
+        "label": "What happened",
+        "tip": "Every answer the station gave, newest last."
+      },
+      {
+        "$": "action",
+        "name": "back",
+        "label": "All stations",
+        "icon": "list"
+      }
+    ]
+  }
+]

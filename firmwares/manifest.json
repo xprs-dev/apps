@@ -1,0 +1,28 @@
+{
+  "id":              "tools.xprs.firmwares",
+  "version":         "0.1.3",
+  "kind":            "app",
+  "title":           "Firmwares",
+  "description":     "Firmwares - set up the XPRS station you just flashed: claim it, put it on your WiFi, name it, and read how it is doing.",
+  "summary":         "A freshly flashed XPRS station asks, over Bluetooth, to be claimed. This app notices it, tells you, and sets it up from your phone: it becomes yours, joins your WiFi with the password sealed to its key so nobody nearby can read it, takes a name and a time zone, keeps or changes its identity, and reports its firmware, uptime and memory. Boards without Bluetooth are set up the same way from their own WiFi hotspot.",
+  "icon":            "media/icons/firmwares.svg",
+  "color":           "#37474F",
+  "tags":            ["xprs", "station", "firmware", "setup", "esp32"],
+  "entry_ui":        "screens/home.ui.json",
+  "tick_interval_ms": 0,
+  "permissions":     [],
+  "platforms":       ["android", "linux", "windows", "macos"],
+  "hardware":        ["N/A", "intel", "arm"],
+  "provides": {
+    "functions":       [],
+    "events":          [],
+    "variables":       [],
+    "functionalities": []
+  },
+  "requires": {
+    "hal":       ["log", "msg", "kv", "xprs", "identity", "crypto", "event"],
+    "events":    [],
+    "libraries": [],
+    "variables": []
+  }
+}

@@ -193,6 +193,7 @@ A `.ui.json` file may contain a single `app` block (full definition) or one or m
 | `enum` | `--mode [a\|b\|c]` | `<select>` | `lv_roller` | Predefined options |
 | `image` | `--avatar path` | file picker | `lv_img` upload | Image file |
 | `file` | `--attach path` | file picker | file icon | Binary attachment |
+| `secret` | `--pass value` | `<input type=password>` | `lv_textarea` password mode | A password or a private key: obscured, never stored |
 
 **`enum` options are `option` CHILDREN, never an `options` array.** The
 renderer reads `field.childrenOf('option')`, and a field whose choices are an
@@ -200,6 +201,16 @@ renderer reads `field.childrenOf('option')`, and a field whose choices are an
 label with no control at all, no error anywhere. Each option is
 `{"$": "option", "name": "<value>", "label": "<what a person reads>"}`, and
 `name` is the value the wapp is sent.
+
+**A `secret` is handed over and forgotten.** Its value reaches the wapp in
+the `fields` of the one action that uses it, like any field, and the host
+writes it nowhere: not the wapp's KV (other fields are mirrored there on
+every keystroke), not the saved field values a headless run reads, and it is
+not restored on the next open. The keyboard is told not to suggest or learn
+it, there is no copy button, and an eye shows it on request. The wapp's half
+of the bargain is to use it at once (seal it with `hal_encrypt`, say), clear
+its own buffer, and send `ui.field.set` with `""` to empty the box. The
+Firmwares wapp does exactly that with a WiFi password and an nsec.
 
 ### 3.4 Icon Resolution
 
