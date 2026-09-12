@@ -1431,6 +1431,56 @@ int32_t hal_xprs_stations(char *out, uint32_t out_cap);
 __attribute__((import_module("hal"), import_name("xprs_station")))
 int32_t hal_xprs_station(const char *call, uint32_t call_len, char *out, uint32_t out_cap);
 
+/* ── Flashing a board over USB (permission device.flash) ─────────────────
+ * The serial port, the ESP ROM loader, the catalogue (xprs.dev/firmware)
+ * and the downloaded images are the core's. A wapp asks with the verbs
+ * below, every one fire-and-forget answering 1 when it started, and hears
+ * `core.flash` {topic,rev} whenever anything moved: a device plugged in, a
+ * probe answered, a download or a write advanced, a session ended. It then
+ * reads hal_flash_state once. */
+
+/* List the USB serial devices; refresh the catalogue when it is stale.
+ * 0 on a platform without USB serial. */
+__attribute__((import_module("hal"), import_name("flash_scan")))
+int32_t hal_flash_scan(void);
+
+/* Put the board on [device] into its loader and read the chip, its flash
+ * size and the firmware it runs; the state then carries device.chip,
+ * device.flashBytes, device.runs, device.suggested and device.likely.
+ * The board restarts afterwards. 0 when busy or unknown. */
+__attribute__((import_module("hal"), import_name("flash_probe")))
+int32_t hal_flash_probe(const char *device, uint32_t device_len);
+
+/* Download a board's parts (manifest.json and its bins) and check them. */
+__attribute__((import_module("hal"), import_name("flash_fetch")))
+int32_t hal_flash_fetch(const char *board, uint32_t board_len);
+
+/* Write the downloaded [board] to [device], each part verified by the
+ * ROM's MD5. wipe=1 erases the NVS and OTA data partitions first: a new
+ * station with no key, owner or WiFi. 0 when busy or not downloaded. */
+__attribute__((import_module("hal"), import_name("flash_write")))
+int32_t hal_flash_write(const char *device, uint32_t device_len,
+                        const char *board, uint32_t board_len, int32_t wipe);
+
+/* Stop the session that runs. */
+__attribute__((import_module("hal"), import_name("flash_cancel")))
+int32_t hal_flash_cancel(void);
+
+/* Everything, flat:
+ *   {"phase":idle|scanning|probing|fetching|writing|verifying|done|failed,
+ *    "busy","message","error","supported",
+ *    "devices":[{"id","port","product","manufacturer","serial","vid","pid",
+ *                "permitted","nativeUsb"}],
+ *    "boards":[{"id","name","vendor","family","flashMb","psramMb","port",
+ *               "env","image","version","status","flashable",
+ *               "local" (the downloaded version or ""),"localBytes"}],
+ *    "device":{...the probed device, plus "chip","chipLabel","flashBytes",
+ *              "runs","runsVersion","suggested","likely" (ids, space-joined)},
+ *    "board","part","partIndex","partCount","done","total"}
+ * Returns the bytes written, or the negated size needed. */
+__attribute__((import_module("hal"), import_name("flash_state")))
+int32_t hal_flash_state(char *out, uint32_t out_cap);
+
 /* Recent XPRS packets, oldest first. INCLUDES packets addressed to other
  * stations, which is most of what a mesh carries:
  *   [{ts,bearer,rssi,from,to,type,id,mine,wire}]

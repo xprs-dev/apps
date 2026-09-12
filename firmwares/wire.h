@@ -73,5 +73,10 @@ void fw_jesc(char *d, const char *s, unsigned cap);
 int fw_json(const char *json, const char *key, char *out, unsigned cap);
 /* "key":[..] in flat JSON: the elements joined by ", ", quotes dropped. */
 int fw_json_list(const char *json, const char *key, char *out, unsigned cap);
+/* "key":{..}: the object's text, braces included, for fw_json to read. */
+int fw_json_obj(const char *json, const char *key, char *out, unsigned cap);
+/* "key":[{..},{..}]: the n-th object (from 0), braces included. 0 when
+ * there is no such element. */
+int fw_json_nth(const char *json, const char *key, int n, char *out, unsigned cap);
 
 #endif

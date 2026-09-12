@@ -1267,6 +1267,31 @@ The WASM module is responsible for returning appropriate HTTP status codes from 
 | `500` | Internal Error | WASM logic failure |
 | `503` | Service Unavailable | Hardware not ready (radio module offline, no GPS fix) |
 
+### Flashing a board over USB (`hal_flash_*`, permission `device.flash`)
+
+The host owns the cable: the serial port, the ESP ROM loader, the firmware
+catalogue at `xprs.dev/firmware` and the downloaded images. A wapp that
+declares `device.flash` gets five fire-and-forget verbs and one read, and
+hears `core.flash` (`{"topic":"core.flash","rev":N}`) whenever anything
+moved: a device plugged in or pulled, a probe answered, a download or a
+write advanced, a session ended. On every event it reads `hal_flash_state`
+once and redraws; it never polls.
+
+| Verb | Does |
+|---|---|
+| `hal_flash_scan()` | list the USB serial devices; refresh the catalogue when stale |
+| `hal_flash_probe(device)` | put the board into its loader, read chip, flash size and the firmware it runs; `device.suggested` and `device.likely` follow |
+| `hal_flash_fetch(board)` | download the board's `manifest.json` and parts, sha256 recorded |
+| `hal_flash_write(device, board, wipe)` | write every part at its offset, MD5-verified by the ROM; `wipe=1` erases the NVS and OTA data partitions first |
+| `hal_flash_cancel()` | stop the session |
+| `hal_flash_state(out, cap)` | the flat state: phase, busy, message, error, supported, devices[], boards[] (with `local`), device{...}, board, part, partIndex, partCount, done, total |
+
+Device ids are the platform's (`/dev/ttyACM1`, Android's
+`/dev/bus/usb/001/004`); board ids are the catalogue's (`tdongle-s3`).
+`supported` is false where there is no USB serial (the web build) and the
+wapp says so instead of offering buttons. The Firmwares wapp is the
+reference: `firmwares/main.c`, the Flash, Device and Board screens.
+
 ---
 
 ## 9. Mesh Distribution

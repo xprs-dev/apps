@@ -161,3 +161,32 @@ uint64_t g_epoch = 1789000000;   /* 2026-09-10 */
 uint64_t hal_time_ms(void) { return g_ms; }
 uint64_t hal_time_epoch(void) { return g_epoch; }
 void hal_log(int32_t l, const char *m, uint32_t n) { (void)l; (void)m; (void)n; }
+int32_t hal_ui_attached(void) { return 1; }
+
+/* ── flashing over USB ────────────────────────────────────────────────── */
+char g_flash_json[8192];        /* what hal_flash_state answers */
+char g_flash_calls[16][160];    /* every verb, in order */
+int  g_flash_calln;
+int  g_flash_rc = 1;            /* what the verbs answer */
+static void flash_call(const char *s) { if (g_flash_calln < 16) snprintf(g_flash_calls[g_flash_calln++], 160, "%s", s); }
+int32_t hal_flash_scan(void) { flash_call("scan"); return g_flash_rc; }
+int32_t hal_flash_probe(const char *d, uint32_t dl)
+{
+    char s[160]; snprintf(s, sizeof s, "probe %.*s", (int)dl, d); flash_call(s); return g_flash_rc;
+}
+int32_t hal_flash_fetch(const char *b, uint32_t bl)
+{
+    char s[160]; snprintf(s, sizeof s, "fetch %.*s", (int)bl, b); flash_call(s); return g_flash_rc;
+}
+int32_t hal_flash_write(const char *d, uint32_t dl, const char *b, uint32_t bl, int32_t wipe)
+{
+    char s[160]; snprintf(s, sizeof s, "write %.*s %.*s %d", (int)dl, d, (int)bl, b, (int)wipe); flash_call(s); return g_flash_rc;
+}
+int32_t hal_flash_cancel(void) { flash_call("cancel"); return 1; }
+int32_t hal_flash_state(char *out, uint32_t cap)
+{
+    uint32_t n = strlen(g_flash_json);
+    if (n > cap) return -(int32_t)n;
+    memcpy(out, g_flash_json, n);
+    return (int32_t)n;
+}

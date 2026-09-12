@@ -345,3 +345,70 @@ int fw_json_list(const char *json, const char *key, char *out, unsigned cap)
     }
     return 0;
 }
+
+/* The text of one balanced {..} starting at p, strings skipped. Returns the
+ * length copied, 0 when p is not an object or it does not fit. */
+static unsigned json_object(const char *p, char *out, unsigned cap)
+{
+    if (*p != '{') return 0;
+    unsigned depth = 0, o = 0;
+    int instr = 0;
+    for (; *p; p++) {
+        if (o + 1 >= cap) { out[0] = 0; return 0; }
+        out[o++] = *p;
+        if (instr) {
+            if (*p == '\\' && p[1]) { out[o++] = *++p; continue; }
+            if (*p == '"') instr = 0;
+            continue;
+        }
+        if (*p == '"') instr = 1;
+        else if (*p == '{') depth++;
+        else if (*p == '}' && --depth == 0) { out[o] = 0; return o; }
+    }
+    out[0] = 0;
+    return 0;
+}
+
+int fw_json_obj(const char *json, const char *key, char *out, unsigned cap)
+{
+    char pat[40] = "\"";
+    fw_cat(pat, key, sizeof pat);
+    fw_cat(pat, "\":", sizeof pat);
+    unsigned pl = fw_len(pat);
+    if (cap) out[0] = 0;
+    for (const char *p = json; p && *p; p++) {
+        if (!fw_starts(p, pat)) continue;
+        p += pl;
+        while (*p == ' ') p++;
+        return json_object(p, out, cap) > 0;
+    }
+    return 0;
+}
+
+int fw_json_nth(const char *json, const char *key, int n, char *out, unsigned cap)
+{
+    char pat[40] = "\"";
+    fw_cat(pat, key, sizeof pat);
+    fw_cat(pat, "\":[", sizeof pat);
+    unsigned pl = fw_len(pat);
+    if (cap) out[0] = 0;
+    for (const char *p = json; p && *p; p++) {
+        if (!fw_starts(p, pat)) continue;
+        p += pl;
+        for (int i = 0; ; i++) {
+            while (*p == ' ' || *p == ',') p++;
+            if (*p != '{') return 0;
+            if (i == n) return json_object(p, out, cap) > 0;
+            /* Skip this object the same way, into nowhere. */
+            unsigned depth = 0;
+            int instr = 0;
+            for (; *p; p++) {
+                if (instr) { if (*p == '\\' && p[1]) p++; else if (*p == '"') instr = 0; continue; }
+                if (*p == '"') instr = 1;
+                else if (*p == '{') depth++;
+                else if (*p == '}' && --depth == 0) { p++; break; }
+            }
+        }
+    }
+    return 0;
+}
