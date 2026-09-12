@@ -968,6 +968,7 @@ static void on_observation(const char *row)
         } else { s->theirs = 1; s->mine = 0; s->unowned = 0; }
         s->ask_pol = 0;
         if (!s->mine) s->asking = 0;          /* nothing more is coming */
+        set_now(s, s->mine ? "Yours" : s->unowned ? "Waiting for an owner" : "Somebody else's");
         listen();
         save();
         push_list();

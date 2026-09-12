@@ -419,6 +419,7 @@ static void test_somebody_elses_station(void)
     deliver("xprs.observation", row_to("observation", "X3XYZ1", "verified", 1,
             "t:observation f:X3XYZ1 d:X1ME77 s:policy owner:X1OTHER use:listed first:none serve:relay ts:2026-09-10_12:06:00 sig:KKKK"));
     CHECK(cap_last("\"title\":\"Others\"") != 0, "listed under Others");
+    CHECK(cap_count("Somebody else's") >= 1, "and the Now line says so");
     CHECK(cap_count("\"field\":\"claim__hidden\",\"value\":true") >= 1, "no Claim");
     CHECK(cap_count("\"field\":\"open_wifi__hidden\",\"value\":true") >= 1, "no WiFi");
     command("{\"command\":\"forget\",\"fields\":{}}");
