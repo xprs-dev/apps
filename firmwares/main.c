@@ -1,16 +1,19 @@
 /*
- * firmwares -- set up the station you just flashed (XPRS.md 11.9, 11.10).
+ * firmwares -- set up the station you just flashed (XPRS.md 11.9, 11.10),
+ * and read how it is doing (15.5).
  *
  * A freshly flashed station has no owner, no network and no name, and says
  * so: it airs `t:request q:owner` with its key in `k:` on its local bearers.
  * This wapp hears that on `xprs.request`, tells the person holding the phone
- * that a station nearby can be set up, and then, from the Station screen:
+ * that a station nearby can be set up, and then, one small screen per task:
  *
- *   claim it        cmd:set owner:<me> k:<my npub>
- *   put it online   ssid and password, sealed in x: to the station's key
- *   name it         nick, time zone, its own hotspot on or off
- *   give it a key   a new one it makes itself, or an nsec, sealed
- *   read its stats  cmd:zdiag
+ *   Station   what it is and how it stands; Claim while nobody owns it
+ *   WiFi      network and password, sealed in x: to the station's key
+ *   Name      nick, time zone, its own hotspot
+ *   Identity  a new key the station makes, or an nsec, sealed
+ *   Stats     15.5 telemetry the core already heard, the policy (11.9,
+ *             anybody may ask), and the firmware's own diagnostics
+ *   Answers   every answer the station gave
  *
  * Every packet goes through hal_xprs_send and every secret through
  * hal_encrypt: the core owns the radio, the signature and the key, and this
@@ -18,12 +21,12 @@
  * Passwords arrive in `$type:"secret"` fields, which the host never stores,
  * are sealed the moment they are read, and the buffers are cleared.
  *
- * Event-driven, no clock, and no transport. A command is handed to the core
- * once; the core airs it again until the station answers (docs/architecture.md
- * 1: retries are the core's) and says so on `xprs.status.tx` when it never
- * does. This wapp listens for answers only while it has asked something, and
- * for identities only while a station is changing its key: an idle phone
- * hands it nothing but the rare ask to be claimed.
+ * Event-driven, no clock, no transport. A command is handed to the core once;
+ * the core airs it again until the station answers and says so on
+ * `xprs.status.tx` when it never does. This wapp listens for answers only
+ * while it has asked something, for identities only while a station is
+ * changing its key, and for observations only while a policy ask is out: an
+ * idle phone hands it nothing but the rare ask to be claimed.
  */
 #include "../hal/xprs_wasm_hal.h"
 #include "wire.h"
@@ -33,28 +36,35 @@
 typedef struct {
     char call[12];
     char npub[70];
+    /* What it said about itself (11.10 results, zdiag, q:policy, q:mail). */
     char nick[20], wifi[12], ip[20], ap[4], zone[8];
     char fw[24], uptime[16], peers[8], heap[20], reset[16];
+    char health[16], slot[16], radio[48], crash[32], mail[8];
+    char pol_owner[40], pol_use[12], pol_first[40], pol_serve[40];
     char bearer[8];
     int  rssi;
     unsigned long long heard_ms;
     int  unowned;                 /* asked to be claimed */
     int  mine;                    /* claimed by this profile */
+    int  theirs;                  /* owned by somebody else */
     /* The one command in flight to it. The wire is kept only to say it
      * again after a 408, under a newer stamp. */
     char pend[FW_WIRE_UNSIGNED + 1];
     char pend_id[7];
-    char pend_what[8];            /* claim wifi set key zdiag */
+    char pend_what[8];            /* claim wifi set key zdiag zcore */
     int  pend_408, pend_final;
+    char last_what[8];            /* what a late final answer was to */
     char next_x[FW_WIRE_UNSIGNED];/* the second half of a long ssid+pass */
     char rekey_npub[70];          /* following a new key (11.10) */
     unsigned long long last_ts;   /* the last ts: we used with it */
+    int  ask_pol;                 /* a q:policy is out: observations wanted */
+    char now[96];                 /* the one line the Station screen shows */
 } st_t;
 
 static st_t g_st[ST_MAX];
 static int  g_nst;
 static int  g_sel = -1;
-static int  g_sub_res, g_sub_tx, g_sub_ids;
+static int  g_sub_res, g_sub_tx, g_sub_ids, g_sub_obs;
 static char g_me[16];
 static char g_my_npub[70];
 
@@ -68,6 +78,7 @@ static char g_ev[4096];
 static char g_topic[64];
 static char g_buf[4096];
 static char g_out[8192];
+static char g_host[1024];         /* one hal_xprs_station answer */
 
 static void say(const char *json) { hal_msg_send(json, fw_len(json)); }
 
@@ -114,6 +125,14 @@ static int add(const char *call)
     return i;
 }
 
+static void drop(int i)
+{
+    if (i < 0 || i >= g_nst) return;
+    for (int j = i; j + 1 < g_nst; j++) g_st[j] = g_st[j + 1];
+    g_nst--;
+    for (unsigned k = 0; k < sizeof g_st[g_nst]; k++) ((char *)&g_st[g_nst])[k] = 0;
+}
+
 static void kv_put(const char *k, const char *v) { hal_kv_set(k, fw_len(k), v, fw_len(v)); }
 
 static void save(void)
@@ -121,10 +140,10 @@ static void save(void)
     char list[ST_MAX * 13] = "";
     for (int i = 0; i < g_nst; i++) {
         st_t *s = &g_st[i];
-        if (!s->mine && !s->unowned) continue;
+        if (!s->mine && !s->unowned && !s->theirs) continue;
         if (list[0]) fw_cat(list, ",", sizeof list);
         fw_cat(list, s->call, sizeof list);
-        char k[24] = "st.", v[200] = "";
+        char k[24] = "st.", v[320] = "";
         fw_cat(k, s->call, sizeof k);
         fw_cat(v, s->npub, sizeof v);
         fw_cat(v, s->mine ? "|1|" : "|0|", sizeof v);
@@ -132,6 +151,15 @@ static void save(void)
         fw_cat(v, s->nick, sizeof v);
         fw_cat(v, "|", sizeof v);
         fw_cat(v, s->fw, sizeof v);
+        fw_cat(v, s->theirs ? "|1|" : "|0|", sizeof v);
+        fw_cat(v, s->wifi, sizeof v);
+        fw_cat(v, "|", sizeof v);
+        fw_cat(v, s->ip, sizeof v);
+        /* The policy it last stated, so the Stats screen opens with it. */
+        fw_cat(v, "|", sizeof v); fw_cat(v, s->pol_owner, sizeof v);
+        fw_cat(v, "|", sizeof v); fw_cat(v, s->pol_use, sizeof v);
+        fw_cat(v, "|", sizeof v); fw_cat(v, s->pol_first, sizeof v);
+        fw_cat(v, "|", sizeof v); fw_cat(v, s->pol_serve, sizeof v);
         kv_put(k, v);
     }
     kv_put("st.list", list);
@@ -149,24 +177,106 @@ static void load(void)
         call[c] = 0;
         if (*p == ',') p++;
         if (!call[0]) continue;
-        char k[24] = "st.", v[200];
+        char k[24] = "st.", v[320];
         fw_cat(k, call, sizeof k);
         n = hal_kv_get(k, fw_len(k), v, sizeof v - 1);
         v[n] = 0;
         int i = add(call);
         if (i < 0) break;
         st_t *s = &g_st[i];
-        /* npub|mine|unowned|nick|fw */
-        char *f[5] = {0};
+        /* npub|mine|unowned|nick|fw|theirs|wifi|ip|owner|use|first|serve */
+        char *f[12] = {0};
         f[0] = v;
-        for (int j = 1, q = 0; v[q] && j < 5; q++)
+        for (int j = 1, q = 0; v[q] && j < 12; q++)
             if (v[q] == '|') { v[q] = 0; f[j++] = v + q + 1; }
         fw_cpy(s->npub, f[0], sizeof s->npub);
         s->mine = f[1] && f[1][0] == '1';
         s->unowned = f[2] && f[2][0] == '1';
         if (f[3]) fw_cpy(s->nick, f[3], sizeof s->nick);
         if (f[4]) fw_cpy(s->fw, f[4], sizeof s->fw);
+        s->theirs = f[5] && f[5][0] == '1';
+        if (f[6]) fw_cpy(s->wifi, f[6], sizeof s->wifi);
+        if (f[7]) fw_cpy(s->ip, f[7], sizeof s->ip);
+        if (f[8]) fw_cpy(s->pol_owner, f[8], sizeof s->pol_owner);
+        if (f[9]) fw_cpy(s->pol_use, f[9], sizeof s->pol_use);
+        if (f[10]) fw_cpy(s->pol_first, f[10], sizeof s->pol_first);
+        if (f[11]) fw_cpy(s->pol_serve, f[11], sizeof s->pol_serve);
     }
+}
+
+/* ── What the core holds about a station (hal_xprs_station) ──────────── */
+/* Fills g_host; 1 when the core has heard it this hour. */
+static int host_facts(const st_t *s)
+{
+    int n = hal_xprs_station(s->call, fw_len(s->call), g_host, sizeof g_host - 1);
+    if (n <= 0) { g_host[0] = 0; return 0; }
+    g_host[n] = 0;
+    return 1;
+}
+
+static unsigned long long host_num(const char *key)
+{
+    char v[24];
+    if (!fw_json(g_host, key, v, sizeof v)) return 0;
+    unsigned long long n = 0;
+    for (const char *p = v; *p >= '0' && *p <= '9'; p++) n = n * 10 + (unsigned)(*p - '0');
+    return n;
+}
+
+static void ago_words(unsigned long long ms, char *out, unsigned cap)
+{
+    fw_cpy(out, "", cap);
+    if (ms < 60000ULL)         { fw_cat_u(out, ms / 1000, cap); fw_cat(out, " s ago", cap); }
+    else if (ms < 3600000ULL)  { fw_cat_u(out, ms / 60000, cap); fw_cat(out, " min ago", cap); }
+    else                       { fw_cat_u(out, ms / 3600000, cap); fw_cat(out, " h ago", cap); }
+}
+
+/* "BLE -87 dBm" or "LAN", from the core's last sighting, else what the ask
+ * carried. [rssi_out], when given, gets the level alone for a tile. */
+static void signal_parts(const st_t *s, int have_host, char *out, unsigned cap, int *rssi_out)
+{
+    char b[8] = "";
+    int rssi = s->rssi;
+    if (have_host) {
+        fw_json(g_host, "bearer", b, sizeof b);
+        char r[12];
+        if (fw_json(g_host, "rssi", r, sizeof r)) {
+            int neg = r[0] == '-', v = 0;
+            for (const char *p = r + neg; *p >= '0' && *p <= '9'; p++) v = v * 10 + (*p - '0');
+            rssi = neg ? -v : v;
+        }
+    }
+    if (!b[0]) fw_cpy(b, s->bearer, sizeof b);
+    out[0] = 0;
+    for (unsigned j = 0; b[j] && j < sizeof b; j++) {
+        char c[2] = { fw_up(b[j]), 0 };
+        fw_cat(out, c, cap);
+    }
+    if (fw_eq(out, "BLE5")) fw_cpy(out, "BLE", cap);
+    if (rssi_out) { *rssi_out = rssi; if (!out[0]) fw_cpy(out, "not heard", cap); return; }
+    if (rssi) { fw_cat(out, " -", cap); fw_cat_u(out, (unsigned)(rssi < 0 ? -rssi : rssi), cap); fw_cat(out, " dBm", cap); }
+    if (!out[0]) fw_cpy(out, "not heard", cap);
+}
+
+static void signal_words(const st_t *s, int have_host, char *out, unsigned cap)
+{
+    signal_parts(s, have_host, out, cap, 0);
+}
+
+static void tile(const char *id, const char *label, const char *value,
+                 const char *unit, const char *hint, const char *progress, int alert);
+
+/* The Signal tile: the level as the number, the bearer and the age as the
+ * hint, so a phone-width tile is not cut short. */
+static void signal_tile(const st_t *s, int have_host, unsigned long long agoms, int alert)
+{
+    char b[24], hint[48] = "", num[12] = "";
+    int rssi = 0;
+    signal_parts(s, have_host, b, sizeof b, &rssi);
+    if (rssi) { fw_cpy(num, "-", sizeof num); fw_cat_u(num, (unsigned)(rssi < 0 ? -rssi : rssi), sizeof num); }
+    fw_cpy(hint, b, sizeof hint);
+    if (have_host) { char ago[24]; ago_words(agoms, ago, sizeof ago); fw_cat(hint, ", ", sizeof hint); fw_cat(hint, ago, sizeof hint); }
+    tile("signal", "Signal", rssi ? num : b, rssi ? "dBm" : "", rssi || have_host ? hint : "", "", alert);
 }
 
 /* ── Screens ──────────────────────────────────────────────────────────── */
@@ -178,112 +288,12 @@ static void log_line(const char *call, const char *text)
     fw_cat(m, "\"}", sizeof m);
     say(m);
     /* And the host's log: a headless engine's lines reach /api/log, which
-     * is where a setup that went wrong gets read afterwards. */
+     * is where a setup that went wrong gets read afterwards. Only what a
+     * person did or a station answered comes through here, never a packet. */
     char l[200] = "firmwares: ";
     if (call && call[0]) { fw_cat(l, call, sizeof l); fw_cat(l, ": ", sizeof l); }
     fw_cat(l, text, sizeof l);
     hal_log(1, l, fw_len(l));
-}
-
-static void item(const char *id, const char *title, const char *sub, int *first)
-{
-    if (!*first) fw_cat(g_out, ",", sizeof g_out);
-    *first = 0;
-    fw_cat(g_out, "{\"id\":\"", sizeof g_out);
-    fw_jesc(g_out, id, sizeof g_out);
-    fw_cat(g_out, "\",\"title\":\"", sizeof g_out);
-    fw_jesc(g_out, title, sizeof g_out);
-    fw_cat(g_out, "\",\"subtitle\":\"", sizeof g_out);
-    fw_jesc(g_out, sub, sizeof g_out);
-    fw_cat(g_out, "\"}", sizeof g_out);
-}
-
-static void push_list(void)
-{
-    fw_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"stations\",\"sections\":[",
-           sizeof g_out);
-    int any = 0;
-    for (int pass = 0; pass < 2; pass++) {
-        int first = 1, n = 0;
-        for (int i = 0; i < g_nst; i++) {
-            st_t *s = &g_st[i];
-            if (pass == 0 ? !(s->unowned && !s->mine) : !s->mine) continue;
-            if (first) {
-                if (any) fw_cat(g_out, ",", sizeof g_out);
-                fw_cat(g_out, pass == 0
-                       ? "{\"title\":\"Waiting for an owner\",\"items\":["
-                       : "{\"title\":\"Yours\",\"items\":[", sizeof g_out);
-                any = 1;
-            }
-            char sub[96] = "";
-            if (pass == 0) {
-                fw_cpy(sub, "Freshly flashed. Tap to claim it", sizeof sub);
-            } else {
-                fw_cpy(sub, s->wifi[0] ? "WiFi " : "", sizeof sub);
-                fw_cat(sub, s->wifi, sizeof sub);
-                if (s->ip[0]) { fw_cat(sub, " ", sizeof sub); fw_cat(sub, s->ip, sizeof sub); }
-                if (s->fw[0]) { fw_cat(sub, sub[0] ? ", firmware " : "firmware ", sizeof sub); fw_cat(sub, s->fw, sizeof sub); }
-                if (!sub[0]) fw_cpy(sub, "Tap to set it up", sizeof sub);
-            }
-            item(s->call, s->nick[0] ? s->nick : s->call, sub, &first);
-            n++;
-        }
-        if (!first) fw_cat(g_out, "]}", sizeof g_out);
-        (void)n;
-    }
-    fw_cat(g_out, "]}", sizeof g_out);
-    say(g_out);
-}
-
-static void detail(const char *label, const char *value, int *first)
-{
-    if (!value || !value[0]) return;
-    if (!*first) fw_cat(g_out, ",", sizeof g_out);
-    *first = 0;
-    fw_cat(g_out, "{\"label\":\"", sizeof g_out);
-    fw_jesc(g_out, label, sizeof g_out);
-    fw_cat(g_out, "\",\"value\":\"", sizeof g_out);
-    fw_jesc(g_out, value, sizeof g_out);
-    fw_cat(g_out, "\"}", sizeof g_out);
-}
-
-static void push_detail(void)
-{
-    if (g_sel < 0 || g_sel >= g_nst) return;
-    st_t *s = &g_st[g_sel];
-    fw_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"detail\",\"value\":["
-                  "{\"title\":\"Station\",\"items\":[", sizeof g_out);
-    int first = 1;
-    detail("Callsign", s->call, &first);
-    detail("Owner", s->mine ? "You" : s->unowned ? "Nobody yet: claim it" : "Somebody else", &first);
-    char heard[40] = "";
-    if (s->bearer[0]) {
-        for (unsigned j = 0; s->bearer[j] && j < 8; j++) {
-            char c[2] = { fw_up(s->bearer[j]), 0 };
-            fw_cat(heard, c, sizeof heard);
-        }
-        if (s->rssi) { fw_cat(heard, " at -", sizeof heard); fw_cat_u(heard, (unsigned)(s->rssi < 0 ? -s->rssi : s->rssi), sizeof heard); fw_cat(heard, " dBm", sizeof heard); }
-    }
-    detail("Heard over", heard, &first);
-    detail("Key", s->npub, &first);
-    fw_cat(g_out, "]},{\"title\":\"Network\",\"items\":[", sizeof g_out);
-    first = 1;
-    detail("WiFi", s->wifi, &first);
-    detail("Address", s->ip, &first);
-    detail("Hotspot", s->ap, &first);
-    detail("Name", s->nick, &first);
-    detail("Time zone", s->zone, &first);
-    if (first) detail("Not known yet", "set it up or read its stats", &first);
-    fw_cat(g_out, "]},{\"title\":\"Firmware\",\"items\":[", sizeof g_out);
-    first = 1;
-    detail("Version", s->fw, &first);
-    detail("Up for", s->uptime, &first);
-    detail("Stations it hears", s->peers, &first);
-    detail("Free memory, KB (now/largest/lowest)", s->heap, &first);
-    detail("Last reset", s->reset, &first);
-    if (first) detail("Not read yet", "press Read stats", &first);
-    fw_cat(g_out, "]}]}", sizeof g_out);
-    say(g_out);
 }
 
 static void field_set(const char *field, const char *value)
@@ -293,6 +303,15 @@ static void field_set(const char *field, const char *value)
     fw_cat(m, "\",\"value\":\"", sizeof m);
     fw_jesc(m, value, sizeof m);
     fw_cat(m, "\"}", sizeof m);
+    say(m);
+}
+
+/* `<name>__hidden`: the host leaves the button or field off the screen. */
+static void flag_hidden(const char *name, int hidden)
+{
+    char m[120] = "{\"type\":\"ui.field.set\",\"field\":\"";
+    fw_cat(m, name, sizeof m);
+    fw_cat(m, hidden ? "__hidden\",\"value\":true}" : "__hidden\",\"value\":false}", sizeof m);
     say(m);
 }
 
@@ -306,6 +325,293 @@ static void screen_open(const char *name, const char *title)
     say(m);
 }
 
+/* One details section with one line, for a "what is happening" row. */
+static void one_line(const char *field, const char *title, const char *text)
+{
+    char m[300] = "{\"type\":\"ui.field.set\",\"field\":\"";
+    fw_cat(m, field, sizeof m);
+    if (!text || !text[0]) { fw_cat(m, "\",\"value\":[]}", sizeof m); say(m); return; }
+    fw_cat(m, "\",\"value\":[{\"title\":\"\",\"items\":[{\"label\":\"", sizeof m);
+    fw_jesc(m, title, sizeof m);
+    fw_cat(m, "\",\"value\":\"", sizeof m);
+    fw_jesc(m, text, sizeof m);
+    fw_cat(m, "\"}]}]}", sizeof m);
+    say(m);
+}
+
+/* The latest thing about a station, on its screen and the WiFi screen. */
+static void set_now(st_t *s, const char *text)
+{
+    fw_cpy(s->now, text, sizeof s->now);
+    if (g_sel >= 0 && &g_st[g_sel] == s) {
+        one_line("now", "Now", s->now);
+        one_line("wifi_now", "Now", s->now);
+    }
+}
+
+/* ── Stats tiles ──────────────────────────────────────────────────────── */
+static void tiles_begin(const char *field)
+{
+    fw_cpy(g_out, "{\"type\":\"ui.stats.set\",\"field\":\"", sizeof g_out);
+    fw_cat(g_out, field, sizeof g_out);
+    fw_cat(g_out, "\",\"tiles\":[", sizeof g_out);
+}
+
+static void tile(const char *id, const char *label, const char *value,
+                 const char *unit, const char *hint, const char *progress, int alert)
+{
+    unsigned n = fw_len(g_out);
+    if (g_out[n - 1] != '[') fw_cat(g_out, ",", sizeof g_out);
+    fw_cat(g_out, "{\"id\":\"", sizeof g_out);
+    fw_jesc(g_out, id, sizeof g_out);
+    fw_cat(g_out, "\",\"label\":\"", sizeof g_out);
+    fw_jesc(g_out, label, sizeof g_out);
+    fw_cat(g_out, "\",\"value\":\"", sizeof g_out);
+    fw_jesc(g_out, value && value[0] ? value : "?", sizeof g_out);
+    fw_cat(g_out, "\"", sizeof g_out);
+    if (unit && unit[0]) { fw_cat(g_out, ",\"unit\":\"", sizeof g_out); fw_jesc(g_out, unit, sizeof g_out); fw_cat(g_out, "\"", sizeof g_out); }
+    if (hint && hint[0]) { fw_cat(g_out, ",\"hint\":\"", sizeof g_out); fw_jesc(g_out, hint, sizeof g_out); fw_cat(g_out, "\"", sizeof g_out); }
+    if (progress && progress[0]) { fw_cat(g_out, ",\"progress\":", sizeof g_out); fw_cat(g_out, progress, sizeof g_out); }
+    if (alert) fw_cat(g_out, ",\"alert\":true", sizeof g_out);
+    fw_cat(g_out, "}", sizeof g_out);
+}
+
+static void tiles_end(void)
+{
+    fw_cat(g_out, "]}", sizeof g_out);
+    say(g_out);
+}
+
+/* The Station screen: six tiles, the Now line, and which buttons apply. */
+static void push_hub(void)
+{
+    if (g_sel < 0 || g_sel >= g_nst) return;
+    st_t *s = &g_st[g_sel];
+    int have = host_facts(s);
+    unsigned long long agoms = have ? host_num("agoMs") : 0;
+    int stale = !have || agoms > 600000ULL;
+
+    tiles_begin("hub");
+    tile("owner", "Owner",
+         s->mine ? "You" : s->unowned ? "Nobody" : s->theirs ? "Not you" : "?",
+         "", s->unowned && !s->mine ? "tap Claim" : s->theirs ? "somebody else's" : "", "", 0);
+    {
+        int joining = fw_eq(s->wifi, "joining");
+        tile("wifi", "WiFi", s->wifi[0] ? s->wifi : "unknown", "", s->ip,
+             joining ? "0.5" : "", fw_eq(s->wifi, "failed"));
+    }
+    signal_tile(s, have, agoms, stale);
+    {
+        char up[16] = "";
+        if (have) fw_json(g_host, "uptime", up, sizeof up);
+        if (!up[0]) fw_cpy(up, s->uptime, sizeof up);
+        tile("up", "Up", up, "", "", "", 0);
+    }
+    {
+        char fw[24] = "";
+        if (have) fw_json(g_host, "fw", fw, sizeof fw);
+        if (!fw[0]) fw_cpy(fw, s->fw, sizeof fw);
+        tile("fw", "Firmware", fw, "", "", "", 0);
+    }
+    {
+        char pe[8] = "";
+        if (have) fw_json(g_host, "peers", pe, sizeof pe);
+        if (!pe[0]) fw_cpy(pe, s->peers, sizeof pe);
+        tile("peers", "Peers", pe, "", "", "", 0);
+    }
+    tiles_end();
+    if (!s->now[0])
+        fw_cpy(s->now, s->mine ? "Yours" : s->unowned ? "Waiting for an owner"
+                     : s->theirs ? "Somebody else's" : "Not heard from yet", sizeof s->now);
+    one_line("now", "Now", s->now);
+
+    flag_hidden("claim", !(s->unowned && !s->mine));
+    flag_hidden("open_wifi", !s->mine);
+    flag_hidden("open_name", !s->mine);
+    flag_hidden("open_identity", !s->mine);
+}
+
+static void item(const char *id, const char *title, const char *sub,
+                 const char *tags, int dim, int *first)
+{
+    if (!*first) fw_cat(g_out, ",", sizeof g_out);
+    *first = 0;
+    fw_cat(g_out, "{\"id\":\"", sizeof g_out);
+    fw_jesc(g_out, id, sizeof g_out);
+    fw_cat(g_out, "\",\"title\":\"", sizeof g_out);
+    fw_jesc(g_out, title, sizeof g_out);
+    fw_cat(g_out, "\",\"subtitle\":\"", sizeof g_out);
+    fw_jesc(g_out, sub, sizeof g_out);
+    fw_cat(g_out, "\",\"tags\":[", sizeof g_out);
+    fw_cat(g_out, tags, sizeof g_out);
+    fw_cat(g_out, "]", sizeof g_out);
+    if (dim) fw_cat(g_out, ",\"dim\":true", sizeof g_out);
+    fw_cat(g_out, "}", sizeof g_out);
+}
+
+static void tag(char *tags, unsigned cap, const char *prefix, const char *v)
+{
+    if (!v || !v[0]) return;
+    if (tags[0]) fw_cat(tags, ",", cap);
+    fw_cat(tags, "\"", cap);
+    fw_jesc(tags, prefix, cap);
+    fw_jesc(tags, v, cap);
+    fw_cat(tags, "\"", cap);
+}
+
+static void push_list(void)
+{
+    fw_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"stations\",\"sections\":[",
+           sizeof g_out);
+    int any = 0;
+    static const char *const titles[3] = {
+        "{\"title\":\"Waiting for an owner\",\"items\":[",
+        "{\"title\":\"Yours\",\"items\":[",
+        "{\"title\":\"Others\",\"items\":["
+    };
+    for (int pass = 0; pass < 3; pass++) {
+        int first = 1;
+        for (int i = 0; i < g_nst; i++) {
+            st_t *s = &g_st[i];
+            int in = pass == 0 ? (s->unowned && !s->mine)
+                   : pass == 1 ? s->mine
+                   : (s->theirs && !s->mine && !s->unowned);
+            if (!in) continue;
+            if (first) {
+                if (any) fw_cat(g_out, ",", sizeof g_out);
+                fw_cat(g_out, titles[pass], sizeof g_out);
+                any = 1;
+            }
+            int have = host_facts(s);
+            char sub[64], ago[24];
+            signal_words(s, have, sub, sizeof sub);
+            unsigned long long agoms = have ? host_num("agoMs") : 0;
+            if (have) { ago_words(agoms, ago, sizeof ago); fw_cat(sub, ", ", sizeof sub); fw_cat(sub, ago, sizeof sub); }
+            if (pass == 0) fw_cat(sub, ". Tap to claim it", sizeof sub);
+            char tags[160] = "", fw[24] = "", up[16] = "";
+            if (have) { fw_json(g_host, "fw", fw, sizeof fw); fw_json(g_host, "uptime", up, sizeof up); }
+            tag(tags, sizeof tags, "fw ", fw[0] ? fw : s->fw);
+            tag(tags, sizeof tags, "WiFi ", s->wifi);
+            tag(tags, sizeof tags, "up ", up[0] ? up : s->uptime);
+            item(s->call, s->nick[0] ? s->nick : s->call, sub, tags,
+                 !have || agoms > 600000ULL, &first);
+        }
+        if (!first) fw_cat(g_out, "]}", sizeof g_out);
+    }
+    fw_cat(g_out, "]}", sizeof g_out);
+    say(g_out);
+}
+
+/* The health word of zh:<up>/<required>: every required part up, or not. */
+static void health_words(const char *zh, char *out, unsigned cap)
+{
+    unsigned long long up = 0, req = 0;
+    const char *p = zh;
+    for (; *p && *p != '/'; p++) {
+        int d = (*p >= '0' && *p <= '9') ? *p - '0' : (*p >= 'a' && *p <= 'f') ? *p - 'a' + 10 : -1;
+        if (d < 0) { fw_cpy(out, zh, cap); return; }
+        up = up * 16 + (unsigned)d;
+    }
+    if (*p != '/') { fw_cpy(out, zh, cap); return; }
+    for (p++; *p; p++) {
+        int d = (*p >= '0' && *p <= '9') ? *p - '0' : (*p >= 'a' && *p <= 'f') ? *p - 'a' + 10 : -1;
+        if (d < 0) break;
+        req = req * 16 + (unsigned)d;
+    }
+    unsigned long long missing = req & ~up;
+    int n = 0;
+    for (; missing; missing >>= 1) n += (int)(missing & 1);
+    if (n == 0) fw_cpy(out, "all up", cap);
+    else { fw_cpy(out, "", cap); fw_cat_u(out, (unsigned)n, cap); fw_cat(out, n == 1 ? " part down" : " parts down", cap); }
+}
+
+/* Split "a/b/c" into up to four pieces. */
+static int slashes(const char *v, char out[4][16])
+{
+    int n = 0, o = 0;
+    out[0][0] = 0;
+    for (const char *p = v; *p && n < 4; p++) {
+        if (*p == '/') { out[n][o] = 0; n++; o = 0; if (n < 4) out[n][0] = 0; continue; }
+        if (o < 15) out[n][o++] = *p;
+    }
+    if (n < 4) { out[n][o] = 0; n++; }
+    return n;
+}
+
+static void push_stats(void)
+{
+    if (g_sel < 0 || g_sel >= g_nst) return;
+    st_t *s = &g_st[g_sel];
+    int have = host_facts(s);
+    char v[64], w[4][16];
+
+    /* 15.5: what the core heard the station say about itself. */
+    tiles_begin("st_station");
+    v[0] = 0; if (have) fw_json(g_host, "fw", v, sizeof v);
+    tile("fw", "Firmware", v[0] ? v : s->fw, "", "", "", 0);
+    v[0] = 0; if (have) fw_json(g_host, "uptime", v, sizeof v);
+    tile("up", "Up", v[0] ? v : s->uptime, "", "since its last restart", "", 0);
+    v[0] = 0; if (have) fw_json(g_host, "lifetime", v, sizeof v);
+    tile("life", "Lifetime", v, "", "across every restart", "", 0);
+    v[0] = 0; if (have) fw_json(g_host, "peers", v, sizeof v);
+    tile("peers", "Peers", v[0] ? v : s->peers, "", "stations it reaches", "", 0);
+    v[0] = 0; if (have) fw_json(g_host, "mail", v, sizeof v);
+    tile("mail", "Mail held", v[0] ? v : s->mail, "", "for other stations", "", 0);
+    v[0] = 0; if (have) fw_json(g_host, "count", v, sizeof v);
+    tile("count", "Records", v, "", "in its archive", "", 0);
+    signal_tile(s, have, have ? host_num("agoMs") : 0, 0);
+    v[0] = 0; if (have) fw_json_list(g_host, "bearers", v, sizeof v);
+    tile("bearers", "Heard over", v, "", "", "", 0);
+    v[0] = 0; if (have) fw_json(g_host, "sig", v, sizeof v);
+    tile("sig", "Signatures", v, "", "", "", fw_eq(v, "forged"));
+    tiles_end();
+    v[0] = 0; if (have) fw_json_list(g_host, "hears", v, sizeof v);
+    one_line("st_hears", "Hears", v);
+
+    /* 11.9: the policy, what anybody may ask. */
+    tiles_begin("st_policy");
+    tile("owner", "Owner", s->pol_owner, "", "", "", 0);
+    tile("use", "Use", s->pol_use, "", "who may send through it", "", 0);
+    tile("first", "First", s->pol_first, "", "served ahead of others", "", 0);
+    tile("serve", "Serve", s->pol_serve, "", "what it does for others", "", 0);
+    tiles_end();
+
+    /* The firmware's own words (cmd:zdiag, its owner only). */
+    tiles_begin("st_diag");
+    if (s->heap[0]) {
+        int n = slashes(s->heap, w);
+        char hint[48] = "";
+        if (n >= 3) { fw_cpy(hint, "largest ", sizeof hint); fw_cat(hint, w[1], sizeof hint); fw_cat(hint, ", lowest ", sizeof hint); fw_cat(hint, w[2], sizeof hint); }
+        tile("heap", "Free memory", w[0], "KB", hint, "", 0);
+    } else {
+        tile("heap", "Free memory", "", "KB", s->mine ? "tap Refresh" : "its owner may ask", "", 0);
+    }
+    tile("reset", "Last reset", s->reset, "", "", "", fw_eq(s->reset, "panic"));
+    if (s->health[0]) { health_words(s->health, v, sizeof v); tile("health", "Health", v, "", s->health, "", !fw_eq(v, "all up")); }
+    else tile("health", "Health", "", "", "", "", 0);
+    if (s->slot[0]) { slashes(s->slot, w); tile("slot", "Running from", w[0], "", "", "", 0); }
+    else tile("slot", "Running from", "", "", "", "", 0);
+    if (s->radio[0]) {
+        /* "rx/tx/cancel/drop done/issued/fail" as kept by take_state. */
+        char zn[24] = "", zs[24] = "";
+        unsigned i = 0, o = 0;
+        for (; s->radio[i] && s->radio[i] != ' ' && o < sizeof zn - 1; i++) zn[o++] = s->radio[i];
+        zn[o] = 0;
+        if (s->radio[i] == ' ') fw_cpy(zs, s->radio + i + 1, sizeof zs);
+        int n = slashes(zn, w);
+        char hint[48] = "";
+        if (n >= 4) { fw_cpy(hint, "sent ", sizeof hint); fw_cat(hint, w[1], sizeof hint); fw_cat(hint, ", dropped ", sizeof hint); fw_cat(hint, w[3], sizeof hint); }
+        tile("radio", "Heard on ESP-NOW", w[0], "", hint, "", 0);
+        n = slashes(zs, w);
+        hint[0] = 0;
+        if (n >= 3) { fw_cpy(hint, "of ", sizeof hint); fw_cat(hint, w[1], sizeof hint); fw_cat(hint, ", failed ", sizeof hint); fw_cat(hint, w[2], sizeof hint); }
+        tile("sent", "Sent", w[0], "", hint, "", n >= 3 && !fw_eq(w[2], "0"));
+    }
+    if (s->crash[0]) tile("crash", "Crashed in", s->crash, "", "tap Crash report", "", 1);
+    tiles_end();
+    flag_hidden("crash", !s->crash[0]);
+}
+
 /* ── What to listen to ────────────────────────────────────────────────── */
 static void sub(int *held, int want, const char *topic)
 {
@@ -315,18 +621,21 @@ static void sub(int *held, int want, const char *topic)
 }
 
 /* Answers only while a command is out, identities only while a station is
- * changing its key. Everything else on those topics is somebody else's. */
+ * changing its key, observations only while a policy ask is out. Everything
+ * else on those topics is somebody else's. */
 static void listen(void)
 {
-    int asked = 0, keying = 0;
+    int asked = 0, keying = 0, asking = 0;
     for (int i = 0; i < g_nst; i++) {
         if (g_st[i].pend_id[0]) asked = 1;
         if (g_st[i].rekey_npub[0] ||
             (g_st[i].pend_id[0] && fw_eq(g_st[i].pend_what, "key"))) keying = 1;
+        if (g_st[i].ask_pol) asking = 1;
     }
     sub(&g_sub_res, asked, "xprs.result");
     sub(&g_sub_tx, asked, "xprs.status.tx");
     sub(&g_sub_ids, keying, "xprs.identity");
+    sub(&g_sub_obs, asking, "xprs.observation");
 }
 
 static void stamp_for(st_t *s, char *ts, unsigned cap)
@@ -349,6 +658,7 @@ static int send_cmd(st_t *s, const char *wire, const char *what)
     fw_cpy(s->pend, wire, sizeof s->pend);
     fw_id(wire, fw_len(wire), s->pend_id);
     fw_cpy(s->pend_what, what, sizeof s->pend_what);
+    fw_cpy(s->last_what, what, sizeof s->last_what);
     s->pend_final = 0;
     listen();
     return 0;
@@ -373,7 +683,7 @@ static void do_claim(st_t *s)
         log_line(s->call, "This phone's callsign is too long to claim with");
         return;
     }
-    if (send_cmd(s, w, "claim") == 0) log_line(s->call, "Claiming it...");
+    if (send_cmd(s, w, "claim") == 0) { log_line(s->call, "Claiming..."); set_now(s, "Claiming..."); }
 }
 
 /* Seal [body] to the station and air it; zero the body either way. */
@@ -387,6 +697,7 @@ static int send_sealed(st_t *s, char *body, const char *what)
     char ts[24], w[FW_WIRE_UNSIGNED + 1];
     stamp_for(s, ts, sizeof ts);
     int rc = fw_sealed(w, sizeof w, g_me, s->call, ts, x);
+    for (unsigned i = 0; x[i]; i++) x[i] = 0;
     if (rc < 0) {
         log_line(s->call, "Too long to seal into one packet");
         return -1;
@@ -403,7 +714,7 @@ static void do_wifi(st_t *s, char *ssid, char *pass)
     if (n < 0) {
         log_line(s->call, "A network name or password cannot hold a line break");
     } else if (n <= FW_BODY_ONE_MAX) {
-        if (send_sealed(s, body, "wifi") == 0) log_line(s->call, "Sending the network, sealed to the station...");
+        if (send_sealed(s, body, "wifi") == 0) set_now(s, "Sending the network, sealed...");
     } else {
         /* Too long for one packet: the name first, then the password, and
          * the station joins when it has the second (11.10). The password's
@@ -421,13 +732,12 @@ static void do_wifi(st_t *s, char *ssid, char *pass)
             const char *kv3[] = { "ssid", ssid, 0 };
             char b3[64];
             if (m && fw_body(b3, sizeof b3, kv3) > 0 && send_sealed(s, b3, "wifi") == 0)
-                log_line(s->call, "Sending the network name, then the password...");
+                set_now(s, "Sending the network name, then the password...");
         }
         for (unsigned i = 0; body[i]; i++) body[i] = 0;
     }
     for (unsigned i = 0; pass[i]; i++) pass[i] = 0;
     for (unsigned i = 0; ssid[i]; i++) ssid[i] = 0;
-    field_set("wifi_pass", "");
 }
 
 static void do_set(st_t *s, const char *fields, const char *what)
@@ -438,21 +748,35 @@ static void do_set(st_t *s, const char *fields, const char *what)
         log_line(s->call, "Too much to say in one packet");
         return;
     }
-    if (send_cmd(s, w, what) == 0) log_line(s->call, "Sending...");
+    if (send_cmd(s, w, what) == 0) set_now(s, "Sending...");
 }
 
-static void do_zdiag(st_t *s)
+static void do_cmd(st_t *s, const char *cmd, const char *what)
 {
     char ts[24], w[FW_WIRE_UNSIGNED + 1];
     stamp_for(s, ts, sizeof ts);
-    if (fw_zdiag(w, sizeof w, g_me, s->call, ts) >= 0 && send_cmd(s, w, "zdiag") == 0)
-        log_line(s->call, "Asking for its stats...");
+    if (fw_cmd(w, sizeof w, g_me, s->call, ts, cmd) >= 0 && send_cmd(s, w, what) == 0)
+        set_now(s, fw_eq(what, "zdiag") ? "Asking for its stats..." : "Asking for its crash report...");
+}
+
+/* q:policy and q:mail: a t:request, answered by anybody's station as an
+ * observation (11.9, 9.12.3). Not a command, so not the courier's: asked
+ * once, and read from xprs.observation while the ask is out. */
+static void do_ask(st_t *s)
+{
+    char ts[24], w[FW_WIRE_UNSIGNED + 1];
+    stamp_for(s, ts, sizeof ts);
+    if (fw_ask(w, sizeof w, g_me, s->call, ts, "policy") > 0) hal_xprs_send(w, fw_len(w));
+    stamp_for(s, ts, sizeof ts);
+    if (fw_ask(w, sizeof w, g_me, s->call, ts, "mail") > 0) hal_xprs_send(w, fw_len(w));
+    s->ask_pol = 1;
+    listen();
 }
 
 /* ── What the station says ────────────────────────────────────────────── */
 static void take_state(st_t *s, const char *wire)
 {
-    char v[40];
+    char v[48];
     if (fw_field(wire, "wifi", v, sizeof v)) fw_cpy(s->wifi, v, sizeof s->wifi);
     if (fw_field(wire, "ip", v, sizeof v)) fw_cpy(s->ip, v, sizeof s->ip);
     else if (fw_field(wire, "wifi", v, sizeof v)) s->ip[0] = 0;
@@ -464,6 +788,14 @@ static void take_state(st_t *s, const char *wire)
     if (fw_field(wire, "peers", v, sizeof v)) fw_cpy(s->peers, v, sizeof s->peers);
     if (fw_field(wire, "zm", v, sizeof v)) fw_cpy(s->heap, v, sizeof s->heap);
     if (fw_field(wire, "zr", v, sizeof v)) fw_cpy(s->reset, v, sizeof s->reset);
+    if (fw_field(wire, "zh", v, sizeof v)) fw_cpy(s->health, v, sizeof s->health);
+    if (fw_field(wire, "zp", v, sizeof v)) fw_cpy(s->slot, v, sizeof s->slot);
+    if (fw_field(wire, "zn", v, sizeof v)) {
+        fw_cpy(s->radio, v, sizeof s->radio);
+        if (fw_field(wire, "zs", v, sizeof v)) { fw_cat(s->radio, " ", sizeof s->radio); fw_cat(s->radio, v, sizeof s->radio); }
+    }
+    if (fw_field(wire, "zc", v, sizeof v)) fw_cpy(s->crash, v, sizeof s->crash);
+    else if (fw_field(wire, "zm", v, sizeof v)) s->crash[0] = 0;   /* a zdiag without one */
 }
 
 static void on_request(const char *row)
@@ -479,8 +811,8 @@ static void on_request(const char *row)
     if (!fw_field(wire, "f", call, sizeof call)) return;
     if (!fw_field(wire, "k", k, sizeof k)) return;
     int known = find(call);
-    /* A station is its key. A callsign is six characters and anyone can
-     * grind a key that derives it in about a thousand tries: a second key
+    /* A station is its key. A callsign is a few characters and anyone can
+     * grind a key that derives it in a few thousand tries: a second key
      * for a callsign we already hold is somebody else, and is not believed
      * however well it signs. The key we hold was derived when we took it. */
     if (known >= 0 && g_st[known].npub[0]) {
@@ -492,8 +824,8 @@ static void on_request(const char *row)
     if (i < 0) return;
     st_t *s = &g_st[i];
     s->heard_ms = hal_time_ms();
-    /* How it was heard, for the Station screen when it is next drawn: kept
-     * in memory, written nowhere. */
+    /* How it was heard, for the screen when it is next drawn: kept in
+     * memory, written nowhere. */
     fw_json(row, "bearer", s->bearer, sizeof s->bearer);
     char r[12];
     if (fw_json(row, "rssi", r, sizeof r)) {
@@ -503,17 +835,21 @@ static void on_request(const char *row)
     }
     /* The same ask comes back every half minute until somebody answers it:
      * only the first one of a run is news, and only news costs anything. */
-    int news = known < 0 || !s->unowned || s->mine;
+    int news = known < 0 || !s->unowned || s->mine || s->theirs;
     if (!news) return;
     /* Erased and asking again: what we knew of it is what it was. */
     s->nick[0] = s->wifi[0] = s->ip[0] = s->ap[0] = s->zone[0] = 0;
     s->fw[0] = s->uptime[0] = s->peers[0] = s->heap[0] = s->reset[0] = 0;
+    s->health[0] = s->slot[0] = s->radio[0] = s->crash[0] = s->mail[0] = 0;
+    s->pol_owner[0] = s->pol_use[0] = s->pol_first[0] = s->pol_serve[0] = 0;
     fw_cpy(s->npub, k, sizeof s->npub);
     s->unowned = 1;
     s->mine = 0;                   /* erased and asking again: not ours now */
+    s->theirs = 0;
+    set_now(s, "Waiting for an owner");
     save();
     push_list();
-    if (g_sel == i) push_detail();
+    if (g_sel == i) push_hub();
     {
         char m[300] = "{\"type\":\"notify\",\"level\":\"info\",\"title\":\"A station nearby can be set up\",\"body\":\"";
         fw_jesc(m, call, sizeof m);
@@ -548,12 +884,48 @@ static void on_identity(const char *row)
             char line[80] = "Came back as ";
             fw_cat(line, call, sizeof line);
             log_line(was, line);
+            set_now(s, line);
             save();
             push_list();
-            if (g_sel == i) push_detail();
+            if (g_sel == i) { push_hub(); screen_open("Station", s->nick[0] ? s->nick : s->call); }
             listen();
             return;
         }
+    }
+}
+
+/* Heard only while a policy ask is out (listen()): the station's policy or
+ * its mail count, as an observation addressed to us. */
+static void on_observation(const char *row)
+{
+    char wire[FW_WIRE_MAX + 1], from[16], v[48], sub[12];
+    if (!fw_json(row, "forUs", v, sizeof v) || !fw_eq(v, "true")) return;
+    if (!fw_json(row, "sig", v, sizeof v) || !fw_eq(v, "verified")) return;
+    if (!fw_json(row, "wire", wire, sizeof wire)) return;
+    if (!fw_field(wire, "f", from, sizeof from)) return;
+    int i = find(from);
+    if (i < 0) return;
+    st_t *s = &g_st[i];
+    if (!fw_field(wire, "s", sub, sizeof sub)) return;
+    if (fw_eq(sub, "policy")) {
+        if (fw_field(wire, "owner", v, sizeof v)) fw_cpy(s->pol_owner, v, sizeof s->pol_owner);
+        if (fw_field(wire, "use", v, sizeof v)) fw_cpy(s->pol_use, v, sizeof s->pol_use);
+        if (fw_field(wire, "first", v, sizeof v)) fw_cpy(s->pol_first, v, sizeof s->pol_first);
+        if (fw_field(wire, "serve", v, sizeof v)) fw_cpy(s->pol_serve, v, sizeof s->pol_serve);
+        /* Who it belongs to, from its own mouth: mine, nobody's, or another's. */
+        if (fw_eq(s->pol_owner, "none")) { s->unowned = 1; s->mine = 0; s->theirs = 0; }
+        else if (fw_starts(s->pol_owner, g_me) &&
+                 (s->pol_owner[fw_len(g_me)] == 0 || s->pol_owner[fw_len(g_me)] == ',')) {
+            s->mine = 1; s->unowned = 0; s->theirs = 0;
+        } else { s->theirs = 1; s->mine = 0; s->unowned = 0; }
+        s->ask_pol = 0;
+        listen();
+        save();
+        push_list();
+        if (g_sel == i) { push_hub(); push_stats(); }
+    } else if (fw_eq(sub, "mail")) {
+        if (fw_field(wire, "mail", v, sizeof v)) fw_cpy(s->mail, v, sizeof s->mail);
+        if (g_sel == i) push_stats();
     }
 }
 
@@ -604,28 +976,35 @@ static void on_result(const char *row)
     }
     take_state(s, wire);
     s->heard_ms = hal_time_ms();
+    char what[8];
+    fw_cpy(what, s->pend_what, sizeof what);
 
     if (fw_eq(code, "202")) {
         char k[80];
-        if (fw_eq(s->pend_what, "key") && fw_field(wire, "k", k, sizeof k)) {
+        if (fw_eq(what, "key") && fw_field(wire, "k", k, sizeof k)) {
             fw_cpy(s->rekey_npub, k, sizeof s->rekey_npub);
             char nc[16], line[96] = "Restarting under a new identity, ";
             fw_call_of(k, "X3", nc, sizeof nc);
             fw_cat(line, nc, sizeof line);
             fw_cat(line, "...", sizeof line);
             log_line(s->call, line);
-        } else if (fw_eq(s->pend_what, "wifi")) {
+            set_now(s, line);
+        } else if (fw_eq(what, "wifi")) {
             log_line(s->call, "Joining the network...");
+            set_now(s, "Joining the network...");
         } else {
             log_line(s->call, "Working on it...");
+            set_now(s, "Working on it...");
         }
         s->pend_final = 1;
     } else if (fw_eq(code, "200")) {
-        if (fw_eq(s->pend_what, "claim")) {
+        if (fw_eq(what, "claim")) {
             s->mine = 1;
             s->unowned = 0;
-            log_line(s->call, "Claimed. It is yours; now put it on your network.");
-        } else if (fw_eq(s->pend_what, "wifi") && s->next_x[0]) {
+            s->theirs = 0;
+            log_line(s->call, "Claimed. It is yours.");
+            set_now(s, "Yours. Put it on your WiFi, or give it a name.");
+        } else if (fw_eq(what, "wifi") && s->next_x[0]) {
             /* The name went; now the password. */
             char ts[24], w[FW_WIRE_UNSIGNED + 1];
             stamp_for(s, ts, sizeof ts);
@@ -633,20 +1012,37 @@ static void on_result(const char *row)
             for (unsigned q = 0; s->next_x[q]; q++) s->next_x[q] = 0;
             done_pending(s);
             if (rc > 0) send_cmd(s, w, "wifi");
-            save(); push_list(); if (g_sel == i) push_detail();
+            set_now(s, "Sending the password...");
+            save(); push_list(); if (g_sel == i) push_hub();
             return;
-        } else if (fw_eq(s->pend_what, "wifi")) {
-            char line[80] = "On the network";
+        } else if (fw_eq(what, "wifi")) {
+            char line[80];
+            fw_cpy(line, fw_eq(s->wifi, "off") ? "Off the WiFi" : "On the network", sizeof line);
             if (s->ip[0]) { fw_cat(line, " at ", sizeof line); fw_cat(line, s->ip, sizeof line); }
             log_line(s->call, line);
-        } else if (fw_eq(s->pend_what, "key")) {
+            set_now(s, line);
+        } else if (fw_eq(what, "key")) {
             log_line(s->call, "New identity in use.");
-        } else if (fw_eq(s->pend_what, "zdiag")) {
-            log_line(s->call, "Stats updated.");
+            set_now(s, "New identity in use.");
+        } else if (fw_eq(what, "zdiag")) {
+            log_line(s->call, "Stats read.");
+            set_now(s, "Stats read.");
+        } else if (fw_eq(what, "zcore")) {
+            char line[160] = "Crash: ";
+            fw_cat(line, s->crash, sizeof line);
+            if (m[0]) { fw_cat(line, " at ", sizeof line); fw_cat(line, m, sizeof line); }
+            log_line(s->call, line);
+            set_now(s, "Crash report in Answers.");
         } else {
-            log_line(s->call, "Done.");
+            log_line(s->call, "Saved.");
+            set_now(s, "Saved.");
         }
         done_pending(s);
+    } else if (fw_eq(code, "206") && fw_eq(what, "zcore")) {
+        char line[160] = "Crash, more: ";
+        fw_cat(line, m, sizeof line);
+        log_line(s->call, line);
+        return;
     } else if (fw_eq(code, "408") && !s->pend_408) {
         /* Not newer than the last command it took: say it again, later. The
          * same x: under a new ts: is the same secret, re-signed. */
@@ -666,26 +1062,30 @@ static void on_result(const char *row)
             fw_cat(w, rest, sizeof w);
             rc = fw_len(w) <= FW_WIRE_UNSIGNED ? (int)fw_len(w) : -1;
         }
-        char what[8];
-        fw_cpy(what, s->pend_what, sizeof what);
         done_pending(s);
         if (rc > 0) send_cmd(s, w, what);
         s->pend_408 = 1;              /* a second 408 is the clock, said once */
     } else {
         char line[160] = "";
-        if (fw_eq(code, "403"))      fw_cpy(line, "Refused: ", sizeof line);
+        if (fw_eq(code, "403")) {
+            fw_cpy(line, "Refused: ", sizeof line);
+            if (fw_eq(what, "claim") || fw_starts(m, "not the owner")) {
+                s->theirs = 1; s->unowned = 0; s->mine = 0;
+            }
+        }
         else if (fw_eq(code, "408")) fw_cpy(line, "Refused as old. Is this phone's clock right? ", sizeof line);
         else if (fw_eq(code, "404")) fw_cpy(line, "Its firmware cannot do that; update it first. ", sizeof line);
         else if (fw_eq(code, "429")) fw_cpy(line, "Busy, try again in a moment. ", sizeof line);
-        else if (fw_eq(code, "500") && fw_eq(s->pend_what, "wifi")) fw_cpy(line, "Could not join: ", sizeof line);
+        else if (fw_eq(code, "500") && fw_eq(what, "wifi")) fw_cpy(line, "Could not join: ", sizeof line);
         else { fw_cpy(line, "Refused (", sizeof line); fw_cat(line, code, sizeof line); fw_cat(line, "): ", sizeof line); }
         fw_cat(line, m, sizeof line);
         log_line(s->call, line);
+        set_now(s, line);
         done_pending(s);
     }
     save();
     push_list();
-    if (g_sel == i) push_detail();
+    if (g_sel == i) { push_hub(); if (fw_eq(what, "zdiag") || fw_eq(what, "zcore")) push_stats(); }
 }
 
 /* The core gave up on a command: nothing final came back in 11.4's
@@ -697,14 +1097,17 @@ static void on_status(const char *row)
     for (int i = 0; i < g_nst; i++) {
         st_t *s = &g_st[i];
         if (!s->pend_id[0] || !fw_eq(s->pend_id, id)) continue;
+        const char *line;
         if (fw_eq(state, "unfinished"))
-            log_line(s->call, "It took the command but never said how it ended. Read its stats to see where it is.");
+            line = "It took the command but never said how it ended. Read its stats to see where it is.";
         else if (fw_eq(state, "unanswered"))
-            log_line(s->call, "No answer in five minutes. Is it still in range, and powered?");
+            line = "No answer in five minutes. Is it still in range, and powered?";
         else
             return;
+        log_line(s->call, line);
+        set_now(s, line);
         done_pending(s);
-        if (g_sel == i) push_detail();
+        if (g_sel == i) push_hub();
         return;
     }
 }
@@ -715,10 +1118,11 @@ static void drain_events(void)
         uint32_t n = hal_event_recv(g_topic, sizeof g_topic - 1, g_ev, sizeof g_ev - 1);
         g_ev[n] = 0;
         g_topic[sizeof g_topic - 1] = 0;
-        if (fw_eq(g_topic, "xprs.request"))        on_request(g_ev);
-        else if (fw_eq(g_topic, "xprs.result"))    on_result(g_ev);
-        else if (fw_eq(g_topic, "xprs.status.tx")) on_status(g_ev);
-        else if (fw_eq(g_topic, "xprs.identity"))  on_identity(g_ev);
+        if (fw_eq(g_topic, "xprs.request"))           on_request(g_ev);
+        else if (fw_eq(g_topic, "xprs.result"))       on_result(g_ev);
+        else if (fw_eq(g_topic, "xprs.status.tx"))    on_status(g_ev);
+        else if (fw_eq(g_topic, "xprs.identity"))     on_identity(g_ev);
+        else if (fw_eq(g_topic, "xprs.observation"))  on_observation(g_ev);
     }
 }
 
@@ -743,7 +1147,7 @@ static void on_command(void)
     if (fw_eq(cmd, "ready") || fw_eq(cmd, "refresh")) {
         who_am_i();
         push_list();
-        if (g_sel >= 0) push_detail();
+        if (g_sel >= 0) push_hub();
         return;
     }
     if (fw_eq(cmd, "stations_tap")) {
@@ -751,15 +1155,57 @@ static void on_command(void)
         if (!fields("stations_id", id, sizeof id)) return;
         g_sel = find(id);
         if (g_sel < 0) return;
-        push_detail();
+        push_hub();
         screen_open("Station", g_st[g_sel].nick[0] ? g_st[g_sel].nick : id);
         return;
     }
     if (fw_eq(cmd, "back")) { say("{\"type\":\"ui.screen.close\"}"); return; }
+    if (fw_eq(cmd, "log_clear")) { say("{\"type\":\"ui.log.clear\",\"field\":\"log\"}"); return; }
 
     st_t *s = selected();
     if (!s) return;
     if (!g_me[0]) who_am_i();
+
+    /* Opening a task's screen sends nothing. */
+    if (fw_eq(cmd, "open_wifi")) {
+        one_line("wifi_now", "Now", s->now);
+        screen_open("WiFi", s->call);
+        return;
+    }
+    if (fw_eq(cmd, "open_name")) {
+        field_set("nick", s->nick);
+        field_set("zone", s->zone[0] ? s->zone : "auto");
+        field_set("hotspot", "same");
+        screen_open("Name", s->call);
+        return;
+    }
+    if (fw_eq(cmd, "open_identity")) {
+        field_set("identity", "new");
+        field_set("nsec", "");
+        screen_open("Identity", s->call);
+        return;
+    }
+    if (fw_eq(cmd, "open_stats")) {
+        push_stats();
+        screen_open("Stats", s->call);
+        return;
+    }
+    if (fw_eq(cmd, "open_answers")) { screen_open("Answers", s->call); return; }
+    if (fw_eq(cmd, "forget")) {
+        char was[12];
+        fw_cpy(was, s->call, sizeof was);
+        char k[24] = "st.";
+        fw_cat(k, was, sizeof k);
+        kv_put(k, "");
+        drop(g_sel);
+        g_sel = -1;
+        save();
+        push_list();
+        say("{\"type\":\"ui.screen.close\"}");
+        log_line(was, "Forgotten");
+        return;
+    }
+
     /* One command at a time. Once the station has taken one (a 202) it is
      * working on its own, and a new one may go. */
     if (s->pend_id[0] && !s->pend_final) { log_line(s->call, "Still waiting for its last answer"); return; }
@@ -780,16 +1226,23 @@ static void on_command(void)
             char body[64];
             const char *kv[] = { "ssid", ssid, "wifi", "join", 0 };
             if (fw_body(body, sizeof body, kv) > 0 && send_sealed(s, body, "wifi") == 0)
-                log_line(s->call, "Sending an open network...");
+                set_now(s, "Sending an open network...");
         } else do_wifi(s, ssid, pass);
         for (unsigned i = 0; pass[i]; i++) pass[i] = 0;
+        field_set("wifi_pass", "");
+    } else if (fw_eq(cmd, "wifi_off")) {
+        if (!s->mine) log_line(s->call, "Claim it first");
+        else do_set(s, "wifi:off", "wifi");
     } else if (fw_eq(cmd, "station_apply")) {
         char nick[24] = "", zone[12] = "", ap[8] = "", f[80] = "";
         fields("nick", nick, sizeof nick);
         fields("zone", zone, sizeof zone);
         fields("hotspot", ap, sizeof ap);
         if (nick[0]) { fw_cat(f, "nick:", sizeof f); fw_cat(f, nick, sizeof f); }
-        if (zone[0]) { if (f[0]) fw_cat(f, " ", sizeof f); fw_cat(f, "zone:", sizeof f); fw_cat(f, zone, sizeof f); }
+        if (zone[0] && !fw_eq(zone, s->zone[0] ? s->zone : "auto")) {
+            if (f[0]) fw_cat(f, " ", sizeof f);
+            fw_cat(f, "zone:", sizeof f); fw_cat(f, zone, sizeof f);
+        }
         if (fw_eq(ap, "on") || fw_eq(ap, "off")) {
             if (f[0]) fw_cat(f, " ", sizeof f);
             fw_cat(f, "ap:", sizeof f); fw_cat(f, ap, sizeof f);
@@ -802,7 +1255,6 @@ static void on_command(void)
         fields("identity", how, sizeof how);
         fields("nsec", nsec, sizeof nsec);
         if (!s->mine) log_line(s->call, "Claim it first");
-        else if (fw_eq(how, "new")) do_set(s, "key:new", "key");
         else if (fw_eq(how, "import")) {
             if (!fw_starts(nsec, "nsec1") || fw_len(nsec) != 63) {
                 log_line(s->call, "That is not an nsec");
@@ -810,14 +1262,18 @@ static void on_command(void)
                 char body[96];
                 const char *kv[] = { "nsec", nsec, 0 };
                 if (fw_body(body, sizeof body, kv) > 0 && send_sealed(s, body, "key") == 0)
-                    log_line(s->call, "Sending the key, sealed to the station...");
+                    set_now(s, "Sending the key, sealed...");
             }
-        } else log_line(s->call, "It keeps the key it has");
+        } else do_set(s, "key:new", "key");
         for (unsigned i = 0; nsec[i]; i++) nsec[i] = 0;
         field_set("nsec", "");
     } else if (fw_eq(cmd, "stats")) {
-        if (!s->mine) log_line(s->call, "Only its owner may read its stats");
-        else do_zdiag(s);
+        do_ask(s);
+        if (s->mine) do_cmd(s, "cmd:zdiag", "zdiag");
+        else set_now(s, "Asking what it does for others...");
+    } else if (fw_eq(cmd, "crash")) {
+        if (!s->mine) log_line(s->call, "Only its owner may read that");
+        else do_cmd(s, "cmd:zcore", "zcore");
     }
 }
 

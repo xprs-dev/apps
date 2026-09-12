@@ -170,11 +170,14 @@ void fw_call_of(const char *npub, const char *prefix, char *out, unsigned cap)
 
 int fw_call_matches(const char *call, const char *npub)
 {
-    if (!call || fw_len(call) < 6 || call[0] != 'X') return 0;
-    if (!fw_starts(npub, "npub1") || fw_len(npub) < 9) return 0;
-    for (int i = 0; i < 4; i++)
-        if (fw_up(call[2 + i]) != fw_up(npub[5 + i])) return 0;
-    return call[6] == 0 || call[6] == '-';
+    if (!call || fw_len(call) < 4 || call[0] != 'X') return 0;
+    if (!fw_starts(npub, "npub1") || fw_len(npub) < 10) return 0;
+    unsigned n = 0;
+    while (call[2 + n] && call[2 + n] != '-') n++;
+    if (n < 2 || n > 5) return 0;
+    for (unsigned i = 0; i < n; i++)
+        if (!npub[5 + i] || fw_up(call[2 + i]) != fw_up(npub[5 + i])) return 0;
+    return 1;
 }
 
 /* ── Building ─────────────────────────────────────────────────────────── */
@@ -225,11 +228,32 @@ int fw_sealed(char *out, unsigned cap, const char *me, const char *station,
     return done(out, cap);
 }
 
+int fw_cmd(char *out, unsigned cap, const char *me, const char *station,
+           const char *ts, const char *cmd)
+{
+    head(out, cap, me, station, ts);
+    fw_cat(out, " ", cap);
+    fw_cat(out, cmd, cap);
+    return done(out, cap);
+}
+
 int fw_zdiag(char *out, unsigned cap, const char *me, const char *station,
              const char *ts)
 {
-    head(out, cap, me, station, ts);
-    fw_cat(out, " cmd:zdiag", cap);
+    return fw_cmd(out, cap, me, station, ts, "cmd:zdiag");
+}
+
+int fw_ask(char *out, unsigned cap, const char *me, const char *station,
+           const char *ts, const char *what)
+{
+    fw_cpy(out, "t:request f:", cap);
+    fw_cat(out, me, cap);
+    fw_cat(out, " d:", cap);
+    fw_cat(out, station, cap);
+    fw_cat(out, " ts:", cap);
+    fw_cat(out, ts, cap);
+    fw_cat(out, " q:", cap);
+    fw_cat(out, what, cap);
     return done(out, cap);
 }
 
@@ -290,6 +314,31 @@ int fw_json(const char *json, const char *key, char *out, unsigned cap)
             }
         } else {
             while (*p && *p != ',' && *p != '}' && *p != ']' && o < cap - 1) out[o++] = *p++;
+        }
+        out[o] = 0;
+        return 1;
+    }
+    return 0;
+}
+
+int fw_json_list(const char *json, const char *key, char *out, unsigned cap)
+{
+    char pat[40] = "\"";
+    fw_cat(pat, key, sizeof pat);
+    fw_cat(pat, "\":[", sizeof pat);
+    unsigned pl = fw_len(pat), o = 0;
+    if (cap) out[0] = 0;
+    for (const char *p = json; p && *p; p++) {
+        if (!fw_starts(p, pat)) continue;
+        p += pl;
+        while (*p && *p != ']' && o < cap - 1) {
+            if (*p == '"') { p++; continue; }
+            if (*p == ',') {
+                if (o + 2 < cap - 1) { out[o++] = ','; out[o++] = ' '; }
+                p++;
+                continue;
+            }
+            out[o++] = *p++;
         }
         out[o] = 0;
         return 1;

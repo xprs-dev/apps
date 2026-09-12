@@ -1420,6 +1420,17 @@ int32_t hal_archive_set_pref(const char *kv, uint32_t kv_len);
 __attribute__((import_module("hal"), import_name("xprs_stations")))
 int32_t hal_xprs_stations(char *out, uint32_t out_cap);
 
+/* One station, everything the host holds about it this hour, flat:
+ *   {"call","bearer","bearers":[..],"rssi","lastMs","agoMs","lastDirectMs",
+ *    "packets", and when it has said so: "peers","mail","uptime","lifetime",
+ *    "fw","count","serve":[..],"hears":[..],"sig","readings":{k:v}}
+ * uptime and lifetime are the qty text as aired ("26h", "38day"); sig is the
+ * headline verdict of its signatures (verified, unverified, forged, unsigned).
+ * Returns the bytes written, 0 when the host has not heard it this hour, or
+ * the negated size needed when out_cap is too small. */
+__attribute__((import_module("hal"), import_name("xprs_station")))
+int32_t hal_xprs_station(const char *call, uint32_t call_len, char *out, uint32_t out_cap);
+
 /* Recent XPRS packets, oldest first. INCLUDES packets addressed to other
  * stations, which is most of what a mesh carries:
  *   [{ts,bearer,rssi,from,to,type,id,mine,wire}]

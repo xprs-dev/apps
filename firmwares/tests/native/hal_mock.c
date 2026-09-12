@@ -37,6 +37,18 @@ uint32_t hal_encrypt(const char *pk, uint32_t pl, const char *m, uint32_t ml,
     return chars;
 }
 
+/* ── what the core holds about one station ────────────────────────────── */
+char g_station_json[1024];      /* what hal_xprs_station answers; empty = not heard */
+int32_t hal_xprs_station(const char *call, uint32_t cl, char *out, uint32_t cap)
+{
+    (void)call; (void)cl;
+    uint32_t n = strlen(g_station_json);
+    if (!n) return 0;
+    if (n > cap) return -(int32_t)n;
+    memcpy(out, g_station_json, n);
+    return (int32_t)n;
+}
+
 /* ── the air ──────────────────────────────────────────────────────────── */
 char g_aired[64][260];
 int  g_aired_n;
@@ -44,7 +56,8 @@ int  g_send_rc;
 int32_t hal_xprs_send(const char *w, uint32_t n)
 {
     if (g_send_rc) return g_send_rc;
-    if (g_aired_n < 64) snprintf(g_aired[g_aired_n++], 260, "%.*s", (int)n, w);
+    if (g_aired_n >= 64) { memmove(g_aired[0], g_aired[1], sizeof g_aired - sizeof g_aired[0]); g_aired_n = 63; }
+    snprintf(g_aired[g_aired_n++], 260, "%.*s", (int)n, w);
     return 0;
 }
 

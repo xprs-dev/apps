@@ -212,6 +212,17 @@ of the bargain is to use it at once (seal it with `hal_encrypt`, say), clear
 its own buffer, and send `ui.field.set` with `""` to empty the box. The
 Firmwares wapp does exactly that with a WiFi password and an nsec.
 
+**A field or an action can be hidden by the wapp.** Setting `<name>__hidden`
+to `true` with `ui.field.set` leaves that field or button off the screen
+until it is set to `false`, the way `<name>__readonly` disables a field.
+What a screen offers then follows the state it shows: the Firmwares station
+screen shows Claim only while nobody owns the station, and WiFi, Name and
+Identity only once it is yours. A run of actions that are all hidden takes
+no space at all.
+
+**An action's `icon` is drawn on its button** when it is a name the resolver
+knows (3.4); an unknown name is left off rather than drawn as the hamburger.
+
 ### 3.4 Icon Resolution
 
 Every icon block lists renderers from most specific to most generic. The renderer picks the first entry it supports:
@@ -230,7 +241,9 @@ switch: a name it does not carry falls back to `Icons.menu`. The Archiver
 shipped with `inventory_2`, `hub` and `cloud_upload` and wore the hamburger on
 three of its four tabs, which reads as a wapp with duplicate tabs rather than
 as a typo. Use a name the resolver has, or add it there — there is no warning
-either way.
+either way. Since 2026-09-12 the switch also has `wifi`, `key`, `memory`,
+`monitor_heart`, `developer_board`, `how_to_reg`, `power`, `label`,
+`schedule`, `bug_report`, `router` and `history`.
 
 ### 3.5 Image Sources
 

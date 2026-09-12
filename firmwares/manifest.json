@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.firmwares",
-  "version":         "0.1.4",
+  "version":         "0.2.3",
   "kind":            "app",
   "title":           "Firmwares",
   "description":     "Firmwares - set up the XPRS station you just flashed: claim it, put it on your WiFi, name it, and read how it is doing.",
@@ -10,7 +10,7 @@
   "tags":            ["xprs", "station", "firmware", "setup", "esp32"],
   "entry_ui":        "screens/home.ui.json",
   "tick_interval_ms": 0,
-  "permissions":     [],
+  "permissions":     ["archive.read"],
   "platforms":       ["android", "linux", "windows", "macos"],
   "hardware":        ["N/A", "intel", "arm"],
   "provides": {
@@ -20,7 +20,7 @@
     "functionalities": []
   },
   "requires": {
-    "hal":       ["log", "msg", "kv", "xprs", "identity", "crypto", "event"],
+    "hal":       ["log", "msg", "kv", "xprs", "crypto", "event", "archive"],
     "events":    [],
     "libraries": [],
     "variables": []

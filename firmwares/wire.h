@@ -38,9 +38,10 @@ void fw_stamp(char *out, unsigned cap, unsigned long long epoch);
  * 1 when found. */
 int fw_field(const char *wire, const char *key, char *out, unsigned cap);
 /* The callsign a key derives to (section 3): the prefix, then the first
- * four characters after "npub1", uppercased. */
+ * four characters after "npub1", uppercased (what a station names itself). */
 void fw_call_of(const char *npub, const char *prefix, char *out, unsigned cap);
-/* Does [call] derive from [npub], whatever its prefix digit? */
+/* Does [call] derive from [npub], whatever its prefix digit? A callsign
+ * takes two to five characters of the key, and says itself how many. */
 int fw_call_matches(const char *call, const char *npub);
 
 /* ── Building (unsigned; the host signs) ──────────────────────────────── */
@@ -53,6 +54,12 @@ int fw_sealed(char *out, unsigned cap, const char *me, const char *station,
               const char *ts, const char *x);
 int fw_zdiag(char *out, unsigned cap, const char *me, const char *station,
              const char *ts);
+/* Any other command word: "cmd:zcore", "cmd:update". */
+int fw_cmd(char *out, unsigned cap, const char *me, const char *station,
+           const char *ts, const char *cmd);
+/* A t:request with q:<what> to the station: "policy", "mail" (11.9, 9.12.3). */
+int fw_ask(char *out, unsigned cap, const char *me, const char *station,
+           const char *ts, const char *what);
 
 /* A sealed body (11.4): `cmd:set` then one `key:value` line per field.
  * [kv] alternates key and value and ends with a NULL key. -1 when a value
@@ -64,5 +71,7 @@ int fw_body(char *out, unsigned cap, const char *const *kv);
 void fw_jesc(char *d, const char *s, unsigned cap);
 /* "key":<value> in flat JSON; strings unescaped just enough (\" \\ \n). */
 int fw_json(const char *json, const char *key, char *out, unsigned cap);
+/* "key":[..] in flat JSON: the elements joined by ", ", quotes dropped. */
+int fw_json_list(const char *json, const char *key, char *out, unsigned cap);
 
 #endif
