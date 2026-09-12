@@ -1267,6 +1267,13 @@ The WASM module is responsible for returning appropriate HTTP status codes from 
 | `500` | Internal Error | WASM logic failure |
 | `503` | Service Unavailable | Hardware not ready (radio module offline, no GPS fix) |
 
+### People rows with a picture
+
+A `ui.people.set` item may carry `picture`, an https URL: the row shows it as
+a wide thumbnail (104x78) instead of the 44 px avatar circle. For rows that
+are THINGS a person has to recognise (a board, a product), not people. The
+image is decoded bounded like every network image in the host.
+
 ### Flashing a board over USB (`hal_flash_*`, permission `device.flash`)
 
 The host owns the cable: the serial port, the ESP ROM loader, the firmware

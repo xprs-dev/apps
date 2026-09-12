@@ -16,16 +16,15 @@
     "$": "screen",
     "name": "Flash",
     "icon": "usb",
-    "tip": "Plug a board in over USB and tap it: it says what it is and which firmware fits. Tap a board below to get its firmware.",
+    "tip": "Boards plugged in over USB. Tap one to flash it.",
     "children": [
       { "$": "field", "name": "flash_hub", "$type": "stats" },
-      { "$": "field", "name": "flash_now", "$type": "details", "empty": "" },
       { "$": "action", "name": "flash_refresh", "label": "Refresh", "style": "primary", "icon": "refresh" },
       {
         "$": "field",
         "name": "flash",
         "$type": "people",
-        "empty": "Nothing plugged in and no catalogue yet.\n\nConnect a board over USB and tap Refresh."
+        "empty": "No board on USB.\n\nPlug one in (an OTG cable on a phone), then Refresh from the menu at the top right."
       }
     ]
   },
@@ -34,31 +33,29 @@
     "name": "Device",
     "icon": "usb",
     "hidden": true,
-    "tip": "Opening a board puts it into its loader for a moment and reads what it is; it restarts afterwards. Tap the firmware that fits.",
+    "tip": "1. Wait for the chip to be identified.  2. Choose the firmware, unless one already fits.  3. Flash.",
     "children": [
-      { "$": "field", "name": "dev_hub", "$type": "stats" },
+      { "$": "action", "name": "flash_write", "label": "Flash", "style": "primary", "icon": "usb",
+        "confirm": true, "confirm-label": "Write the firmware?",
+        "confirm-text": "The board's firmware is replaced and verified. Keep it plugged in until it says done." },
+      { "$": "action", "name": "flash_choose", "label": "Choose firmware", "icon": "list" },
+      { "$": "action", "name": "flash_cancel", "label": "Stop", "style": "danger", "icon": "stop" },
       { "$": "field", "name": "dev_now", "$type": "details", "empty": "" },
+      { "$": "field", "name": "dev_hub", "$type": "stats" },
+      { "$": "field", "name": "wipe", "$type": "bool", "label": "Wipe settings", "default": false,
+        "tip": "Off keeps the station's key, owner and WiFi. On makes it a new station." },
       { "$": "action", "name": "flash_identify", "label": "Identify again", "icon": "search" },
-      { "$": "field", "name": "flash_fits", "$type": "people", "empty": "Nothing known yet. Identify it from the menu." },
       { "$": "action", "name": "back", "label": "Back", "icon": "close" }
     ]
   },
   {
     "$": "screen",
-    "name": "Board",
+    "name": "Firmware",
     "icon": "memory",
     "hidden": true,
+    "tip": "Pick your board by its picture. The ones that fit the chip come first.",
     "children": [
-      { "$": "field", "name": "board_hub", "$type": "stats" },
-      { "$": "field", "name": "board_now", "$type": "details", "empty": "" },
-      { "$": "field", "name": "wipe", "$type": "bool", "label": "Wipe settings", "default": false,
-        "tip": "Off keeps the station's key, owner and WiFi. On makes it a new station." },
-      { "$": "action", "name": "flash_download", "label": "Download", "icon": "download" },
-      { "$": "action", "name": "flash_write", "label": "Flash", "style": "primary", "icon": "usb",
-        "confirm": true, "confirm-label": "Write it?",
-        "confirm-text": "The board's firmware is replaced and verified. Do not unplug it until it says done." },
-      { "$": "action", "name": "flash_cancel", "label": "Stop", "style": "danger", "icon": "stop" },
-      { "$": "action", "name": "back", "label": "Back", "icon": "close" }
+      { "$": "field", "name": "flash_pick", "$type": "people", "empty": "No catalogue yet. Refresh on the Flash tab." }
     ]
   },
   {

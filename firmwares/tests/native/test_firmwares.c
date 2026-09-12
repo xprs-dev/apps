@@ -486,23 +486,29 @@ extern char g_flash_calls[16][160];
 extern int g_flash_calln;
 extern int g_flash_rc;
 
+#define DEVS "\"devices\":[{\"id\":\"/dev/ttyACM1\",\"port\":\"/dev/ttyACM1\",\"product\":\"USB JTAG/serial debug unit\"," \
+    "\"vid\":12346,\"pid\":4097,\"permitted\":true,\"nativeUsb\":true}," \
+    "{\"id\":\"/dev/ttyUSB0\",\"port\":\"/dev/ttyUSB0\",\"product\":\"CP2102\",\"vid\":4292,\"pid\":60000," \
+    "\"permitted\":false,\"nativeUsb\":false}]"
+#define BOARDS(TDONGLE_LOCAL, TDONGLE_BYTES) "\"boards\":[{\"id\":\"tdeck\",\"name\":\"T-Deck\",\"family\":\"esp32s3\",\"flashMb\":16,\"port\":\"native-usb\"," \
+    "\"version\":\"0.4.0\",\"flashable\":true,\"local\":\"\",\"localBytes\":0,\"photo\":\"https://x/tdeck.jpg\"}," \
+    "{\"id\":\"tdongle-s3\",\"name\":\"T-Dongle-S3\",\"family\":\"esp32s3\",\"flashMb\":16,\"port\":\"native-usb\"," \
+    "\"version\":\"0.4.0\",\"flashable\":true,\"local\":\"" TDONGLE_LOCAL "\",\"localBytes\":" TDONGLE_BYTES ",\"photo\":\"https://x/tdongle.jpg\"}," \
+    "{\"id\":\"sensecap-p1-pro\",\"name\":\"P1\",\"family\":\"nrf52\",\"flashMb\":1,\"port\":\"uf2\"," \
+    "\"version\":\"0.1.0\",\"flashable\":false,\"local\":\"\",\"localBytes\":0,\"photo\":\"https://x/p1.jpg\"}]"
+#define PROBED "\"device\":{\"id\":\"/dev/ttyACM1\",\"chip\":\"esp32s3\",\"chipLabel\":\"ESP32-S3\",\"flashBytes\":16777216," \
+    "\"runs\":\"tdongle_xprs\",\"runsVersion\":\"0.4.0\",\"suggested\":\"tdongle-s3\",\"likely\":\"tdongle-s3 tdeck\"}"
+#define PROBED_TWO "\"device\":{\"id\":\"/dev/ttyACM1\",\"chip\":\"esp32s3\",\"chipLabel\":\"ESP32-S3\",\"flashBytes\":16777216," \
+    "\"runs\":\"\",\"runsVersion\":\"\",\"suggested\":\"\",\"likely\":\"tdeck tdongle-s3\"}"
+
 static const char *FLASH_IDLE =
-    "{\"phase\":\"idle\",\"busy\":false,\"message\":\"\",\"error\":\"\",\"supported\":true,"
-    "\"devices\":[{\"id\":\"/dev/ttyACM1\",\"port\":\"/dev/ttyACM1\",\"product\":\"USB JTAG/serial debug unit\","
-    "\"vid\":12346,\"pid\":4097,\"permitted\":true,\"nativeUsb\":true},"
-    "{\"id\":\"/dev/ttyUSB0\",\"port\":\"/dev/ttyUSB0\",\"product\":\"CP2102\",\"vid\":4292,\"pid\":60000,"
-    "\"permitted\":false,\"nativeUsb\":false}],"
-    "\"boards\":[{\"id\":\"tdeck\",\"name\":\"T-Deck\",\"family\":\"esp32s3\",\"flashMb\":16,\"port\":\"native-usb\","
-    "\"version\":\"0.4.0\",\"flashable\":true,\"local\":\"\",\"localBytes\":0},"
-    "{\"id\":\"tdongle-s3\",\"name\":\"T-Dongle-S3\",\"family\":\"esp32s3\",\"flashMb\":16,\"port\":\"native-usb\","
-    "\"version\":\"0.4.0\",\"flashable\":true,\"local\":\"\",\"localBytes\":0},"
-    "{\"id\":\"sensecap-p1-pro\",\"name\":\"P1\",\"family\":\"nrf52\",\"flashMb\":1,\"port\":\"uf2\","
-    "\"version\":\"0.1.0\",\"flashable\":false,\"local\":\"\",\"localBytes\":0}],"
+    "{\"phase\":\"idle\",\"busy\":false,\"message\":\"\",\"error\":\"\",\"supported\":true," DEVS "," BOARDS("", "0") ","
     "\"device\":{},\"board\":\"\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}";
 
 static void flash_state(const char *json) { snprintf(g_flash_json, sizeof g_flash_json, "%s", json); }
+static void flash_event(void) { event_push("core.flash", "{\"topic\":\"core.flash\",\"rev\":1}"); module_tick(); }
 
-static void test_flash_tab_lists_the_cable_and_the_catalogue(void)
+static void test_flash_tab_lists_the_cable(void)
 {
     cap_clear();
     g_flash_calln = 0;
@@ -512,123 +518,68 @@ static void test_flash_tab_lists_the_cable_and_the_catalogue(void)
     CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "scan"), "Refresh asks the core to scan");
     CHECK(subscribed("core.flash"), "and listens for what it finds");
     const char *tiles = cap_last("\"field\":\"flash_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Plugged in\",\"value\":\"2\""), "two ports counted: %s", tiles ? tiles : "");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Boards\",\"value\":\"3\""), "three boards counted");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Plugged in\",\"value\":\"2\",\"hint\":\"tap one\""), "two ports counted: %s", tiles ? tiles : "");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Firmwares\",\"value\":\"3\""), "three firmwares counted");
     CHECK(tiles && strstr(tiles, "\"label\":\"Status\",\"value\":\"ready\""), "and it stands ready");
-    const char *list = cap_last("\"field\":\"flash\"");
+    const char *list = cap_last("\"field\":\"flash\",");
     CHECK(list && strstr(list, "\"title\":\"Plugged in\""), "a section for the cable");
-    CHECK(list && strstr(list, "\"id\":\"d:/dev/ttyACM1\""), "device rows carry their id");
-    CHECK(list && strstr(list, "USB JTAG/serial debug unit"), "named by product");
+    CHECK(list && strstr(list, "\"id\":\"/dev/ttyACM1\",\"title\":\"USB JTAG/serial debug unit\",\"subtitle\":\"/dev/ttyACM1, native USB. Tap to identify\""), "a device row says what to do: %s", list ? list : "");
     CHECK(list && strstr(list, "\"asks first\""), "a device without permission says so");
-    CHECK(list && strstr(list, "\"id\":\"b:tdongle-s3\""), "board rows carry their id");
-    CHECK(list && strstr(list, "ESP32S3, 16 MB, v0.4.0"), "a board says chip, flash and version");
-    CHECK(list && strstr(list, "\"id\":\"b:sensecap-p1-pro\",\"title\":\"P1\",\"subtitle\":\"NRF52, 1 MB, v0.1.0\",\"tags\":[\"uf2\"],\"dim\":true"),
-          "a uf2 board is listed dim");
+    CHECK(list && !strstr(list, "T-Deck"), "the tab lists boards on the cable, not the catalogue");
 }
 
-static void test_device_identify_and_what_fits(void)
+static void test_device_is_identified_and_the_match_is_chosen(void)
 {
     cap_clear();
     g_flash_calln = 0;
     flash_state(FLASH_IDLE);
-    inbox_set("{\"command\":\"flash_tap\",\"fields\":{\"flash_id\":\"d:/dev/ttyACM1\"}}");
+    inbox_set("{\"command\":\"flash_tap\",\"fields\":{\"flash_id\":\"/dev/ttyACM1\"}}");
     module_handle_event();
     const char *open = cap_last("ui.screen.open");
     CHECK(open && strstr(open, "\"name\":\"Device\"") && strstr(open, "USB JTAG/serial debug unit"), "tapping a device opens it by name");
-    const char *tiles = cap_last("\"field\":\"dev_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Chip\",\"value\":\"?\",\"hint\":\"Identify from the menu\""), "nothing known yet: %s", tiles ? tiles : "");
-    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "probe /dev/ttyACM1"), "opening a device probes it: %s", g_flash_calls[0]);
-    CHECK(cap_last("\"field\":\"flash_identify__hidden\",\"value\":false"), "Identify again offered");
+    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "probe /dev/ttyACM1"), "opening a device identifies it: %s", g_flash_calls[0]);
+    const char *now = cap_last("\"field\":\"dev_now\"");
+    CHECK(now && strstr(now, "Not identified yet"), "the Next line says so: %s", now ? now : "");
+    CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":true"), "Flash hidden until there is a firmware");
+    CHECK(cap_last("\"field\":\"flash_choose__hidden\",\"value\":false"), "Choose firmware offered");
 
-    /* Opening it again while the core is busy asks nothing more. */
-    cap_clear();
-    inbox_set("{\"command\":\"flash_identify\",\"fields\":{}}");
-    module_handle_event();
-    CHECK(g_flash_calln == 2 && !strcmp(g_flash_calls[1], "probe /dev/ttyACM1"), "Identify again probes that device: %s", g_flash_calls[1]);
-
-    /* The core answers: an S3 with 16 MB running the dongle's own image. */
+    /* The core answers: an S3 running the dongle's own image. One match, so
+     * it is chosen and fetched without a tap. */
     char st[4096];
-    snprintf(st, sizeof st, "%s", FLASH_IDLE);
-    char *d = strstr(st, "\"device\":{}");
-    const char *dev = "\"device\":{\"id\":\"/dev/ttyACM1\",\"chip\":\"esp32s3\",\"chipLabel\":\"ESP32-S3\",\"flashBytes\":16777216,"
-                      "\"runs\":\"tdongle_xprs\",\"runsVersion\":\"0.4.0\",\"suggested\":\"tdongle-s3\",\"likely\":\"tdongle-s3 tdeck\"}";
-    char rest[2048];
-    snprintf(rest, sizeof rest, "%s", d + strlen("\"device\":{}"));
-    snprintf(d, sizeof st - (size_t)(d - st), "%s%s", dev, rest);
+    snprintf(st, sizeof st, "{\"phase\":\"idle\",\"busy\":false,\"message\":\"Looks like a T-Dongle-S3\",\"error\":\"\",\"supported\":true,"
+             DEVS "," BOARDS("", "0") "," PROBED ",\"board\":\"\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
     flash_state(st);
-    cap_clear();
-    event_push("core.flash", "{\"topic\":\"core.flash\",\"rev\":3}");
-    module_tick();
-    tiles = cap_last("\"field\":\"dev_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Chip\",\"value\":\"ESP32-S3\""), "chip named: %s", tiles ? tiles : "");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Flash\",\"value\":\"16\",\"unit\":\"MB\""), "flash in MB");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Runs\",\"value\":\"tdongle_xprs\",\"hint\":\"0.4.0\""), "what runs there, and its version");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Fits\",\"value\":\"T-Dongle-S3\""), "the suggested board by name");
-    const char *fits = cap_last("\"field\":\"flash_fits\"");
-    CHECK(fits && strstr(fits, "\"id\":\"tdongle-s3\",\"title\":\"T-Dongle-S3\"") && strstr(fits, "\"match\""), "the match leads the Fits list: %s", fits ? fits : "");
-    CHECK(fits && strstr(fits, "\"id\":\"tdeck\""), "the other 16 MB S3 follows");
-    const char *l = cap_last("\"field\":\"flash\",");
-    CHECK(l && strstr(l, "\"ESP32-S3\""), "the tab's device row shows the chip too");
-
-    /* Tapping a fit opens the Board screen with the device kept. */
-    cap_clear();
-    inbox_set("{\"command\":\"flash_fits_tap\",\"fields\":{\"flash_fits_id\":\"tdongle-s3\"}}");
-    module_handle_event();
-    open = cap_last("ui.screen.open");
-    CHECK(open && strstr(open, "\"name\":\"Board\"") && strstr(open, "T-Dongle-S3"), "the board's screen opens");
-    tiles = cap_last("\"field\":\"board_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Target\",\"value\":\"ttyACM1\",\"hint\":\"USB JTAG/serial debug unit\""), "the device is the target: %s", tiles ? tiles : "");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Downloaded\",\"value\":\"no\",\"hint\":\"tap Download\""), "not downloaded yet");
-    CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":true"), "Flash hidden until downloaded");
-    CHECK(cap_last("\"field\":\"flash_download__hidden\",\"value\":false"), "Download offered");
-}
-
-static void test_board_download_then_write(void)
-{
-    /* Continues with the device and board picked above. */
     cap_clear();
     g_flash_calln = 0;
-    inbox_set("{\"command\":\"flash_download\",\"fields\":{}}");
-    module_handle_event();
-    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "fetch tdongle-s3"), "Download fetches the board: %s", g_flash_calls[0]);
+    flash_event();
+    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "fetch tdongle-s3"), "the match is downloaded on its own: %s", g_flash_calln ? g_flash_calls[0] : "");
+    const char *tiles = cap_last("\"field\":\"dev_hub\"");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Firmware\",\"value\":\"T-Dongle-S3\",\"hint\":\"v0.4.0\""), "and named on the tile: %s", tiles ? tiles : "");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Chip\",\"value\":\"ESP32-S3\""), "chip named");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Flash\",\"value\":\"16\",\"unit\":\"MB\""), "flash in MB");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Runs\",\"value\":\"tdongle_xprs\",\"hint\":\"0.4.0\""), "what runs there");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Port\",\"value\":\"ttyACM1\",\"hint\":\"USB JTAG/serial debug unit\""), "the port and the product");
+    const char *l = cap_last("\"field\":\"flash\",");
+    CHECK(l && strstr(l, "\"subtitle\":\"ESP32-S3, 16 MB, runs tdongle_xprs 0.4.0\""), "the tab's row now says what it is: %s", l ? l : "");
 
-    /* Half way through the download. */
-    char st[4096];
-    snprintf(st, sizeof st,
-        "{\"phase\":\"fetching\",\"busy\":true,\"message\":\"Downloading T-Dongle-S3 0.4.0...\",\"error\":\"\",\"supported\":true,"
-        "\"devices\":[{\"id\":\"/dev/ttyACM1\",\"port\":\"/dev/ttyACM1\",\"product\":\"USB JTAG/serial debug unit\",\"permitted\":true,\"nativeUsb\":true}],"
-        "\"boards\":[{\"id\":\"tdongle-s3\",\"name\":\"T-Dongle-S3\",\"family\":\"esp32s3\",\"flashMb\":16,\"port\":\"native-usb\","
-        "\"version\":\"0.4.0\",\"flashable\":true,\"local\":\"\",\"localBytes\":0}],"
-        "\"device\":{},\"board\":\"tdongle-s3\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":700000,\"total\":1500000}");
+    /* Downloaded: Flash is offered and the line says so. */
+    snprintf(st, sizeof st, "{\"phase\":\"idle\",\"busy\":false,\"message\":\"T-Dongle-S3 0.4.0 downloaded\",\"error\":\"\",\"supported\":true,"
+             DEVS "," BOARDS("0.4.0", "1498736") "," PROBED ",\"board\":\"tdongle-s3\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
     flash_state(st);
     cap_clear();
-    event_push("core.flash", "{\"topic\":\"core.flash\",\"rev\":4}");
-    module_tick();
-    const char *tiles = cap_last("\"field\":\"board_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Downloaded\",\"value\":\"...\"") && strstr(tiles, "\"progress\":0.46"), "the tile fills as it comes: %s", tiles ? tiles : "");
-    CHECK(cap_last("\"field\":\"flash_cancel__hidden\",\"value\":false"), "Stop offered while busy");
-    CHECK(cap_last("\"field\":\"flash_download__hidden\",\"value\":true"), "Download hidden while busy");
-
-    /* Downloaded. */
-    snprintf(st, sizeof st,
-        "{\"phase\":\"idle\",\"busy\":false,\"message\":\"T-Dongle-S3 0.4.0 downloaded\",\"error\":\"\",\"supported\":true,"
-        "\"devices\":[{\"id\":\"/dev/ttyACM1\",\"port\":\"/dev/ttyACM1\",\"product\":\"USB JTAG/serial debug unit\",\"permitted\":true,\"nativeUsb\":true}],"
-        "\"boards\":[{\"id\":\"tdongle-s3\",\"name\":\"T-Dongle-S3\",\"family\":\"esp32s3\",\"flashMb\":16,\"port\":\"native-usb\","
-        "\"version\":\"0.4.0\",\"flashable\":true,\"local\":\"0.4.0\",\"localBytes\":1498736}],"
-        "\"device\":{},\"board\":\"tdongle-s3\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
-    flash_state(st);
-    cap_clear();
-    event_push("core.flash", "{\"topic\":\"core.flash\",\"rev\":5}");
-    module_tick();
-    tiles = cap_last("\"field\":\"board_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Downloaded\",\"value\":\"yes\",\"hint\":\"0.4.0\""), "downloaded: %s", tiles ? tiles : "");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Size\",\"value\":\"1.4 MB\""), "its size");
-    CHECK(cap_last("\"field\":\"flash_download__hidden\",\"value\":true"), "Download put away once current");
+    g_flash_calln = 0;
+    flash_event();
+    CHECK(g_flash_calln == 0, "nothing more asked once it is here");
+    now = cap_last("\"field\":\"dev_now\"");
+    CHECK(now && strstr(now, "T-Dongle-S3 0.4.0 is downloaded. Tap Flash."), "the Next line: %s", now ? now : "");
+    tiles = cap_last("\"field\":\"dev_hub\"");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Firmware\",\"value\":\"T-Dongle-S3\",\"hint\":\"v0.4.0, downloaded\""), "the tile says downloaded: %s", tiles ? tiles : "");
     CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":false"), "Flash offered");
-    const char *now = cap_last("\"field\":\"board_now\"");
-    CHECK(now && strstr(now, "T-Dongle-S3 0.4.0 downloaded"), "the Now line says so");
+}
 
-    /* Flash, settings wiped. */
+static void test_flash_writes_and_reports(void)
+{
+    /* Continues with the device identified and the firmware downloaded. */
     cap_clear();
     g_flash_calln = 0;
     inbox_set("{\"command\":\"flash_write\",\"fields\":{\"wipe\":true}}");
@@ -636,59 +587,101 @@ static void test_board_download_then_write(void)
     CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "write /dev/ttyACM1 tdongle-s3 1"), "Flash writes that board to that device, wiped: %s", g_flash_calls[0]);
     CHECK(cap_count("settings wiped") >= 1, "and says so in the log");
 
-    /* Writing part 3 of 3. */
-    snprintf(st, sizeof st,
-        "{\"phase\":\"writing\",\"busy\":true,\"message\":\"Writing firmware.bin (1440 KB)...\",\"error\":\"\",\"supported\":true,"
-        "\"devices\":[{\"id\":\"/dev/ttyACM1\",\"port\":\"/dev/ttyACM1\",\"product\":\"USB JTAG/serial debug unit\",\"permitted\":true,\"nativeUsb\":true}],"
-        "\"boards\":[{\"id\":\"tdongle-s3\",\"name\":\"T-Dongle-S3\",\"family\":\"esp32s3\",\"flashMb\":16,\"port\":\"native-usb\","
-        "\"version\":\"0.4.0\",\"flashable\":true,\"local\":\"0.4.0\",\"localBytes\":1498736}],"
-        "\"device\":{\"id\":\"/dev/ttyACM1\"},\"board\":\"tdongle-s3\",\"part\":\"firmware.bin\",\"partIndex\":3,\"partCount\":3,\"done\":1000000,\"total\":1474736}");
+    char st[4096];
+    snprintf(st, sizeof st, "{\"phase\":\"writing\",\"busy\":true,\"message\":\"Writing firmware.bin (1440 KB)...\",\"error\":\"\",\"supported\":true,"
+             DEVS "," BOARDS("0.4.0", "1498736") "," PROBED ",\"board\":\"tdongle-s3\",\"part\":\"firmware.bin\",\"partIndex\":3,\"partCount\":3,\"done\":1000000,\"total\":1474736}");
     flash_state(st);
     cap_clear();
-    event_push("core.flash", "{\"topic\":\"core.flash\",\"rev\":6}");
-    module_tick();
-    tiles = cap_last("\"field\":\"board_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Target\",\"value\":\"ttyACM1\",\"hint\":\"firmware.bin 3/3\",\"progress\":0.67"),
-          "the target tile shows the part and its progress: %s", tiles ? tiles : "");
+    flash_event();
+    const char *tiles = cap_last("\"field\":\"dev_hub\"");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Firmware\",\"value\":\"T-Dongle-S3\",\"hint\":\"firmware.bin 3/3\",\"progress\":0.67"),
+          "the firmware tile shows the part and its progress: %s", tiles ? tiles : "");
     CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":true"), "Flash hidden while writing");
+    CHECK(cap_last("\"field\":\"flash_choose__hidden\",\"value\":true"), "Choose hidden while writing");
     CHECK(cap_last("\"field\":\"flash_cancel__hidden\",\"value\":false"), "Stop offered");
+    const char *hub = cap_last("\"field\":\"flash_hub\"");
+    CHECK(hub && strstr(hub, "\"label\":\"Status\",\"value\":\"writing\",\"hint\":\"Writing firmware.bin (1440 KB)...\",\"progress\":0.67"), "the tab's status tile follows: %s", hub ? hub : "");
 
-    /* Done. */
-    snprintf(st, sizeof st,
-        "{\"phase\":\"done\",\"busy\":false,\"message\":\"T-Dongle-S3 0.4.0 written and verified. It is restarting.\",\"error\":\"\",\"supported\":true,"
-        "\"devices\":[],\"boards\":[{\"id\":\"tdongle-s3\",\"name\":\"T-Dongle-S3\",\"family\":\"esp32s3\",\"flashMb\":16,\"port\":\"native-usb\","
-        "\"version\":\"0.4.0\",\"flashable\":true,\"local\":\"0.4.0\",\"localBytes\":1498736}],"
-        "\"device\":{\"id\":\"/dev/ttyACM1\"},\"board\":\"tdongle-s3\",\"part\":\"firmware.bin\",\"partIndex\":3,\"partCount\":3,\"done\":1474736,\"total\":1474736}");
+    snprintf(st, sizeof st, "{\"phase\":\"done\",\"busy\":false,\"message\":\"T-Dongle-S3 0.4.0 written and verified. It is restarting.\",\"error\":\"\",\"supported\":true,"
+             "\"devices\":[]," BOARDS("0.4.0", "1498736") "," PROBED ",\"board\":\"tdongle-s3\",\"part\":\"firmware.bin\",\"partIndex\":3,\"partCount\":3,\"done\":1474736,\"total\":1474736}");
     flash_state(st);
     cap_clear();
-    event_push("core.flash", "{\"topic\":\"core.flash\",\"rev\":7}");
-    module_tick();
-    now = cap_last("\"field\":\"board_now\"");
-    CHECK(now && strstr(now, "written and verified"), "done is said: %s", now ? now : "");
-    tiles = cap_last("\"field\":\"board_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Target\",\"value\":\"unplugged\""), "the CDC device is gone while it restarts");
+    flash_event();
+    const char *now = cap_last("\"field\":\"dev_now\"");
+    CHECK(now && strstr(now, "Unplugged"), "the CDC device is gone while it restarts: %s", now ? now : "");
     CHECK(cap_last("\"field\":\"flash_cancel__hidden\",\"value\":true"), "Stop put away");
+    hub = cap_last("\"field\":\"flash_hub\"");
+    CHECK(hub && strstr(hub, "written and verified"), "the tab says done: %s", hub ? hub : "");
 
-    /* Failed: the error leads. */
-    snprintf(st, sizeof st,
-        "{\"phase\":\"failed\",\"busy\":false,\"message\":\"Writing firmware.bin\",\"error\":\"firmware.bin at 0x20000 did not verify\",\"supported\":true,"
-        "\"devices\":[],\"boards\":[],\"device\":{},\"board\":\"tdongle-s3\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
+    snprintf(st, sizeof st, "{\"phase\":\"failed\",\"busy\":false,\"message\":\"Writing firmware.bin\",\"error\":\"firmware.bin at 0x20000 did not verify\",\"supported\":true,"
+             DEVS "," BOARDS("0.4.0", "1498736") "," PROBED ",\"board\":\"tdongle-s3\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
     flash_state(st);
     cap_clear();
-    event_push("core.flash", "{\"topic\":\"core.flash\",\"rev\":8}");
-    module_tick();
-    now = cap_last("\"field\":\"board_now\"");
+    flash_event();
+    now = cap_last("\"field\":\"dev_now\"");
     CHECK(now && strstr(now, "did not verify"), "the error is the line: %s", now ? now : "");
-    tiles = cap_last("\"field\":\"flash_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Status\",\"value\":\"failed\",\"hint\":\"firmware.bin at 0x20000 did not verify\"") && strstr(tiles, "\"alert\":true"),
-          "and the tab's Status tile carries it: %s", tiles ? tiles : "");
+    hub = cap_last("\"field\":\"flash_hub\"");
+    CHECK(hub && strstr(hub, "\"label\":\"Status\",\"value\":\"failed\",\"hint\":\"firmware.bin at 0x20000 did not verify\"") && strstr(hub, "\"alert\":true"),
+          "and the tab's Status tile carries it: %s", hub ? hub : "");
 
-    /* Stop. */
     cap_clear();
     g_flash_calln = 0;
     inbox_set("{\"command\":\"flash_cancel\",\"fields\":{}}");
     module_handle_event();
     CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "cancel"), "Stop cancels");
+}
+
+static void test_two_boards_fit_and_the_picture_picker(void)
+{
+    /* A fresh device: the probe says an S3 with nothing known on it and two
+     * boards that fit. Nothing is chosen for the person. */
+    cap_clear();
+    g_flash_calln = 0;
+    char st[4096];
+    flash_state(FLASH_IDLE);
+    inbox_set("{\"command\":\"flash_tap\",\"fields\":{\"flash_id\":\"/dev/ttyUSB0\"}}");
+    module_handle_event();
+    cap_clear();
+    g_flash_calln = 0;
+    inbox_set("{\"command\":\"flash_tap\",\"fields\":{\"flash_id\":\"/dev/ttyACM1\"}}");
+    module_handle_event();
+    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "probe /dev/ttyACM1"), "a device tapped after another is identified");
+    snprintf(st, sizeof st, "{\"phase\":\"idle\",\"busy\":false,\"message\":\"2 boards fit\",\"error\":\"\",\"supported\":true,"
+             DEVS "," BOARDS("", "0") "," PROBED_TWO ",\"board\":\"\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
+    flash_state(st);
+    cap_clear();
+    g_flash_calln = 0;
+    flash_event();
+    CHECK(g_flash_calln == 0, "two fits: nothing chosen or fetched on its own");
+    const char *now = cap_last("\"field\":\"dev_now\"");
+    CHECK(now && strstr(now, "Several boards fit this chip. Tap Choose firmware"), "the Next line says to choose: %s", now ? now : "");
+    CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":true"), "Flash hidden with nothing chosen");
+
+    /* The picker: pictures, the fitting boards first. */
+    cap_clear();
+    inbox_set("{\"command\":\"flash_choose\",\"fields\":{}}");
+    module_handle_event();
+    const char *open = cap_last("ui.screen.open");
+    CHECK(open && strstr(open, "\"name\":\"Firmware\""), "the Firmware screen opens");
+    const char *pick = cap_last("\"field\":\"flash_pick\"");
+    CHECK(pick && strstr(pick, "\"title\":\"Fits this board\",\"items\":[{\"id\":\"tdeck\""), "the fitting boards lead: %s", pick ? pick : "");
+    CHECK(pick && strstr(pick, "\"picture\":\"https://x/tdeck.jpg\""), "each with its picture from the website");
+    CHECK(pick && strstr(pick, "\"title\":\"All boards\",\"items\":[{\"id\":\"sensecap-p1-pro\"") && strstr(pick, "\"not over USB\"") && strstr(pick, "\"dim\":true"),
+          "the rest follow, a uf2 board dim and marked");
+
+    /* Picking one chooses it, fetches it and goes back. */
+    cap_clear();
+    g_flash_calln = 0;
+    inbox_set("{\"command\":\"flash_pick_tap\",\"fields\":{\"flash_pick_id\":\"tdeck\"}}");
+    module_handle_event();
+    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "fetch tdeck"), "the pick is downloaded: %s", g_flash_calln ? g_flash_calls[0] : "");
+    CHECK(cap_count("ui.screen.close") >= 1, "and the picker closes");
+    const char *tiles = cap_last("\"field\":\"dev_hub\"");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Firmware\",\"value\":\"T-Deck\""), "the Device screen names it: %s", tiles ? tiles : "");
+    pick = cap_last("\"field\":\"flash_pick\"");
+    CHECK(pick && strstr(pick, "\"id\":\"tdeck\"") && strstr(pick, "\"chosen\""), "the picker marks the choice");
+    now = cap_last("\"field\":\"dev_now\"");
+    CHECK(now && strstr(now, "Downloading"), "and the Next line waits for the download: %s", now ? now : "");
 }
 
 static void test_flash_refusals(void)
@@ -702,19 +695,17 @@ static void test_flash_refusals(void)
     CHECK(cap_count("Busy, wait") >= 1, "a probe the core refused is said");
     g_flash_rc = 1;
     g_dev[0] = 0;
+    g_board[0] = 0;
     cap_clear();
     inbox_set("{\"command\":\"flash_write\",\"fields\":{\"wipe\":false}}");
     module_handle_event();
-    CHECK(cap_count("Pick a device") >= 1, "no device, no write");
+    CHECK(cap_count("Choose the firmware first") >= 1, "no firmware, no write");
     CHECK(g_flash_calln == 1, "and the core was not asked");
     flash_state("{\"phase\":\"idle\",\"busy\":false,\"message\":\"\",\"error\":\"\",\"supported\":false,\"devices\":[],\"boards\":[],\"device\":{},\"board\":\"\"}");
     cap_clear();
-    event_push("core.flash", "{\"topic\":\"core.flash\",\"rev\":9}");
-    module_tick();
-    const char *now = cap_last("\"field\":\"flash_now\"");
-    CHECK(now && strstr(now, "No USB here"), "a platform without USB says so: %s", now ? now : "");
+    flash_event();
     const char *hub = cap_last("\"field\":\"flash_hub\"");
-    CHECK(hub && strstr(hub, "\"label\":\"USB\",\"value\":\"none\",\"hint\":\"not on this device\",\"alert\":true"), "and the strip says so too: %s", hub ? hub : "");
+    CHECK(hub && strstr(hub, "\"label\":\"USB\",\"value\":\"none\",\"hint\":\"not on this device\",\"alert\":true"), "a platform without USB says so: %s", hub ? hub : "");
 }
 
 int main(void)
@@ -738,9 +729,10 @@ int main(void)
     test_open_network_clears_the_box();
     test_refusal_words();
     test_reset_station_starts_over();
-    test_flash_tab_lists_the_cable_and_the_catalogue();
-    test_device_identify_and_what_fits();
-    test_board_download_then_write();
+    test_flash_tab_lists_the_cable();
+    test_device_is_identified_and_the_match_is_chosen();
+    test_flash_writes_and_reports();
+    test_two_boards_fit_and_the_picture_picker();
     test_flash_refusals();
     printf("firmwares: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

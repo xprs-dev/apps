@@ -1175,13 +1175,20 @@ static void on_status(const char *row)
 /* ── Flashing over USB ────────────────────────────────────────────────── */
 /* The core owns the cable, the loader, the catalogue and the files
  * (hal_flash_*); this wapp picks, asks, and draws what `core.flash` says.
- * Three screens: the Flash tab (what is plugged in, what is published),
- * Device (one board on a cable: identify it, see what fits) and Board (one
- * image: download it, write it). */
+ *
+ *   Flash tab   the boards plugged in over USB. Tap one.
+ *   Device      that board: Flash on top, the firmware chosen for it, what
+ *               the chip said. Opening it identifies the board; when one
+ *               published firmware fits, it is chosen and downloaded
+ *               without another tap. Otherwise: Choose firmware.
+ *   Firmware    the catalogue with the website's pictures, the boards that
+ *               fit this chip first; tapping one chooses it.
+ */
 static char g_flash[8192];       /* the last hal_flash_state answer */
 static int  g_sub_flash;
-static char g_dev[64];           /* the device picked */
-static char g_board[24];         /* the board picked */
+static char g_dev[64];           /* the device on the Device screen */
+static char g_board[24];         /* the firmware chosen for it */
+static char g_fetched[24];       /* the board a download was asked for, once */
 static char g_obj[1024];         /* one device or board row */
 static char g_obj2[1024];
 
@@ -1208,7 +1215,7 @@ static int flash_phase_is(const char *what)
     return fw_eq(p, what);
 }
 
-/* The row of [key] whose "id" is [id], into g_obj. */
+/* The row of [key] whose "id" is [id], into [out]. */
 static int flash_row(const char *key, const char *id, char *out, unsigned cap)
 {
     for (int i = 0; fw_json_nth(g_flash, key, i, out, cap); i++) {
@@ -1219,27 +1226,19 @@ static int flash_row(const char *key, const char *id, char *out, unsigned cap)
     return 0;
 }
 
-/* "1.4 MB" or "20 KB". */
-static void size_words(unsigned long long bytes, char *out, unsigned cap)
+static unsigned long long num_of(const char *json, const char *key)
 {
-    out[0] = 0;
-    if (bytes >= 1048576ULL) {
-        unsigned long long tenths = bytes * 10 / 1048576ULL;
-        fw_cat_u(out, tenths / 10, cap); fw_cat(out, ".", cap); fw_cat_u(out, tenths % 10, cap);
-        fw_cat(out, " MB", cap);
-    } else {
-        fw_cat_u(out, (bytes + 512) / 1024, cap);
-        fw_cat(out, " KB", cap);
-    }
+    char v[24] = "";
+    unsigned long long n = 0;
+    if (fw_json(json, key, v, sizeof v))
+        for (const char *p = v; *p >= '0' && *p <= '9'; p++) n = n * 10 + (unsigned)(*p - '0');
+    return n;
 }
 
-/* done/total as "0.41" for a tile's progress; "0" when nothing is known. */
+/* done/total as "0.41" for a tile's progress. */
 static void frac_words(char *out, unsigned cap)
 {
-    unsigned long long d = 0, t = 0;
-    char v[24];
-    if (fw_json(g_flash, "done", v, sizeof v)) for (const char *p = v; *p >= '0' && *p <= '9'; p++) d = d * 10 + (unsigned)(*p - '0');
-    if (fw_json(g_flash, "total", v, sizeof v)) for (const char *p = v; *p >= '0' && *p <= '9'; p++) t = t * 10 + (unsigned)(*p - '0');
+    unsigned long long d = num_of(g_flash, "done"), t = num_of(g_flash, "total");
     unsigned pc = t ? (unsigned)(d * 100 / t) : 0;
     if (pc > 100) pc = 100;
     fw_cpy(out, pc >= 100 ? "1" : pc < 10 ? "0.0" : "0.", cap);
@@ -1252,6 +1251,7 @@ static void dev_title(const char *row, char *out, unsigned cap)
     if (!fw_json(row, "product", out, cap) || !out[0]) fw_json(row, "port", out, cap);
 }
 
+/* "ESP32S3, 16 MB, v0.4.0" for a board row. */
 static void board_words(const char *row, char *sub, unsigned cap)
 {
     char fam[16] = "", mb[8] = "", ver[16] = "";
@@ -1264,31 +1264,38 @@ static void board_words(const char *row, char *sub, unsigned cap)
     if (ver[0]) { fw_cat(sub, ", v", cap); fw_cat(sub, ver, cap); }
 }
 
-/* The one line under every flash screen: the error when there is one,
- * else what the core is doing or last did. */
-static void flash_now(const char *field)
+/* The probe's facts, when they are about g_dev: 1 and the object in g_obj2. */
+static int probed(void)
 {
-    char s[8] = "", msg[200] = "";
-    fw_json(g_flash, "supported", s, sizeof s);
-    if (fw_eq(s, "false")) { one_line(field, "Now", "No USB here"); return; }
-    if (!fw_json(g_flash, "error", msg, sizeof msg) || !msg[0]) fw_json(g_flash, "message", msg, sizeof msg);
-    one_line(field, "Now", msg);
+    char pid[64] = "";
+    fw_json_obj(g_flash, "device", g_obj2, sizeof g_obj2);
+    fw_json(g_obj2, "id", pid, sizeof pid);
+    return g_dev[0] && fw_eq(pid, g_dev);
+}
+
+/* Is [id] among the ids the probe said fit? */
+static int fits(const char *likely, const char *id)
+{
+    for (const char *p = likely; *p; ) {
+        const char *q = p;
+        while (*q && *q != ' ') q++;
+        /* The length test makes fw_starts an exact-word match. */
+        if ((unsigned)(q - p) == fw_len(id) && fw_starts(p, id)) return 1;
+        p = *q ? q + 1 : q;
+    }
+    return 0;
 }
 
 static void push_flash(void)
 {
-    int ndev = 0, nboard = 0, nlocal = 0;
+    int ndev = 0, nboard = 0;
     for (int i = 0; fw_json_nth(g_flash, "devices", i, g_obj, sizeof g_obj); i++) ndev++;
-    for (int i = 0; fw_json_nth(g_flash, "boards", i, g_obj, sizeof g_obj); i++) {
-        char l[16] = "";
-        nboard++;
-        if (fw_json(g_obj, "local", l, sizeof l) && l[0]) nlocal++;
-    }
-    char n1[8] = "", n2[8] = "", n3[8] = "", prog[8] = "";
+    for (int i = 0; fw_json_nth(g_flash, "boards", i, g_obj, sizeof g_obj); i++) nboard++;
+    char n1[8] = "", n2[8] = "", prog[8] = "";
     fw_cat_u(n1, (unsigned)ndev, sizeof n1);
     fw_cat_u(n2, (unsigned)nboard, sizeof n2);
-    fw_cat_u(n3, (unsigned)nlocal, sizeof n3);
-    if (flash_phase_is("fetching")) frac_words(prog, sizeof prog);
+    if (flash_phase_is("fetching") || flash_phase_is("writing") || flash_phase_is("verifying"))
+        frac_words(prog, sizeof prog);
     /* A people screen shows its stats strip and the list, nothing else: the
      * one line of status rides the third tile. */
     char sup[8] = "", err[200] = "", msg[200] = "", phase[16] = "";
@@ -1297,75 +1304,63 @@ static void push_flash(void)
     fw_json(g_flash, "message", msg, sizeof msg);
     fw_json(g_flash, "phase", phase, sizeof phase);
     tiles_begin("flash_hub");
-    tile("ports", "Plugged in", n1, "", ndev ? "" : "over USB", "", 0);
-    tile("boards", "Boards", n2, "", nboard ? "on xprs.dev" : "tap Refresh", "", 0);
+    tile("ports", "Plugged in", n1, "", ndev ? "tap one" : "over USB", "", 0);
+    tile("boards", "Firmwares", n2, "", nboard ? "on xprs.dev" : "Refresh from the menu", "", 0);
     if (fw_eq(sup, "false"))
         tile("status", "USB", "none", "", "not on this device", "", 1);
     else
-        tile("status", "Status",
-             err[0] ? "failed" : fw_eq(phase, "idle") ? "ready" : phase,
+        tile("status", "Status", err[0] ? "failed" : fw_eq(phase, "idle") ? "ready" : phase,
              "", err[0] ? err : msg, prog, err[0] != 0);
     tiles_end();
-    flash_now("flash_now");
 
+    int have = probed();
+    char chip[16] = "", runs[40] = "", rv[24] = "", fb[16] = "";
+    if (have) {
+        fw_json(g_obj2, "chipLabel", chip, sizeof chip);
+        fw_json(g_obj2, "runs", runs, sizeof runs);
+        fw_json(g_obj2, "runsVersion", rv, sizeof rv);
+        fw_json(g_obj2, "flashBytes", fb, sizeof fb);
+    }
     fw_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"flash\",\"sections\":[", sizeof g_out);
-    int any = 0, first = 1;
-    char probed[64] = "", chip[16] = "";
-    fw_json_obj(g_flash, "device", g_obj2, sizeof g_obj2);
-    fw_json(g_obj2, "id", probed, sizeof probed);
-    fw_json(g_obj2, "chipLabel", chip, sizeof chip);
+    int first = 1;
     for (int i = 0; fw_json_nth(g_flash, "devices", i, g_obj, sizeof g_obj); i++) {
-        if (first) { fw_cat(g_out, "{\"title\":\"Plugged in\",\"items\":[", sizeof g_out); any = 1; }
-        char id[64], title[64], port[48], nu[8] = "", perm[8] = "", sub[80], tags[120] = "";
+        if (first) fw_cat(g_out, "{\"title\":\"Plugged in\",\"items\":[", sizeof g_out);
+        char id[64], title[64], port[48], nu[8] = "", perm[8] = "", sub[120], tags[120] = "";
         fw_json(g_obj, "id", id, sizeof id);
         dev_title(g_obj, title, sizeof title);
         fw_json(g_obj, "port", port, sizeof port);
         fw_json(g_obj, "nativeUsb", nu, sizeof nu);
         fw_json(g_obj, "permitted", perm, sizeof perm);
-        fw_cpy(sub, port, sizeof sub);
-        fw_cat(sub, fw_eq(nu, "true") ? ", native USB" : ", USB bridge", sizeof sub);
+        if (have && chip[0] && fw_eq(id, g_dev)) {
+            unsigned long long b = 0;
+            for (const char *p = fb; *p >= '0' && *p <= '9'; p++) b = b * 10 + (unsigned)(*p - '0');
+            fw_cpy(sub, chip, sizeof sub);
+            if (b) { fw_cat(sub, ", ", sizeof sub); fw_cat_u(sub, (unsigned)(b / 1048576ULL), sizeof sub); fw_cat(sub, " MB", sizeof sub); }
+            if (runs[0]) { fw_cat(sub, ", runs ", sizeof sub); fw_cat(sub, runs, sizeof sub); if (rv[0]) { fw_cat(sub, " ", sizeof sub); fw_cat(sub, rv, sizeof sub); } }
+        } else {
+            fw_cpy(sub, port, sizeof sub);
+            fw_cat(sub, fw_eq(nu, "true") ? ", native USB" : ", USB bridge", sizeof sub);
+            fw_cat(sub, ". Tap to identify", sizeof sub);
+        }
         if (fw_eq(perm, "false")) tag(tags, sizeof tags, "", "asks first");
-        if (fw_eq(id, probed) && chip[0]) tag(tags, sizeof tags, "", chip);
-        char iid[70] = "d:";
-        fw_cat(iid, id, sizeof iid);
-        item(iid, title, sub, tags, 0, &first);
-    }
-    if (!first) fw_cat(g_out, "]}", sizeof g_out);
-    first = 1;
-    for (int i = 0; fw_json_nth(g_flash, "boards", i, g_obj, sizeof g_obj); i++) {
-        if (first) { if (any) fw_cat(g_out, ",", sizeof g_out); fw_cat(g_out, "{\"title\":\"Boards\",\"items\":[", sizeof g_out); any = 1; }
-        char id[24], name[40], sub[64], tags[120] = "", local[16] = "", port[16] = "", fl[8] = "";
-        fw_json(g_obj, "id", id, sizeof id);
-        fw_json(g_obj, "name", name, sizeof name);
-        board_words(g_obj, sub, sizeof sub);
-        fw_json(g_obj, "local", local, sizeof local);
-        fw_json(g_obj, "port", port, sizeof port);
-        fw_json(g_obj, "flashable", fl, sizeof fl);
-        tag(tags, sizeof tags, "downloaded ", local);
-        tag(tags, sizeof tags, "", fw_eq(port, "native-usb") ? "native USB" : fw_eq(port, "usb-serial") ? "USB bridge" : port);
-        char iid[30] = "b:";
-        fw_cat(iid, id, sizeof iid);
-        item(iid, name, sub, tags, !fw_eq(fl, "true"), &first);
+        item(id, title, sub, tags, 0, &first);
     }
     if (!first) fw_cat(g_out, "]}", sizeof g_out);
     fw_cat(g_out, "]}", sizeof g_out);
     say(g_out);
 }
 
+/* The Device screen: Flash on top, the firmware chosen, what the chip said. */
 static void push_device(void)
 {
     if (!g_dev[0]) return;
     int here = flash_row("devices", g_dev, g_obj, sizeof g_obj);
-    char port[48] = "", nu[8] = "";
+    char port[48] = "", title[64] = "";
     fw_json(g_obj, "port", port, sizeof port);
-    fw_json(g_obj, "nativeUsb", nu, sizeof nu);
-    /* The probe's facts apply when they are about this device. */
-    fw_json_obj(g_flash, "device", g_obj2, sizeof g_obj2);
-    char pid[64] = "";
-    fw_json(g_obj2, "id", pid, sizeof pid);
-    int probed = fw_eq(pid, g_dev);
+    dev_title(g_obj, title, sizeof title);
+    int have = probed();
     char chip[16] = "", fb[16] = "", runs[40] = "", rv[24] = "", sug[24] = "", likely[200] = "";
-    if (probed) {
+    if (have) {
         fw_json(g_obj2, "chipLabel", chip, sizeof chip);
         fw_json(g_obj2, "flashBytes", fb, sizeof fb);
         fw_json(g_obj2, "runs", runs, sizeof runs);
@@ -1373,99 +1368,52 @@ static void push_device(void)
         fw_json(g_obj2, "suggested", sug, sizeof sug);
         fw_json(g_obj2, "likely", likely, sizeof likely);
     }
-    int busy = flash_busy();
-    char err[200] = "";
-    fw_json(g_flash, "error", err, sizeof err);
-    tiles_begin("dev_hub");
-    tile("port", "Port", here ? port : "unplugged", "", here ? (fw_eq(nu, "true") ? "native USB" : "USB bridge") : "", "", !here);
-    tile("chip", "Chip", chip, "", chip[0] ? "" : busy ? "asking..." : err[0] ? err : "Identify from the menu", "",
-         !chip[0] && !busy && err[0]);
-    {
-        char mb[16] = "";
-        unsigned long long b = 0;
-        for (const char *p = fb; *p >= '0' && *p <= '9'; p++) b = b * 10 + (unsigned)(*p - '0');
-        if (b) fw_cat_u(mb, (unsigned)(b / 1048576ULL), sizeof mb);
-        tile("flash", "Flash", mb, b ? "MB" : "", "", "", 0);
-    }
-    /* The project name is the number; its version fits the hint. */
-    tile("runs", "Runs", runs[0] ? runs : chip[0] ? "nothing known" : "", "", runs[0] ? rv : "", "", 0);
-    {
-        char name[40] = "";
-        if (sug[0] && flash_row("boards", sug, g_obj2, sizeof g_obj2)) fw_json(g_obj2, "name", name, sizeof name);
-        int n = 0;
-        for (const char *p = likely; *p; p++) if (*p == ' ') n++;
-        if (likely[0]) n++;
-        tile("fit", "Fits", name[0] ? name : chip[0] ? (n > 1 ? "several" : "nothing published") : "",
-             "", name[0] ? "tap it below" : "", "", 0);
-    }
-    tiles_end();
-    flash_now("dev_now");
-    flag_hidden("flash_identify", busy || !here);
+    int nfit = 0;
+    for (const char *p = likely; *p; p++) if (*p == ' ') nfit++;
+    if (likely[0]) nfit++;
 
-    fw_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"flash_fits\",\"sections\":[", sizeof g_out);
-    int first = 1;
-    for (const char *p = likely; *p; ) {
-        char id[24];
-        unsigned n = 0;
-        while (*p && *p != ' ' && n < sizeof id - 1) id[n++] = *p++;
-        id[n] = 0;
-        while (*p == ' ') p++;
-        if (!flash_row("boards", id, g_obj2, sizeof g_obj2)) continue;
-        if (first) fw_cat(g_out, "{\"title\":\"Fits\",\"items\":[", sizeof g_out);
-        char name[40], sub[64], tags[64] = "", local[16] = "";
-        fw_json(g_obj2, "name", name, sizeof name);
-        board_words(g_obj2, sub, sizeof sub);
+    /* The firmware chosen for it. */
+    char bname[40] = "", bver[16] = "", local[16] = "", lb[16] = "", fl[8] = "";
+    int known = g_board[0] && flash_row("boards", g_board, g_obj2, sizeof g_obj2);
+    if (known) {
+        fw_json(g_obj2, "name", bname, sizeof bname);
+        fw_json(g_obj2, "version", bver, sizeof bver);
         fw_json(g_obj2, "local", local, sizeof local);
-        if (fw_eq(id, sug)) tag(tags, sizeof tags, "", "match");
-        tag(tags, sizeof tags, "downloaded ", local);
-        item(id, name, sub, tags, 0, &first);
+        fw_json(g_obj2, "localBytes", lb, sizeof lb);
+        fw_json(g_obj2, "flashable", fl, sizeof fl);
     }
-    if (!first) fw_cat(g_out, "]}", sizeof g_out);
-    fw_cat(g_out, "]}", sizeof g_out);
-    say(g_out);
-}
-
-static void push_board(void)
-{
-    if (!g_board[0]) return;
-    int known = flash_row("boards", g_board, g_obj, sizeof g_obj);
-    char ver[16] = "", local[16] = "", lb[16] = "", fl[8] = "";
-    fw_json(g_obj, "version", ver, sizeof ver);
-    fw_json(g_obj, "local", local, sizeof local);
-    fw_json(g_obj, "localBytes", lb, sizeof lb);
-    fw_json(g_obj, "flashable", fl, sizeof fl);
-    int flashable = fw_eq(fl, "true");
-    char sb[24] = "";
-    fw_json(g_flash, "board", sb, sizeof sb);
-    int mine = fw_eq(sb, g_board);            /* the session is about this board */
+    int ready = known && local[0] && fw_eq(local, bver);
     int busy = flash_busy();
+    char sb[24] = "", err[200] = "", msg[200] = "";
+    fw_json(g_flash, "board", sb, sizeof sb);
+    fw_json(g_flash, "error", err, sizeof err);
+    fw_json(g_flash, "message", msg, sizeof msg);
+    int mine = known && fw_eq(sb, g_board);
     int fetching = mine && flash_phase_is("fetching");
     int writing = mine && (flash_phase_is("writing") || flash_phase_is("verifying"));
     char prog[8] = "";
     if (fetching || writing) frac_words(prog, sizeof prog);
 
-    tiles_begin("board_hub");
-    tile("ver", "Version", ver, "", known ? "" : "not in the catalogue", "", 0);
+    /* The one line that says what to do next. */
+    char now[220] = "";
+    if (busy) fw_cpy(now, msg, sizeof now);
+    else if (err[0]) fw_cpy(now, err, sizeof now);
+    else if (!here) fw_cpy(now, "Unplugged. Plug it back in and tap it on the Flash tab.", sizeof now);
+    else if (!chip[0]) fw_cpy(now, "Not identified yet. Identify it from the menu, or choose the firmware yourself.", sizeof now);
+    else if (!known) fw_cpy(now, nfit > 1 ? "Several boards fit this chip. Tap Choose firmware and pick yours by its picture."
+                          : nfit == 1 ? "One board fits. Tap Choose firmware."
+                          : "No published firmware fits this chip. Choose one anyway, or check xprs.dev.", sizeof now);
+    else if (ready) { fw_cpy(now, bname, sizeof now); fw_cat(now, " ", sizeof now); fw_cat(now, bver, sizeof now); fw_cat(now, " is downloaded. Tap Flash.", sizeof now); }
+    else if (!fw_eq(fl, "true")) { fw_cpy(now, bname, sizeof now); fw_cat(now, " is not flashed over USB. Choose another.", sizeof now); }
+    else fw_cpy(now, "Downloading the firmware...", sizeof now);
+    one_line("dev_now", "Next", now);
+
+    tiles_begin("dev_hub");
     {
-        char sz[24] = "";
-        unsigned long long b = 0;
-        for (const char *p = lb; *p >= '0' && *p <= '9'; p++) b = b * 10 + (unsigned)(*p - '0');
-        if (b) size_words(b, sz, sizeof sz);
-        tile("size", "Size", sz, "", "", "", 0);
-    }
-    tile("local", "Downloaded", fetching ? "..." : local[0] ? "yes" : flashable ? "no" : "no image",
-         "", local[0] && !fw_eq(local, ver) ? "older, download again" : local[0] ? local : flashable ? "tap Download" : "",
-         fetching ? prog : "", 0);
-    {
-        /* The port is short enough for a tile; the product is the hint. */
-        char t[64] = "", hint[64] = "";
-        if (g_dev[0] && flash_row("devices", g_dev, g_obj2, sizeof g_obj2)) {
-            char port[48] = "";
-            fw_json(g_obj2, "port", port, sizeof port);
-            const char *p = fw_starts(port, "/dev/bus/usb/") ? port + 13 : fw_starts(port, "/dev/") ? port + 5 : port;
-            fw_cpy(t, p, sizeof t);
-            dev_title(g_obj2, hint, sizeof hint);
-        } else if (g_dev[0]) fw_cpy(t, "unplugged", sizeof t);
+        char v[64] = "", hint[64] = "";
+        if (known) { fw_cpy(v, bname, sizeof v); if (bver[0]) { fw_cpy(hint, "v", sizeof hint); fw_cat(hint, bver, sizeof hint); } }
+        if (known && ready) fw_cat(hint, ", downloaded", sizeof hint);
+        else if (known && fetching) fw_cpy(hint, "downloading", sizeof hint);
         if (writing) {
             char part[32] = "", pi[8] = "", pc[8] = "";
             fw_json(g_flash, "part", part, sizeof part);
@@ -1473,22 +1421,109 @@ static void push_board(void)
             fw_json(g_flash, "partCount", pc, sizeof pc);
             fw_cpy(hint, part, sizeof hint);
             if (pi[0] && pc[0]) { fw_cat(hint, " ", sizeof hint); fw_cat(hint, pi, sizeof hint); fw_cat(hint, "/", sizeof hint); fw_cat(hint, pc, sizeof hint); }
-        } else if (!g_dev[0]) fw_cpy(hint, "pick one on the Flash tab", sizeof hint);
-        else if (!t[0] || fw_eq(t, "unplugged")) hint[0] = 0;
-        tile("target", "Target", t[0] ? t : "no device", "", hint, writing ? prog : "", 0);
+        }
+        tile("fw", "Firmware", v, "", known ? hint : "tap Choose firmware", prog, 0);
+    }
+    tile("chip", "Chip", chip, "", chip[0] ? "" : busy ? "asking..." : "unknown", "", !chip[0] && !busy && err[0] != 0);
+    {
+        char mb[16] = "";
+        unsigned long long b = 0;
+        for (const char *p = fb; *p >= '0' && *p <= '9'; p++) b = b * 10 + (unsigned)(*p - '0');
+        if (b) fw_cat_u(mb, (unsigned)(b / 1048576ULL), sizeof mb);
+        tile("flash", "Flash", mb, b ? "MB" : "", "", "", 0);
+    }
+    tile("runs", "Runs", runs[0] ? runs : chip[0] ? "nothing known" : "", "", runs[0] ? rv : "", "", 0);
+    {
+        const char *p = fw_starts(port, "/dev/bus/usb/") ? port + 13 : fw_starts(port, "/dev/") ? port + 5 : port;
+        tile("port", "Port", here ? p : "unplugged", "", here ? title : "", "", !here);
     }
     tiles_end();
-    flash_now("board_now");
-    flag_hidden("flash_download", busy || !flashable || (local[0] && fw_eq(local, ver)));
-    flag_hidden("flash_write", busy || !local[0] || !g_dev[0]);
+
+    flag_hidden("flash_write", busy || !ready || !here || !fw_eq(fl, "true"));
+    flag_hidden("flash_choose", busy);
+    flag_hidden("flash_identify", busy || !here);
     flag_hidden("flash_cancel", !busy);
+    (void)sug; (void)lb;
+}
+
+/* The Firmware screen: every published board with its picture, the ones
+ * that fit this chip first. */
+static void push_pick(void)
+{
+    int have = probed();
+    char likely[200] = "", sug[24] = "";
+    if (have) { fw_json(g_obj2, "likely", likely, sizeof likely); fw_json(g_obj2, "suggested", sug, sizeof sug); }
+    fw_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"flash_pick\",\"sections\":[", sizeof g_out);
+    int any = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        int first = 1;
+        for (int i = 0; fw_json_nth(g_flash, "boards", i, g_obj, sizeof g_obj); i++) {
+            char id[24], name[40], sub[64], tags[100] = "", local[16] = "", fl[8] = "", photo[200] = "";
+            fw_json(g_obj, "id", id, sizeof id);
+            int fit = likely[0] && fits(likely, id);
+            if ((pass == 0) != fit) continue;
+            if (first) {
+                if (any) fw_cat(g_out, ",", sizeof g_out);
+                fw_cat(g_out, pass == 0 ? "{\"title\":\"Fits this board\",\"items\":[" : "{\"title\":\"All boards\",\"items\":[", sizeof g_out);
+                any = 1;
+            }
+            fw_json(g_obj, "name", name, sizeof name);
+            board_words(g_obj, sub, sizeof sub);
+            fw_json(g_obj, "local", local, sizeof local);
+            fw_json(g_obj, "flashable", fl, sizeof fl);
+            fw_json(g_obj, "photo", photo, sizeof photo);
+            if (fw_eq(id, sug)) tag(tags, sizeof tags, "", "best match");
+            if (fw_eq(id, g_board)) tag(tags, sizeof tags, "", "chosen");
+            tag(tags, sizeof tags, "downloaded ", local);
+            if (!fw_eq(fl, "true")) tag(tags, sizeof tags, "", "not over USB");
+            if (!first) fw_cat(g_out, ",", sizeof g_out);
+            first = 0;
+            fw_cat(g_out, "{\"id\":\"", sizeof g_out); fw_jesc(g_out, id, sizeof g_out);
+            fw_cat(g_out, "\",\"title\":\"", sizeof g_out); fw_jesc(g_out, name, sizeof g_out);
+            fw_cat(g_out, "\",\"subtitle\":\"", sizeof g_out); fw_jesc(g_out, sub, sizeof g_out);
+            fw_cat(g_out, "\",\"picture\":\"", sizeof g_out); fw_jesc(g_out, photo, sizeof g_out);
+            fw_cat(g_out, "\",\"tags\":[", sizeof g_out); fw_cat(g_out, tags, sizeof g_out); fw_cat(g_out, "]", sizeof g_out);
+            if (!fw_eq(fl, "true")) fw_cat(g_out, ",\"dim\":true", sizeof g_out);
+            fw_cat(g_out, "}", sizeof g_out);
+        }
+        if (!first) fw_cat(g_out, "]}", sizeof g_out);
+    }
+    fw_cat(g_out, "]}", sizeof g_out);
+    say(g_out);
 }
 
 static void push_flash_all(void)
 {
     push_flash();
     push_device();
-    push_board();
+    push_pick();
+}
+
+/* Choose [id] for g_dev and get it, once. */
+static void choose(const char *id)
+{
+    fw_cpy(g_board, id, sizeof g_board);
+    if (!flash_row("boards", g_board, g_obj2, sizeof g_obj2)) return;
+    char local[16] = "", ver[16] = "", fl[8] = "";
+    fw_json(g_obj2, "local", local, sizeof local);
+    fw_json(g_obj2, "version", ver, sizeof ver);
+    fw_json(g_obj2, "flashable", fl, sizeof fl);
+    if (fw_eq(fl, "true") && !(local[0] && fw_eq(local, ver)) && !flash_busy() && !fw_eq(g_fetched, id)) {
+        fw_cpy(g_fetched, id, sizeof g_fetched);
+        hal_flash_fetch(g_board, fw_len(g_board));
+    }
+}
+
+/* The core moved: after a probe with one clear match, choose and fetch it. */
+static void on_flash(void)
+{
+    flash_read();
+    if (g_dev[0] && !g_board[0] && !flash_busy() && probed()) {
+        char sug[24] = "";
+        fw_json(g_obj2, "suggested", sug, sizeof sug);
+        if (sug[0]) { choose(sug); flash_read(); }
+    }
+    push_flash_all();
 }
 
 static void on_flash_command(const char *cmd)
@@ -1499,59 +1534,47 @@ static void on_flash_command(const char *cmd)
     } else if (fw_eq(cmd, "flash_tap")) {
         char id[70] = "";
         fields("flash_id", id, sizeof id);
-        if (fw_starts(id, "d:")) {
-            fw_cpy(g_dev, id + 2, sizeof g_dev);
-            flash_read();
-            char t[64] = "";
-            if (flash_row("devices", g_dev, g_obj, sizeof g_obj)) dev_title(g_obj, t, sizeof t);
-            /* Opening a device is asking what it is: the board goes into
-             * its loader for a moment and restarts. Not while something
-             * else is running, and not again for one that answered: a
-             * second tap asks again only after a probe that failed. */
-            char pid[64] = "", chip[8] = "", err[8] = "";
-            fw_json_obj(g_flash, "device", g_obj2, sizeof g_obj2);
-            fw_json(g_obj2, "id", pid, sizeof pid);
-            fw_json(g_obj2, "chip", chip, sizeof chip);
-            fw_json(g_flash, "error", err, sizeof err);
-            if (!flash_busy() && (!fw_eq(pid, g_dev) || !chip[0] || err[0]))
-                hal_flash_probe(g_dev, fw_len(g_dev));
-            flash_read();
-            push_device();
-            screen_open("Device", t[0] ? t : g_dev);
-            return;
-        }
-        if (fw_starts(id, "b:")) {
-            fw_cpy(g_board, id + 2, sizeof g_board);
-            flash_read();
-            push_board();
-            char n[40] = "";
-            if (flash_row("boards", g_board, g_obj, sizeof g_obj)) fw_json(g_obj, "name", n, sizeof n);
-            screen_open("Board", n[0] ? n : g_board);
-            return;
-        }
-        return;
-    } else if (fw_eq(cmd, "flash_fits_tap")) {
-        char id[24] = "";
-        fields("flash_fits_id", id, sizeof id);
         if (!id[0]) return;
-        fw_cpy(g_board, id, sizeof g_board);
+        if (!fw_eq(id, g_dev)) { g_board[0] = 0; g_fetched[0] = 0; }
+        fw_cpy(g_dev, id, sizeof g_dev);
         flash_read();
-        push_board();
-        char n[40] = "";
-        if (flash_row("boards", g_board, g_obj, sizeof g_obj)) fw_json(g_obj, "name", n, sizeof n);
-        screen_open("Board", n[0] ? n : g_board);
+        char t[64] = "";
+        if (flash_row("devices", g_dev, g_obj, sizeof g_obj)) dev_title(g_obj, t, sizeof t);
+        /* Opening a device is asking what it is: the board goes into its
+         * loader for a moment and restarts. Not while something else is
+         * running, and not again for one that answered: a second tap asks
+         * again only after a probe that failed. */
+        char chip[8] = "", err[8] = "";
+        int have = probed();
+        if (have) fw_json(g_obj2, "chip", chip, sizeof chip);
+        fw_json(g_flash, "error", err, sizeof err);
+        if (!flash_busy() && (!have || !chip[0] || err[0]))
+            hal_flash_probe(g_dev, fw_len(g_dev));
+        flash_read();
+        push_device();
+        screen_open("Device", t[0] ? t : g_dev);
         return;
+    } else if (fw_eq(cmd, "flash_choose")) {
+        flash_read();
+        push_pick();
+        screen_open("Firmware", "Choose the firmware");
+        return;
+    } else if (fw_eq(cmd, "flash_pick_tap")) {
+        char id[24] = "";
+        fields("flash_pick_id", id, sizeof id);
+        if (!id[0]) return;
+        flash_read();
+        g_fetched[0] = 0;
+        choose(id);
+        say("{\"type\":\"ui.screen.close\"}");
     } else if (fw_eq(cmd, "flash_identify")) {
-        if (!g_dev[0]) log_line("", "Pick a device first");
+        if (!g_dev[0]) log_line("", "Pick a board on the Flash tab first");
         else if (!hal_flash_probe(g_dev, fw_len(g_dev))) log_line("", "Busy, wait for it to finish");
-    } else if (fw_eq(cmd, "flash_download")) {
-        if (!g_board[0]) log_line("", "Pick a board first");
-        else if (!hal_flash_fetch(g_board, fw_len(g_board))) log_line("", "Busy, wait for it to finish");
     } else if (fw_eq(cmd, "flash_write")) {
         char w[8] = "";
         fields("wipe", w, sizeof w);
-        if (!g_board[0]) log_line("", "Pick a board first");
-        else if (!g_dev[0]) log_line("", "Pick a device on the Flash tab first");
+        if (!g_board[0]) log_line("", "Choose the firmware first");
+        else if (!g_dev[0]) log_line("", "Pick a board on the Flash tab first");
         else if (!hal_flash_write(g_dev, fw_len(g_dev), g_board, fw_len(g_board), fw_eq(w, "true")))
             log_line("", "Not now: busy, or not downloaded yet");
         else {
@@ -1578,7 +1601,7 @@ static void drain_events(void)
         else if (fw_eq(g_topic, "xprs.status.tx"))    on_status(g_ev);
         else if (fw_eq(g_topic, "xprs.identity"))     on_identity(g_ev);
         else if (fw_eq(g_topic, "xprs.observation"))  on_observation(g_ev);
-        else if (fw_eq(g_topic, "core.flash"))        { flash_read(); push_flash_all(); }
+        else if (fw_eq(g_topic, "core.flash"))        on_flash();
     }
 }
 
