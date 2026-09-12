@@ -78,5 +78,11 @@ int fw_json_obj(const char *json, const char *key, char *out, unsigned cap);
 /* "key":[{..},{..}]: the n-th object (from 0), braces included. 0 when
  * there is no such element. */
 int fw_json_nth(const char *json, const char *key, int n, char *out, unsigned cap);
+/* Walk "key":[{..},{..}] once: fw_json_arr finds the array (NULL when
+ * absent), fw_json_next copies the object at [p] into [out] and returns
+ * where the next one starts, NULL at the end. Linear in the array, where
+ * fw_json_nth from 0 to n is quadratic. */
+const char *fw_json_arr(const char *json, const char *key);
+const char *fw_json_next(const char *p, char *out, unsigned cap);
 
 #endif

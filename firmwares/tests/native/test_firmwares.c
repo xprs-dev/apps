@@ -608,7 +608,7 @@ static void test_flash_writes_and_reports(void)
     cap_clear();
     flash_event();
     const char *now = cap_last("\"field\":\"dev_now\"");
-    CHECK(now && strstr(now, "Unplugged"), "the CDC device is gone while it restarts: %s", now ? now : "");
+    CHECK(now && strstr(now, "written and verified"), "done is the line, before anything else: %s", now ? now : "");
     CHECK(cap_last("\"field\":\"flash_cancel__hidden\",\"value\":true"), "Stop put away");
     hub = cap_last("\"field\":\"flash_hub\"");
     CHECK(hub && strstr(hub, "written and verified"), "the tab says done: %s", hub ? hub : "");

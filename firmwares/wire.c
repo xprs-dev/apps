@@ -412,3 +412,25 @@ int fw_json_nth(const char *json, const char *key, int n, char *out, unsigned ca
     }
     return 0;
 }
+
+const char *fw_json_arr(const char *json, const char *key)
+{
+    char pat[40] = "\"";
+    fw_cat(pat, key, sizeof pat);
+    fw_cat(pat, "\":[", sizeof pat);
+    unsigned pl = fw_len(pat);
+    for (const char *p = json; p && *p; p++)
+        if (fw_starts(p, pat)) return p + pl;
+    return 0;
+}
+
+const char *fw_json_next(const char *p, char *out, unsigned cap)
+{
+    if (cap) out[0] = 0;
+    if (!p) return 0;
+    while (*p == ' ' || *p == ',') p++;
+    if (*p != '{') return 0;
+    unsigned n = json_object(p, out, cap);
+    if (!n) return 0;
+    return p + n;
+}
