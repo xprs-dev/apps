@@ -1208,8 +1208,15 @@ static void on_command(void)
         if (!fields("stations_id", id, sizeof id)) return;
         g_sel = find(id);
         if (g_sel < 0) return;
+        st_t *st = &g_st[g_sel];
+        /* Opening a station asks it who owns it (q:policy, anybody may):
+         * a station claimed by somebody else since it last asked to be
+         * claimed stops asking, and silence is not a fact the list can
+         * read. One request, answered by an observation. */
+        if (!g_me[0]) who_am_i();
+        if (host_facts(st) && !st->ask_pol && !(st->pend_id[0] && !st->pend_final)) do_ask(st);
         push_hub();
-        screen_open("Station", g_st[g_sel].nick[0] ? g_st[g_sel].nick : id);
+        screen_open("Station", st->nick[0] ? st->nick : id);
         return;
     }
     if (fw_eq(cmd, "back")) { say("{\"type\":\"ui.screen.close\"}"); return; }

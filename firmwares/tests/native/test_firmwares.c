@@ -403,15 +403,19 @@ static void test_stats_from_the_core(void)
 static void test_somebody_elses_station(void)
 {
     /* A station that answers a policy ask naming another owner is theirs:
-     * listed under Others, with nothing but Stats and Answers offered. */
+     * listed under Others, with nothing but Stats and Answers offered. And
+     * opening a station that the core can hear is what asks. */
     cap_clear();
+    snprintf(g_station_json, sizeof g_station_json, "{\"call\":\"X3XYZ1\",\"bearer\":\"ble\",\"rssi\":-60,\"agoMs\":5000}");
     char mine[12];
     snprintf(mine, sizeof mine, "%s", g_st[g_sel].call);   /* renamed by the rekeys above */
     ask_owner("verified", "X3XYZ1", "npub1xyz1qpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jnqp");
     char tap[200];
     snprintf(tap, sizeof tap, "{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"X3XYZ1\"}}");
+    int aired = g_aired_n;
     command(tap);
-    command("{\"command\":\"stats\",\"fields\":{}}");
+    CHECK(g_aired_n == aired + 2 && strstr(g_aired[aired], " q:policy"), "opening it asks whose it is");
+    g_station_json[0] = 0;
     deliver("xprs.observation", row_to("observation", "X3XYZ1", "verified", 1,
             "t:observation f:X3XYZ1 d:X1ME77 s:policy owner:X1OTHER use:listed first:none serve:relay ts:2026-09-10_12:06:00 sig:KKKK"));
     CHECK(cap_last("\"title\":\"Others\"") != 0, "listed under Others");
