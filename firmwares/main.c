@@ -431,8 +431,14 @@ static void push_hub(void)
          s->mine ? "You" : s->unowned ? "Nobody" : s->theirs ? "Not you" : "?",
          "", s->unowned && !s->mine ? "tap Claim" : s->theirs ? "somebody else's" : "", "", 0);
     {
+        /* What it said, or what being heard over the LAN implies. */
         int joining = fw_eq(s->wifi, "joining");
-        tile("wifi", "WiFi", s->wifi[0] ? s->wifi : "unknown", "", s->ip,
+        char lanes[64] = "";
+        if (have) fw_json_list(g_host, "bearers", lanes, sizeof lanes);
+        int on_lan = 0;
+        for (const char *p = lanes; *p; p++) if (fw_starts(p, "lan")) on_lan = 1;
+        tile("wifi", "WiFi", s->wifi[0] ? s->wifi : on_lan ? "up" : "unknown", "",
+             s->ip[0] ? s->ip : on_lan && !s->wifi[0] ? "heard over the LAN" : "",
              joining ? "0.5" : "", fw_eq(s->wifi, "failed"));
     }
     signal_tile(s, have, agoms, stale);
@@ -597,13 +603,12 @@ static void push_stats(void)
     tile("count", "Records", v, "", "in its archive", "", 0);
     signal_tile(s, have, have ? host_num("agoMs") : 0, 0);
     v[0] = 0; if (have) fw_json_list(g_host, "bearers", v, sizeof v);
-    /* "ble+lan": a phone-width tile has room for that and not for a list. */
-    for (unsigned i = 0, o = 0; ; i++) {
-        if (v[i] == ',') { v[o++] = '+'; if (v[i + 1] == ' ') i++; continue; }
-        v[o++] = v[i];
-        if (!v[i]) break;
+    {   /* the count as the figure, the lanes as the hint: a phone-width
+         * tile has room for "2" and not for "ble, lan" */
+        char n[4] = "";
+        if (v[0]) { int c = 1; for (const char *p = v; *p; p++) if (*p == ',') c++; fw_cat_u(n, (unsigned)c, sizeof n); }
+        tile("bearers", "Lanes", n, "", v, "", 0);
     }
-    tile("bearers", "Heard over", v, "", "", "", 0);
     v[0] = 0; if (have) fw_json(g_host, "sig", v, sizeof v);
     tile("sig", "Signatures", v, "", "", "", fw_eq(v, "forged"));
     tiles_end();

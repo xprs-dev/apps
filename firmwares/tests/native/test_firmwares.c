@@ -366,7 +366,7 @@ static void test_stats_from_the_core(void)
     CHECK(st && strstr(st, "\"label\":\"Records\",\"value\":\"1234\""), "the archive's count");
     CHECK(st && strstr(st, "\"label\":\"Signal\",\"value\":\"-71\",\"unit\":\"dBm\",\"hint\":\"BLE, 12 s ago\""),
           "signal and freshness from the core: %s", st ? st : "");
-    CHECK(st && strstr(st, "\"label\":\"Heard over\",\"value\":\"ble+lan\""), "every bearer it came in on");
+    CHECK(st && strstr(st, "\"label\":\"Lanes\",\"value\":\"2\",\"hint\":\"ble, lan\""), "every bearer it came in on");
     CHECK(cap_last("\"field\":\"st_hears\"") && strstr(cap_last("\"field\":\"st_hears\""), "X1WATT, X3MEAV"),
           "who it hears");
     CHECK(cap_count("\"ui.screen.open\",\"name\":\"Stats\"") == 1, "the Stats screen opens");
