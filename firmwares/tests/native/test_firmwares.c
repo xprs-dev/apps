@@ -266,7 +266,7 @@ static void test_zdiag(void)
           "memory: now, with the largest block and the lowest ever: %s", d ? d : "");
     CHECK(d && strstr(d, "power-on"), "the reset reason");
     CHECK(d && strstr(d, "\"value\":\"1 part down\""), "zh: one required part is down");
-    CHECK(d && strstr(d, "\"label\":\"Running from\",\"value\":\"ota_0\""), "the OTA slot");
+    CHECK(d && strstr(d, "\"label\":\"Slot\",\"value\":\"ota_0\""), "the OTA slot");
     CHECK(d && strstr(d, "\"label\":\"Sent\",\"value\":\"5\",\"hint\":\"of 6, failed 0\""),
           "zs is done/issued/fail on the wire");
     CHECK(d && strstr(d, "\"label\":\"Crashed in\",\"value\":\"idx\""), "a crash, shown");
@@ -343,17 +343,37 @@ static void test_stats_from_the_core(void)
              "\"uptime\":\"26h\",\"lifetime\":\"38day\",\"fw\":\"0.4.0\",\"count\":1234,"
              "\"serve\":[\"archive\"],\"hears\":[\"X1WATT\",\"X3MEAV\"],\"sig\":\"verified\"}",
              g_st[g_sel].call);
+    int before = g_aired_n;
+    command("{\"command\":\"open_stats\",\"fields\":{}}");
+    CHECK(g_aired_n == before + 3, "opening the screen asks: policy, mail, zdiag (%d)", g_aired_n - before);
+    {
+        /* The station's earlier figures stay on the screen; a tile it never
+         * filled says the ask is out. */
+        const char *d = cap_last("\"field\":\"st_policy\"");
+        CHECK(d && strstr(d, "\"value\":\"...\""), "an empty tile says it is being asked for: %s", d ? d : "-");
+    }
+    {   /* the answers land, and the screen is redrawn with them */
+        char id[7]; last_id(id);
+        result(g_st[g_sel].call, id, "code:200 fw:0.4.0 uptime:26h peers:4 zr:sw zm:60/40/30 zh:3/3 zn:0/0/0/0 zs:0/0/0 zp:ota_1/1");
+        const char *d = cap_last("\"field\":\"st_diag\"");
+        CHECK(d && strstr(d, "\"value\":\"60\",\"unit\":\"KB\""), "and the figures are on the screen");
+        CHECK(strstr(kv_dump(), "stx.") != 0, "kept for the next open");
+    }
+    cap_clear();
     command("{\"command\":\"open_stats\",\"fields\":{}}");
     const char *st = cap_last("\"field\":\"st_station\"");
     CHECK(st && strstr(st, "\"label\":\"Lifetime\",\"value\":\"38day\""), "lifetime, as aired");
     CHECK(st && strstr(st, "\"label\":\"Records\",\"value\":\"1234\""), "the archive's count");
     CHECK(st && strstr(st, "\"label\":\"Signal\",\"value\":\"-71\",\"unit\":\"dBm\",\"hint\":\"BLE, 12 s ago\""),
           "signal and freshness from the core: %s", st ? st : "");
-    CHECK(st && strstr(st, "\"label\":\"Heard over\",\"value\":\"ble, lan\""), "every bearer it came in on");
+    CHECK(st && strstr(st, "\"label\":\"Heard over\",\"value\":\"ble+lan\""), "every bearer it came in on");
     CHECK(cap_last("\"field\":\"st_hears\"") && strstr(cap_last("\"field\":\"st_hears\""), "X1WATT, X3MEAV"),
           "who it hears");
     CHECK(cap_count("\"ui.screen.open\",\"name\":\"Stats\"") == 1, "the Stats screen opens");
-    CHECK(g_aired_n == g_aired_n, "and opening it sends nothing");
+    {   /* close the open's zdiag so Refresh may send */
+        char id[7]; last_id(id);
+        result(g_st[g_sel].call, id, "code:200 fw:0.4.0 uptime:26h peers:4 zr:sw zm:60/40/30 zh:3/3 zn:0/0/0/0 zs:0/0/0 zp:ota_1/1");
+    }
 
     int aired = g_aired_n;
     command("{\"command\":\"stats\",\"fields\":{}}");

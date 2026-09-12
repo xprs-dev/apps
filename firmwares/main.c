@@ -36,6 +36,7 @@
 typedef struct {
     char call[12];
     char npub[70];
+    int  asking;                  /* a Refresh is out: empty tiles read "..." */
     /* What it said about itself (11.10 results, zdiag, q:policy, q:mail). */
     char nick[20], wifi[12], ip[20], ap[4], zone[8];
     char fw[24], uptime[16], peers[8], heap[20], reset[16];
@@ -165,6 +166,37 @@ static void save(void)
     kv_put("st.list", list);
 }
 
+/* What the station last answered to cmd:zdiag, so the Stats screen opens
+ * with the last known figures and says when they are being refreshed. */
+static void save_stats(const st_t *s)
+{
+    char k[24] = "stx.", v[220] = "";
+    fw_cat(k, s->call, sizeof k);
+    const char *f[] = { s->uptime, s->peers, s->heap, s->reset, s->health, s->slot, s->radio, s->crash, s->mail };
+    for (unsigned i = 0; i < sizeof f / sizeof f[0]; i++) {
+        if (i) fw_cat(v, "|", sizeof v);
+        fw_cat(v, f[i], sizeof v);
+    }
+    kv_put(k, v);
+}
+
+static void load_stats(st_t *s)
+{
+    char k[24] = "stx.", v[220];
+    fw_cat(k, s->call, sizeof k);
+    uint32_t n = hal_kv_get(k, fw_len(k), v, sizeof v - 1);
+    v[n] = 0;
+    if (!n) return;
+    char *f[9] = {0};
+    f[0] = v;
+    for (int j = 1, q = 0; v[q] && j < 9; q++)
+        if (v[q] == '|') { v[q] = 0; f[j++] = v + q + 1; }
+    char *dst[] = { s->uptime, s->peers, s->heap, s->reset, s->health, s->slot, s->radio, s->crash, s->mail };
+    unsigned caps[] = { sizeof s->uptime, sizeof s->peers, sizeof s->heap, sizeof s->reset, sizeof s->health,
+                        sizeof s->slot, sizeof s->radio, sizeof s->crash, sizeof s->mail };
+    for (int i = 0; i < 9; i++) if (f[i]) fw_cpy(dst[i], f[i], caps[i]);
+}
+
 static void load(void)
 {
     char list[ST_MAX * 13 + 1];
@@ -201,6 +233,7 @@ static void load(void)
         if (f[9]) fw_cpy(s->pol_use, f[9], sizeof s->pol_use);
         if (f[10]) fw_cpy(s->pol_first, f[10], sizeof s->pol_first);
         if (f[11]) fw_cpy(s->pol_serve, f[11], sizeof s->pol_serve);
+        load_stats(s);
     }
 }
 
@@ -357,6 +390,8 @@ static void tiles_begin(const char *field)
     fw_cat(g_out, "\",\"tiles\":[", sizeof g_out);
 }
 
+static const char *g_empty = "?";   /* what an empty tile shows */
+
 static void tile(const char *id, const char *label, const char *value,
                  const char *unit, const char *hint, const char *progress, int alert)
 {
@@ -367,7 +402,7 @@ static void tile(const char *id, const char *label, const char *value,
     fw_cat(g_out, "\",\"label\":\"", sizeof g_out);
     fw_jesc(g_out, label, sizeof g_out);
     fw_cat(g_out, "\",\"value\":\"", sizeof g_out);
-    fw_jesc(g_out, value && value[0] ? value : "?", sizeof g_out);
+    fw_jesc(g_out, value && value[0] ? value : g_empty, sizeof g_out);
     fw_cat(g_out, "\"", sizeof g_out);
     if (unit && unit[0]) { fw_cat(g_out, ",\"unit\":\"", sizeof g_out); fw_jesc(g_out, unit, sizeof g_out); fw_cat(g_out, "\"", sizeof g_out); }
     if (hint && hint[0]) { fw_cat(g_out, ",\"hint\":\"", sizeof g_out); fw_jesc(g_out, hint, sizeof g_out); fw_cat(g_out, "\"", sizeof g_out); }
@@ -544,6 +579,7 @@ static void push_stats(void)
     st_t *s = &g_st[g_sel];
     int have = host_facts(s);
     char v[64], w[4][16];
+    g_empty = s->asking ? "..." : "?";
 
     /* 15.5: what the core heard the station say about itself. */
     tiles_begin("st_station");
@@ -561,6 +597,12 @@ static void push_stats(void)
     tile("count", "Records", v, "", "in its archive", "", 0);
     signal_tile(s, have, have ? host_num("agoMs") : 0, 0);
     v[0] = 0; if (have) fw_json_list(g_host, "bearers", v, sizeof v);
+    /* "ble+lan": a phone-width tile has room for that and not for a list. */
+    for (unsigned i = 0, o = 0; ; i++) {
+        if (v[i] == ',') { v[o++] = '+'; if (v[i + 1] == ' ') i++; continue; }
+        v[o++] = v[i];
+        if (!v[i]) break;
+    }
     tile("bearers", "Heard over", v, "", "", "", 0);
     v[0] = 0; if (have) fw_json(g_host, "sig", v, sizeof v);
     tile("sig", "Signatures", v, "", "", "", fw_eq(v, "forged"));
@@ -589,8 +631,8 @@ static void push_stats(void)
     tile("reset", "Last reset", s->reset, "", "", "", fw_eq(s->reset, "panic"));
     if (s->health[0]) { health_words(s->health, v, sizeof v); tile("health", "Health", v, "", s->health, "", !fw_eq(v, "all up")); }
     else tile("health", "Health", "", "", "", "", 0);
-    if (s->slot[0]) { slashes(s->slot, w); tile("slot", "Running from", w[0], "", "", "", 0); }
-    else tile("slot", "Running from", "", "", "", "", 0);
+    if (s->slot[0]) { slashes(s->slot, w); tile("slot", "Slot", w[0], "", "the OTA slot in use", "", 0); }
+    else tile("slot", "Slot", "", "", "the OTA slot in use", "", 0);
     if (s->radio[0]) {
         /* "rx/tx/cancel/drop done/issued/fail" as kept by take_state. */
         char zn[24] = "", zs[24] = "";
@@ -601,7 +643,7 @@ static void push_stats(void)
         int n = slashes(zn, w);
         char hint[48] = "";
         if (n >= 4) { fw_cpy(hint, "sent ", sizeof hint); fw_cat(hint, w[1], sizeof hint); fw_cat(hint, ", dropped ", sizeof hint); fw_cat(hint, w[3], sizeof hint); }
-        tile("radio", "Heard on ESP-NOW", w[0], "", hint, "", 0);
+        tile("radio", "ESP-NOW heard", w[0], "", hint, "", 0);
         n = slashes(zs, w);
         hint[0] = 0;
         if (n >= 3) { fw_cpy(hint, "of ", sizeof hint); fw_cat(hint, w[1], sizeof hint); fw_cat(hint, ", failed ", sizeof hint); fw_cat(hint, w[2], sizeof hint); }
@@ -610,6 +652,7 @@ static void push_stats(void)
     if (s->crash[0]) tile("crash", "Crashed in", s->crash, "", "tap Crash report", "", 1);
     tiles_end();
     flag_hidden("crash", !s->crash[0]);
+    g_empty = "?";
 }
 
 /* ── What to listen to ────────────────────────────────────────────────── */
@@ -919,6 +962,7 @@ static void on_observation(const char *row)
             s->mine = 1; s->unowned = 0; s->theirs = 0;
         } else { s->theirs = 1; s->mine = 0; s->unowned = 0; }
         s->ask_pol = 0;
+        if (!s->mine) s->asking = 0;          /* nothing more is coming */
         listen();
         save();
         push_list();
@@ -1025,6 +1069,8 @@ static void on_result(const char *row)
             log_line(s->call, "New identity in use.");
             set_now(s, "New identity in use.");
         } else if (fw_eq(what, "zdiag")) {
+            s->asking = 0;
+            save_stats(s);
             log_line(s->call, "Stats read.");
             set_now(s, "Stats read.");
         } else if (fw_eq(what, "zcore")) {
@@ -1081,6 +1127,7 @@ static void on_result(const char *row)
         fw_cat(line, m, sizeof line);
         log_line(s->call, line);
         set_now(s, line);
+        if (fw_eq(what, "zdiag")) s->asking = 0;
         done_pending(s);
     }
     save();
@@ -1106,8 +1153,9 @@ static void on_status(const char *row)
             return;
         log_line(s->call, line);
         set_now(s, line);
+        s->asking = 0;
         done_pending(s);
-        if (g_sel == i) push_hub();
+        if (g_sel == i) { push_hub(); push_stats(); }
         return;
     }
 }
@@ -1186,6 +1234,14 @@ static void on_command(void)
         return;
     }
     if (fw_eq(cmd, "open_stats")) {
+        /* Opening the screen is the ask: the policy and the mail count
+         * from anybody's station, the diagnostics from one that is ours. */
+        if (!s->pend_id[0] || s->pend_final) {
+            if (s->pend_id[0]) done_pending(s);
+            do_ask(s);
+            if (s->mine) do_cmd(s, "cmd:zdiag", "zdiag");
+            s->asking = 1;
+        }
         push_stats();
         screen_open("Stats", s->call);
         return;
@@ -1269,8 +1325,10 @@ static void on_command(void)
         field_set("nsec", "");
     } else if (fw_eq(cmd, "stats")) {
         do_ask(s);
+        s->asking = 1;
         if (s->mine) do_cmd(s, "cmd:zdiag", "zdiag");
         else set_now(s, "Asking what it does for others...");
+        push_stats();
     } else if (fw_eq(cmd, "crash")) {
         if (!s->mine) log_line(s->call, "Only its owner may read that");
         else do_cmd(s, "cmd:zcore", "zcore");
