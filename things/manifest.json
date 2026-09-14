@@ -1,0 +1,21 @@
+{
+  "id":              "tools.xprs.things",
+  "version":         "0.1.0",
+  "kind":            "app",
+  "title":           "Things",
+  "description":     "Things - the devices around you: pumps, generators, sensors and plugs (X4 callsigns), what they report, and the ones you pin.",
+  "summary":         "A device with no radio of its own, a pump, a generator, a temperature sensor, a smart plug, is spoken for by a controller that airs its readings under an X4 callsign. Things lists the ones heard nearby and the ones your archive knows, and shows what each reports, energy split by source. Pin one and this phone keeps its readings, and while it is out of range asks your archivers for them.",
+  "icon":            "media/icons/things.svg",
+  "color":           "#2E7D32",
+  "tags":            ["xprs", "devices", "sensors", "energy", "x4"],
+  "entry_ui":        "screens/home.ui.json",
+  "tick_interval_ms": 2000,
+  "permissions":     ["archive.read"],
+  "platforms":       ["android", "linux", "windows", "macos"],
+  "hardware":        ["N/A", "intel", "arm"],
+  "provides": { "functions": [], "events": [], "variables": [], "functionalities": [] },
+  "requires": {
+    "hal":       ["log", "msg", "xprs", "event", "archive"],
+    "events": [], "libraries": [], "variables": []
+  }
+}

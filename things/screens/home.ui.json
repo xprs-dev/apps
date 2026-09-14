@@ -1,0 +1,35 @@
+[
+  {
+    "$": "screen",
+    "name": "Things",
+    "icon": "power",
+    "children": [
+      {
+        "$": "field",
+        "name": "things",
+        "$type": "people",
+        "empty": "No device yet.\n\nA device (an X4 callsign: a pump, a generator, a sensor, a plug) appears here when its controller is heard nearby, or once this station's archive holds its identity.\n\nTap one and Pin it to keep its readings, in range or not."
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Thing",
+    "icon": "monitor_heart",
+    "hidden": true,
+    "children": [
+      { "$": "field", "name": "th_now", "$type": "stats" },
+      { "$": "action", "name": "pin", "label": "Pin", "style": "primary", "icon": "star" },
+      { "$": "action", "name": "unpin", "label": "Unpin", "icon": "star" },
+      {
+        "$": "group",
+        "name": "About",
+        "children": [
+          { "$": "field", "name": "th_about", "$type": "details", "empty": "" },
+          { "$": "field", "name": "th_totals", "$type": "details", "empty": "" }
+        ]
+      },
+      { "$": "action", "name": "back", "label": "Back", "icon": "close" }
+    ]
+  }
+]

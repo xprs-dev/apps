@@ -419,6 +419,7 @@
   {"file":"terminal/terminal-1.0.2.wapp","id":"tools.xprs.terminal","version":"1.0.2","size":17689,"title":"Terminal","description":"Sandboxed terminal with built-in commands."},
   {"file":"tester/tester-1.0.1.wapp","id":"tools.xprs.tester","version":"1.0.1","size":16531,"title":"Tester","description":"Notification test harness for the host services."},
   {"file":"tester/tester-1.0.2.wapp","id":"tools.xprs.tester","version":"1.0.2","size":16532,"title":"Tester","description":"Notification test harness for the host services."},
+  {"file":"things/things-0.1.0.wapp","id":"tools.xprs.things","version":"0.1.0","size":36873,"title":"Things","description":"Things - the devices around you: pumps, generators, sensors and plugs (X4 callsigns), what they report, and the ones you pin."},
   {"file":"torrents/torrents-0.1.0.wapp","id":"tools.geogram.torrents","version":"0.1.0","size":26808,"title":"Torrents","description":"Folder torrents over Reticulum - create, share, download and seed."},
   {"file":"torrents/torrents-0.1.1.wapp","id":"tools.geogram.torrents","version":"0.1.1","size":28095,"title":"Torrents","description":"Folder torrents over Reticulum - create, share, download and seed."},
   {"file":"torrents/torrents-0.1.2.wapp","id":"tools.geogram.torrents","version":"0.1.2","size":28284,"title":"Torrents","description":"Folder torrents over Reticulum - create, share, download and seed."},

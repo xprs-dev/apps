@@ -1416,20 +1416,42 @@ int32_t hal_archive_set_pref(const char *kv, uint32_t kv_len);
  * carries a `seen Xs/Xm ago` tag first and the bearer (or RNS) second.
  *   [{"title":"Heard over the air (n)","items":[{id,title,subtitle,tags}]},
  *    {"title":"Heard this hour (m)","items":[...]},
- *    {"title":"On Reticulum (k)","items":[...]}] */
+ *    {"title":"On Reticulum (k)","items":[...]}]
+ * Each item also carries "kind": "user", "station" or "device" (XPRS.md 3,
+ * decided by the core: a wapp listing devices reads it, never a prefix). */
 __attribute__((import_module("hal"), import_name("xprs_stations")))
 int32_t hal_xprs_stations(char *out, uint32_t out_cap);
 
 /* One station, everything the host holds about it this hour, flat:
- *   {"call","bearer","bearers":[..],"rssi","lastMs","agoMs","lastDirectMs",
- *    "packets", and when it has said so: "peers","mail","uptime","lifetime",
- *    "fw","count","serve":[..],"hears":[..],"sig","readings":{k:v}}
+ *   {"call","kind","bearer","bearers":[..],"rssi","lastMs","agoMs",
+ *    "lastDirectMs","packets", and when it has said so: "peers","mail",
+ *    "uptime","lifetime","fw","count","serve":[..],"hears":[..],"sig",
+ *    "readings":{k:v}}
  * uptime and lifetime are the qty text as aired ("26h", "38day"); sig is the
  * headline verdict of its signatures (verified, unverified, forged, unsigned).
+ * readings holds the latest of each measurement key (weather, telemetry,
+ * energy, and a device's state/level/target/volt), as aired with its unit,
+ * the newest COMPOSED value per key.
  * Returns the bytes written, 0 when the host has not heard it this hour, or
  * the negated size needed when out_cap is too small. */
 __attribute__((import_module("hal"), import_name("xprs_station")))
 int32_t hal_xprs_station(const char *call, uint32_t call_len, char *out, uint32_t out_cap);
+
+/* Follow (on=1) or stop following (on=0) a station by its CALLSIGN (XPRS.md
+ * 12's middle tier), for what has no person's key to follow: a device found
+ * nearby or in the archive. Its packets are then kept, observations included,
+ * and while it is out of earshot the core asks this station's chosen
+ * archivers for it (12.12.2). The wapp is told none of that; it reads the
+ * archive. 0, or -1 for an empty, malformed or group (X5) callsign.
+ * Permission archive.read. */
+__attribute__((import_module("hal"), import_name("xprs_follow")))
+int32_t hal_xprs_follow(const char *call, uint32_t call_len, int32_t on);
+
+/* The stations followed by callsign: a JSON array of bare callsigns,
+ * ["X4PL3M",...]. Bytes written, or the negated size needed. Permission
+ * archive.read. */
+__attribute__((import_module("hal"), import_name("xprs_followed")))
+int32_t hal_xprs_followed(char *out, uint32_t out_cap);
 
 /* ── Flashing a board over USB (permission device.flash) ─────────────────
  * The serial port, the ESP ROM loader, the catalogue (xprs.dev/firmware)
@@ -1680,9 +1702,13 @@ int32_t hal_xprs_read(const char *id, uint32_t id_len);
  * everything this station archived, past the traffic ring's 200 entries and
  * across restarts. [query] is a JSON filter, "{}" for the latest:
  *   {"since":"YYYY-MM-DD_hh:mm:ss","until":"...","only":"CALL","limit":n,
- *    "to":["","X5A3F2"]}
+ *    "to":["","X5A3F2"],"types":["observation"],"from":"CALL",
+ *    "kind":"device"}
  * since/until window on the packet's own ts:, only matches sender OR
- * addressee. "to" keeps only the named destinations — "" means undirected —
+ * addressee (or a hears: list). "types" keeps those packet types. "from" is
+ * exactly that author, indexed: what one device said. "kind" (user, device)
+ * is every author of that kind, indexed: which devices the archive knows;
+ * "station" has no single prefix and selects nothing. "to" keeps only the named destinations — "" means undirected —
  * so a room can ask for the rows it renders instead of sieving the newest N:
  * on a station mid store-and-forward the newest N are its own custody
  * re-airs, and a sieving caller's window carries nothing it can use. Reply, newest first:
