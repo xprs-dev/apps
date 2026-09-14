@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XPRS apps</title>
+<meta name="description" content="Small WebAssembly applications that run inside XPRS: what each one does, screenshots, and the package to install.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+/* Same palette, type and page width as xprs.dev and xprs.dev/app, so the
+   three read as one site. The cards are the only thing this page adds. */
+:root {
+  --bg: #f4f1ea; --ink: #2a2620; --dim: #6b645a; --line: #d8d2c4;
+  --accent: #23557a; --code-bg: #ebe6da;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #232a2e; --ink: #e8e3d6; --dim: #9a938a; --line: #3a4248;
+    --accent: #7db4d8; --code-bg: #1b2124;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 17px/1.6 Georgia, 'Times New Roman', serif;
+  padding: 0 1.2rem;
+}
+main { max-width: 44rem; margin: 0 auto; padding: 3rem 0 5rem; }
+header { margin-bottom: 2.5rem; }
+h1 {
+  font-family: 'Courier New', monospace; font-size: 2.4rem;
+  letter-spacing: 0.04em; margin-bottom: 0.3rem;
+}
+.tagline { color: var(--dim); font-size: 1.05rem; margin-top: 0.55rem; }
+h2 {
+  font-family: 'Courier New', monospace; font-size: 1.15rem;
+  margin: 2.4rem 0 0.8rem; padding-top: 1.2rem;
+  border-top: 1px solid var(--line); scroll-margin-top: 0.8rem;
+}
+h2 a { color: inherit; text-decoration: none; }
+h2 a::after {
+  content: ' #'; color: var(--dim); opacity: 0.35;
+  font-weight: normal; transition: opacity 0.15s;
+}
+h2 a:hover { color: var(--accent); }
+h2 a:hover::after { opacity: 1; }
+h2 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+h3 { font-family: 'Courier New', monospace; font-size: 1rem;
+     margin: 1.4rem 0 0.5rem; }
+p { margin-bottom: 0.9rem; }
+a { color: var(--accent); }
+code { font-family: 'Courier New', monospace; font-size: 0.92em; }
+pre {
+  background: var(--code-bg); border: 1px solid var(--line);
+  padding: 0.8rem 1rem; overflow-x: auto;
+  font: 13px/1.5 'Courier New', monospace;
+  margin: 1rem 0; border-radius: 3px;
+}
+ul { margin: 0 0 0.9rem 1.4rem; }
+li { margin-bottom: 0.45rem; }
+.links li { margin-bottom: 0.7rem; }
+.links span { color: var(--dim); }
+.note { color: var(--dim); font-size: 0.9rem; }
+
+/* One card per app. The icon is the app's own SVG; the download is a
+   button-like link as on /app, with the version and size under the name. */
+.apps { list-style: none; margin: 0; }
+.app {
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 1rem 1.1rem 1.1rem; margin: 0 0 1.2rem;
+  background: var(--code-bg);
+}
+.app-head { display: flex; align-items: center; gap: 0.8rem; }
+.app-icon {
+  flex: none; width: 3rem; height: 3rem; border-radius: 0.6rem;
+  background: var(--bg); border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.app-icon img { width: 2.2rem; height: 2.2rem; }
+.app-icon span { font-family: 'Courier New', monospace; color: var(--dim); }
+.app-title { font-family: 'Courier New', monospace; font-size: 1.15rem;
+             line-height: 1.3; }
+.app-title small { display: block; font: 0.82rem/1.4 Georgia, serif;
+                   color: var(--dim); }
+.app p { margin: 0.8rem 0 0; }
+.app .one { font-weight: normal; }
+.app .more { color: var(--dim); font-size: 0.95rem; }
+.shots { display: flex; gap: 0.6rem; overflow-x: auto; margin: 0.9rem 0 0;
+         padding-bottom: 0.3rem; }
+.shots a { flex: none; }
+.shots img { display: block; height: 11rem; max-width: 100%;
+             border: 1px solid var(--line); border-radius: 3px;
+             background: var(--bg); }
+.get { display: flex; flex-wrap: wrap; align-items: center; gap: 0.7rem;
+       margin-top: 1rem; }
+.get a.dl {
+  display: flex; align-items: center; gap: 0.6rem;
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 0.5rem 0.9rem; text-decoration: none; color: var(--ink);
+  background: var(--bg);
+}
+.get a.dl:hover { border-color: var(--accent); color: var(--accent); }
+.get a.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.get a.dl svg { flex: none; width: 1.4rem; height: 1.4rem; }
+.get a.dl b { font-weight: normal; display: block; }
+.get a.dl em { font-style: normal; color: var(--dim); font-size: 0.8rem;
+               display: block; }
+.get .src { font-size: 0.9rem; }
+.sha { font-family: 'Courier New', monospace; font-size: 0.72rem;
+       color: var(--dim); word-break: break-all; margin-top: 0.6rem; }
+.tags { margin-top: 0.6rem; font-size: 0.82rem; color: var(--dim); }
+.tags code { margin-right: 0.4rem; }
+footer {
+  margin-top: 3rem; padding-top: 1.2rem; border-top: 1px solid var(--line);
+  color: var(--dim); font-size: 0.9rem;
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>XPRS apps</h1>
+  <div class="tagline">Small WebAssembly applications that run inside XPRS.
+  Chat, mail, maps, files, and the tools around a station.</div>
+</header>
+
+<p>An app is a folder with a <code>manifest.json</code>, a
+<code>app.wasm</code> compiled from plain C against the XPRS HAL, and its
+screens, translations and media. The application draws the screens and does
+the networking; the app only says what a message means and how it is
+shown. Everything here is free software, built from the
+<a href="https://github.com/xprs-dev/apps">xprs-dev/apps</a> repository.</p>
+
+<h2 id="catalog"><a href="#catalog">Catalog</a></h2>
+
+<p class="note" data-status>reading the catalog&hellip;</p>
+<ul class="apps" data-apps>
+  <li class="app"><p>The list is read from
+  <a href="catalog.json">catalog.json</a>. Without it, the packages are under
+  <a href="https://github.com/xprs-dev/apps/tree/main/binaries">binaries/</a>
+  on GitHub.</p></li>
+</ul>
+
+<h2 id="install"><a href="#install">Installing</a></h2>
+<p>Inside XPRS, open the <strong>Wapp Store</strong> and add
+<code>https://xprs.dev</code> as a source: it lists every published package
+and installs with one tap. A downloaded <code>.wapp</code> file can also be
+opened from the store's install screen; it is a ZIP with the manifest, the
+module and the screens, and the digest above identifies it wherever it
+came from.</p>
+<p class="note">The store reads <code>catalog.json</code>, the same file as
+this page, in a coming version of the application. Until then it reads the
+older per-version index at <code>/wapps/index.json</code>.</p>
+
+<h2 id="source"><a href="#source">Source</a></h2>
+<ul class="links">
+<li><a href="https://github.com/xprs-dev/apps">xprs-dev/apps</a>
+  <span>every app in this catalog, its SDK and the HAL header</span></li>
+<li><a href="/app">the application</a>
+  <span>for Android, Linux and Windows</span></li>
+<li><a href="/firmware">the firmware</a>
+  <span>station firmware for ESP32 and nRF52840 boards</span></li>
+<li><a href="/spec">the specification</a>
+  <span>the packet format</span></li>
+</ul>
+
+<footer>
+Free software. This page is static and loads nothing but catalog.json on
+xprs.dev.
+</footer>
+</main>
+
+<script>
+/* The markup links to GitHub; this replaces it with one card per app from
+   catalog.json, which build-catalog.py in the repository regenerates from
+   each app's manifest, store text and screenshots. Same origin, no
+   framework, and on fetch failure the GitHub link stays. Every path in the
+   catalog is relative to its "base", which is this page's own directory. */
+(function () {
+  var list = document.querySelector('[data-apps]');
+  var status = document.querySelector('[data-status]');
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function kb(b) {
+    return b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB'
+                        : Math.max(1, Math.round(b / 1024)) + ' KB';
+  }
+  function href(base, rel) {
+    return rel ? base + rel.replace(/^\//, '') : null;
+  }
+  function pick(app) {
+    /* The store text in the viewer's language if the app carries one,
+       else English, else the manifest. */
+    var d = app.descriptions || {};
+    var lang = (navigator.language || 'en').slice(0, 2).toLowerCase();
+    return d[lang] || d.en || {
+      title: app.title, summary: app.description, body: app.summary
+    };
+  }
+
+  function card(app, base) {
+    var li = el('li', 'app');
+    var head = el('div', 'app-head');
+    var icon = el('div', 'app-icon');
+    if (app.icon) {
+      var img = el('img');
+      img.src = href(base, app.icon);
+      img.alt = '';
+      img.loading = 'lazy';
+      icon.appendChild(img);
+    } else {
+      icon.appendChild(el('span', null, (app.title || '?').slice(0, 1)));
+    }
+    head.appendChild(icon);
+    var text = pick(app);
+    var title = el('div', 'app-title', text.title || app.title || app.name);
+    title.appendChild(el('small', null,
+      app.version + (app.kind && app.kind !== 'app' ? ' · ' + app.kind : '') +
+      ' · ' + app.id));
+    head.appendChild(title);
+    li.appendChild(head);
+
+    var one = text.summary || app.description;
+    if (one) li.appendChild(el('p', 'one', one));
+    var more = text.body || app.summary;
+    if (more && more !== one) li.appendChild(el('p', 'more', more));
+
+    if (app.screenshots && app.screenshots.length) {
+      var strip = el('div', 'shots');
+      app.screenshots.forEach(function (s) {
+        var a = el('a');
+        a.href = href(base, s.file);
+        a.target = '_blank';
+        a.rel = 'noopener';
+        var im = el('img');
+        im.src = a.href;
+        im.alt = s.caption || '';
+        im.title = s.caption || '';
+        im.loading = 'lazy';
+        a.appendChild(im);
+        strip.appendChild(a);
+      });
+      li.appendChild(strip);
+    }
+
+    var get = el('div', 'get');
+    var dl = el('a', 'dl');
+    dl.href = href(base, app.file);
+    dl.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
+      'aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/>' +
+      '<path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V17"/></svg>';
+    var lab = el('span');
+    lab.appendChild(el('b', null, (app.file || '').split('/').pop() || 'download'));
+    lab.appendChild(el('em', null, app.version + (app.size ? ' · ' + kb(app.size) : '')));
+    dl.appendChild(lab);
+    get.appendChild(dl);
+    if (app.source_url) {
+      var src = el('a', 'src', 'source');
+      src.href = app.source_url;
+      get.appendChild(src);
+    }
+    li.appendChild(get);
+    if (app.sha256) li.appendChild(el('div', 'sha', 'sha256 ' + app.sha256));
+    if (app.tags && app.tags.length) {
+      var tags = el('div', 'tags');
+      app.tags.forEach(function (t) { tags.appendChild(el('code', null, t)); });
+      li.appendChild(tags);
+    }
+    return li;
+  }
+
+  function render(doc) {
+    if (!doc || !doc.apps || !doc.apps.length) {
+      status.textContent = 'the catalog is unreachable; the packages are on GitHub';
+      return;
+    }
+    var base = './';
+    var when = doc.generated ? new Date(doc.generated) : null;
+    status.textContent = doc.apps.length + (doc.apps.length === 1 ? ' app' : ' apps') +
+      (when && !isNaN(when) ? ' · updated ' + when.toISOString().slice(0, 10) : '');
+    list.innerHTML = '';
+    doc.apps.forEach(function (app) { list.appendChild(card(app, base)); });
+  }
+
+  fetch('catalog.json', { cache: 'no-cache' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(render)
+    .catch(function () { render(null); });
+})();
+</script>
+</body>
+</html>

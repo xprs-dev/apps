@@ -1,0 +1,10 @@
+# Apps published on https://xprs.dev/apps, one folder name per line.
+#
+# This is the curated set, not every folder in the repo: an app is listed
+# here once it is worth installing. build-catalog.py turns this list into
+# catalog.json, reading each app's manifest.json, store/description.json
+# and store/screenshots/, and the package under binaries/. The package for
+# the manifest version must be built first (./build-archive.sh <name>).
+#
+# One app for now, to test the page and the store that will read it.
+widget_demo

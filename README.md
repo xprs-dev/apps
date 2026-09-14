@@ -121,6 +121,37 @@ In the XPRS launcher, open the **Wapp Store** wapp's
 containing it) as a source. The store then lists every entry
 from the index.
 
+## The catalog and the xprs.dev/apps page
+
+`catalog.list` names the apps published on <https://xprs.dev/apps>, one
+folder per line. `build-catalog.py` turns it into `catalog.json`: one entry
+per app, newest packaged version only, with the title, one-liner and long
+text (from `manifest.json`, or per language from `store/description.json`
+when the app has one), the icon, the screenshots, the tags, the package
+path with its size and sha256, and a link to the source. `index.html` at
+the repository root is the page; GitHub Pages serves the whole repository
+at `xprs.dev/apps`, so the page, the icons, the screenshots and the
+packages under `binaries/` share one origin and every path in the catalog
+is relative to it.
+
+Screenshots go in `<name>/store/screenshots/`, named `NN-caption.png`
+(`01-home.png`, `02-settings.png`); the caption is the file name without
+the number and extension. `store/description.json` may list them too.
+
+To publish an app:
+
+```bash
+./build-archive.sh <name>       # package it; this also regenerates the catalog
+echo <name> >> catalog.list     # first time only
+make catalog                    # or ./build-catalog.py
+git add catalog.list catalog.json binaries/<name>
+git commit && git push          # Pages republishes xprs.dev/apps on push
+```
+
+`./build-catalog.py --check` fails when the committed catalog is stale.
+The in-app store still reads `binaries/index.json` (every version, six
+fields); a coming version reads `catalog.json`.
+
 ## Adding a new wapp
 
 1. Create a folder at the repo root: `mkdir my-wapp && cd my-wapp`.

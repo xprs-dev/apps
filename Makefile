@@ -4,6 +4,7 @@
 #   make             — build and package every wapp into binaries/
 #   make <wapp-id>   — build and package one wapp (e.g. make maps)
 #   make clean       — remove binaries/
+#   make catalog     — regenerate catalog.json (the xprs.dev/apps page reads it)
 #   make examples    — build the sample modules under modules/
 #   make install-sdk — install wasi-sdk locally for compiling
 
@@ -21,7 +22,7 @@ WAPP_NAMES := $(notdir $(WAPP_DIRS))
 EXAMPLE_DIRS  := $(patsubst %/Makefile,%,$(wildcard modules/*/Makefile))
 EXAMPLE_NAMES := $(notdir $(EXAMPLE_DIRS))
 
-.PHONY: all clean install-sdk examples $(WAPP_NAMES) $(EXAMPLE_NAMES)
+.PHONY: all clean catalog install-sdk examples $(WAPP_NAMES) $(EXAMPLE_NAMES)
 
 all:
 	@./build-archive.sh
@@ -31,6 +32,11 @@ clean:
 
 install-sdk:
 	@./install-wasi-sdk.sh
+
+# The catalog behind https://xprs.dev/apps: the apps named in catalog.list,
+# newest packaged version each. Also run at the end of a full build.
+catalog:
+	@./build-catalog.py
 
 # Build one wapp by id — `make maps` etc.
 $(WAPP_NAMES):

@@ -160,11 +160,24 @@ generate_index() {
     printf '\n]\n' >> "$index"
 }
 
+# Regenerate catalog.json, the per-app catalog behind https://xprs.dev/apps
+# (see catalog.list and build-catalog.py). Only the apps named in
+# catalog.list are in it, and each needs its package for the manifest
+# version, so this runs after the packages and the index are written.
+generate_catalog() {
+    if command -v python3 >/dev/null 2>&1; then
+        "$SCRIPT_DIR/build-catalog.py" || return 1
+    else
+        echo "note: python3 not found; catalog.json not regenerated (make catalog)" >&2
+    fi
+}
+
 # Single wapp mode (skip directories that are part of the build
 # infrastructure, not actual wapps).
 if [ -n "${1:-}" ] && [ -d "$WAPPS_DIR/$1" ] && [ -f "$WAPPS_DIR/$1/manifest.json" ]; then
     build_wapp "$WAPPS_DIR/$1"
     generate_index
+    generate_catalog
     exit $?
 fi
 
@@ -197,6 +210,7 @@ echo "Results: $BUILT/$TOTAL built"
 [ "$FAILED" -gt 0 ] && echo "  $FAILED failed" && exit 1
 
 generate_index
+generate_catalog
 
 # Summary
 echo ""

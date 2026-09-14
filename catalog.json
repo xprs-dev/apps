@@ -1,0 +1,38 @@
+{
+  "schema": "xprs.apps.catalog/1",
+  "generated": "2026-09-14T14:46:09Z",
+  "base": "https://xprs.dev/apps/",
+  "apps": [
+    {
+      "name": "widget_demo",
+      "id": "tools.xprs.widget-demo",
+      "version": "1.0.2",
+      "kind": "system",
+      "title": "Functionality Demo",
+      "description": "Demo wapp providing multiple functionalities for widget requests.",
+      "summary": "Minimal provider wapp that demonstrates one wapp providing multiple functionalities. Responds to widget.request messages for text.greet and text.shout with fixed results.",
+      "descriptions": {
+        "en": {
+          "title": "Functionality Demo",
+          "summary": "Demo wapp providing multiple functionalities for widget requests.",
+          "body": "Minimal provider wapp that demonstrates one wapp providing multiple functionalities. Responds to widget.request messages for text.greet and text.shout with fixed results."
+        }
+      },
+      "icon": "widget_demo/media/icons/widget-demo.svg",
+      "color": null,
+      "tags": [
+        "system",
+        "demo",
+        "widgets"
+      ],
+      "platforms": [],
+      "permissions": [],
+      "screenshots": [],
+      "file": "binaries/widget_demo/widget_demo-1.0.2.wapp",
+      "size": 7689,
+      "sha256": "5900bab628c5270b4373af1635df65803b4eae1233d3f679dce944243a4dc977",
+      "changelog": null,
+      "source_url": "https://github.com/xprs-dev/apps/tree/main/widget_demo"
+    }
+  ]
+}
