@@ -20,7 +20,7 @@
  * emitted as host-action messages (rns.hub.* / rns.passive.set) from the
  * Hubs/Settings screens.
  *
- * Build: cd wapps/mesh && make
+ * Build: cd apps/mesh && make
  */
 
 #include "../hal/xprs_wasm_hal.h"

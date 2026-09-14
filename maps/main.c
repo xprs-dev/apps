@@ -5,7 +5,7 @@
  * viewport updates to the renderer via hal_msg_send().
  * The renderer handles tile fetching and display.
  *
- * Build: cd wapps/archive/maps && make
+ * Build: cd apps/maps && make
  */
 
 #include "../hal/xprs_wasm_hal.h"

@@ -3,7 +3,7 @@
 The Player (`app.wasm`) is BSD-3-Clause, copyright Max Brito and XPRS
 contributors, like the rest of XPRS. It statically links the decoders below.
 Their licences are in this directory and travel inside every `.wapp`
-package, and the source of every one of them is in the `xprs-dev/wapps`
+package, and the source of every one of them is in the `xprs-dev/apps`
 repository under `mp4player/vendor/`.
 
 | Component | Used for | Licence | Text |
@@ -21,7 +21,7 @@ repository under `mp4player/vendor/`.
 
 libde265 is LGPL-3.0 and linked statically. The complete source of the
 Player, including libde265 and the Makefile that links it, is published in
-`xprs-dev/wapps`, so anyone can relink it against a modified libde265.
+`xprs-dev/apps`, so anyone can relink it against a modified libde265.
 
 The desktop build of the Player also carries static ffmpeg executables in
 `bin/` (LGPL-2.1-or-later, see `bin/README.md`). They are separate programs,

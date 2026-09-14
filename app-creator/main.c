@@ -484,7 +484,7 @@ static int32_t spawn_shell(const char *script) {
 
 /* Persist the editor + read source/slug, then stage main.c and kick
  * off clang via /bin/sh so the shell can resolve $WASI_SDK_PATH and
- * locate wapps/hal/. State machine in module_tick streams output and
+ * locate apps/hal/. State machine in module_tick streams output and
  * picks up the exit code. */
 static void do_compile(void) {
     if (active_kind != TASK_NONE) {
@@ -523,7 +523,7 @@ static void do_compile(void) {
         "[ -x \"$SDK/bin/clang\" ] || { "
         "  echo \"clang not found at $SDK/bin/clang\" >&2; exit 1; }; "
         "HAL=\"\"; "
-        "for d in \"$HOME/code/xprs/wapps/hal\" "
+        "for d in \"$HOME/code/xprs/apps/hal\" "
         "         \"/usr/local/share/xprs/wapps/hal\" "
         "         \"/opt/xprs/wapps/hal\"; do "
         "  [ -f \"$d/xprs_wasm_hal.h\" ] && HAL=\"$d\" && break; "

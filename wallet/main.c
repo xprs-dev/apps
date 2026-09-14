@@ -13,7 +13,7 @@
  *   receive  -> coin.receive {token: recv_token}
  *   send     -> coin.send    {coinId: send_coin, to: send_to, amount: send_amount}
  *
- * Build: cd wapps/wallet && make   (or build-archive.sh wallet)
+ * Build: cd apps/wallet && make   (or build-archive.sh wallet)
  */
 
 #include "../hal/xprs_wasm_hal.h"

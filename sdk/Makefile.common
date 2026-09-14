@@ -1,7 +1,7 @@
 # XPRS WASM SDK — shared build rules
 #
 # Usage from a top-level wapp folder (one directory deep — e.g.
-# wapps/maps/Makefile):
+# apps/maps/Makefile):
 #   include ../sdk/Makefile.common
 #
 # Usage from sdk/examples/<sample>/ (two deep):
@@ -49,12 +49,12 @@ $(OUTPUT): $(MODULE_SRCS)
 
 # ── Tests build ────────────────────────────────────────────────
 # Wapps may ship a runnable test suite alongside app.wasm. See
-# wapps/wapp-interfaces.md §20 for the spec.
+# apps/wapp-interfaces.md §20 for the spec.
 #
 # Layout:
 #   tests/test_*.c        — auto-discovered case files
-#   wapps/sdk/wapp_test.h — assertion macros (#include "wapp_test.h")
-#   wapps/sdk/wapp_test.c — runner; linked in by this target
+#   apps/sdk/wapp_test.h — assertion macros (#include "wapp_test.h")
+#   apps/sdk/wapp_test.c — runner; linked in by this target
 #
 # Test files typically `#include "../main.c"` to reach static helpers.
 # Only one test file may include main.c in the same link (the rest

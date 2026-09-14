@@ -25,7 +25,7 @@
  * where it lands and only collects radio and local ones, so this view cannot
  * show an internet peer even by mistake.
  *
- * Build: cd wapps/xprs && make
+ * Build: cd apps/xprs && make
  */
 
 #include "../hal/xprs_wasm_hal.h"

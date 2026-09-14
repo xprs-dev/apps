@@ -6,7 +6,7 @@
 # wapp pushes decoded RGBA via the hal_video_* sink.
 #
 # Build:  cd wapps && WASI_SDK_PATH=$HOME/wasi-sdk make -C mp4player
-#   (or)  cd wapps/mp4player && WASI_SDK_PATH=$HOME/wasi-sdk make
+#   (or)  cd apps/mp4player && WASI_SDK_PATH=$HOME/wasi-sdk make
 
 include ../sdk/toolchain.mk
 HAL  := ../hal

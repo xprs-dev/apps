@@ -8,7 +8,7 @@
  * symbols on the lifecycle functions.
  *
  * Run via the App Creator wapp's "Run tests" action, or directly
- * with: cd wapps/forum && make tests
+ * with: cd apps/forum && make tests
  */
 
 #include "wapp_test.h"

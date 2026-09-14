@@ -4,7 +4,7 @@
  * Logs a greeting on init, prints the platform and time each tick,
  * and echoes back any host messages.
  *
- * Build: cd wapps/modules/hello_world && make
+ * Build: cd apps/modules/hello_world && make
  * Expected output: < 16KB .wasm binary
  */
 

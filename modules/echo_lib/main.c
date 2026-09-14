@@ -8,7 +8,7 @@
  *   echo  — returns its input unchanged
  *   upcase — returns input text uppercased
  *
- * Build: cd wapps/modules/echo_lib && make
+ * Build: cd apps/modules/echo_lib && make
  */
 
 #include "../../hal/xprs_wasm_hal.h"

@@ -18,7 +18,7 @@
  * receives a {"type":"wapp.install",...} or {"type":"wapp.remove",...}
  * message.
  *
- * Build: cd wapps/archive/install && make
+ * Build: cd apps/install && make
  */
 
 #include "../hal/xprs_wasm_hal.h"

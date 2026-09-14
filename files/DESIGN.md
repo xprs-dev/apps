@@ -4,7 +4,7 @@ Status (2026-06-12): **Phases 1–3 implemented; 4 partial.** Builds on
 XPRS.md section 16 + the host `MediaArchive` (`aurora/lib/util/media_archive.dart`).
 
 Working and verified on Linux desktop:
-- Files wapp 0.1.0 (`wapps/files`): Library browser (archive as a people-list
+- Files wapp 0.1.0 (`apps/files`): Library browser (archive as a people-list
   with tags), details (token / Edit tags / Delete), Find-by-hash prompt,
   Sharing panel (Blossom + BitTorrent toggles + live status).
 - BlossomServer (`aurora/lib/services/blossom_server.dart`): live —
@@ -59,7 +59,7 @@ Two transports, complementary:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ Files wapp (wapps/files, C + GeoUI)                          │
+│ Files wapp (apps/files, C + GeoUI)                          │
 │   UI + policy: browse/search archive, add/share files,      │
 │   search-by-hash, transfers view, settings (share on/off,   │
 │   ports, storage caps)                                       │
@@ -103,7 +103,7 @@ info dictionary), so the mapping `sha256 → infohash` must be either computed
 
 ## 4. Phase 1 — Files wapp + media HAL (local only)
 
-New wapp `wapps/files` (folder name `files`, title "Files").
+New wapp `apps/files` (folder name `files`, title "Files").
 
 HAL additions (host: `wapp_engine.dart`; header: `hal/xprs_wasm_hal.h`):
 

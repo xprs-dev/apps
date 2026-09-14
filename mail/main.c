@@ -49,7 +49,7 @@
  *
  * All crypto is host-side — the nsec never enters this sandbox.
  *
- * Build: cd wapps/mail && WASI_SDK_PATH=~/wasi-sdk make
+ * Build: cd apps/mail && WASI_SDK_PATH=~/wasi-sdk make
  */
 #include "../hal/xprs_wasm_hal.h"
 

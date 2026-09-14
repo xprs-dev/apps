@@ -36,7 +36,7 @@
  *   hal_node_status      → JSON: serving, pointers, authors, query rates, spark…
  *   hal_node_set_pref    → volunteer=off|auto|always
  *
- * Build: cd wapps/archiver && make
+ * Build: cd apps/archiver && make
  */
 
 #include "../hal/xprs_wasm_hal.h"

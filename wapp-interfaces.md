@@ -19,7 +19,7 @@ repository:
 - `lib/wapp/wapp_engine.dart` — the integrated XPRS host
 
 Both implement the same abstractions. The C-level ABI for the
-abstractions lives in `wapps/hal/xprs_wasm_hal.h`.
+abstractions lives in `apps/hal/xprs_wasm_hal.h`.
 
 ---
 
@@ -1486,7 +1486,7 @@ my-wapp/
 ```
 
 Each `test_*.c` file declares one or more cases using the SDK
-header `wapps/sdk/wapp_test.h`:
+header `apps/sdk/wapp_test.h`:
 
 ```c
 #include "wapp_test.h"
@@ -1524,7 +1524,7 @@ body — siblings continue to run.
 
 ### 20.2 Build
 
-The SDK Makefile (`wapps/sdk/Makefile.common`) gains a `tests`
+The SDK Makefile (`apps/sdk/Makefile.common`) gains a `tests`
 target. From any wapp folder:
 
 ```sh
@@ -1535,7 +1535,7 @@ make tests     # builds tests.wasm (production sources + tests/* + runner)
 The test build links:
 1. `MODULE_SRCS` (the same source files as production)
 2. `tests/test_*.c` (auto-discovered by the makefile)
-3. `wapps/sdk/wapp_test.c` (the runner)
+3. `apps/sdk/wapp_test.c` (the runner)
 
 …into a single `tests.wasm` that exports `module_run_tests` (in
 addition to the usual lifecycle exports). Production `app.wasm`
@@ -1543,7 +1543,7 @@ never links the runner.
 
 ### 20.3 Distribution
 
-The packager (`wapps/build-archive.sh`) includes `tests.wasm` and
+The packager (`apps/build-archive.sh`) includes `tests.wasm` and
 the `tests/` source folder in the `.wapp` archive **only when they
 exist** in the source folder. There is no requirement for
 `tests.wasm` to be present in a published wapp — production

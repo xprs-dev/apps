@@ -10,7 +10,7 @@
  * host's revision counter moved, so an idle street costs no UI churn. Row
  * actions come back as devices_* commands (M1: logged; messaging lands in M2).
  *
- * Build: cd wapps/bluetooth && make
+ * Build: cd apps/bluetooth && make
  */
 
 #include "../hal/xprs_wasm_hal.h"

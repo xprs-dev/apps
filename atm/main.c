@@ -13,7 +13,7 @@
  *   addatm     -> atm.addatm     {coinId: atm_coin, npub: atm_trust}
  *   descriptor -> atm.descriptor {coinId: atm_coin}
  *
- * Build: cd wapps/atm && make
+ * Build: cd apps/atm && make
  */
 
 #include "../hal/xprs_wasm_hal.h"

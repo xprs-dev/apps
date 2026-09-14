@@ -6,7 +6,7 @@
  * WAPP_EXPECT_* macros to assert. Cases self-register at link time
  * via a custom "wapp_tests" section the runner walks.
  *
- * See wapps/wapp-interfaces.md §20 for the full spec.
+ * See apps/wapp-interfaces.md §20 for the full spec.
  */
 
 #ifndef WAPP_TEST_H

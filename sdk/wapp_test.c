@@ -7,7 +7,7 @@
  * executes each case, and emits one tests.case message per case
  * plus a final tests.complete summary via hal_msg_send.
  *
- * See wapps/wapp-interfaces.md §20 for the wire protocol.
+ * See apps/wapp-interfaces.md §20 for the wire protocol.
  */
 
 #include "wapp_test.h"

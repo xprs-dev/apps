@@ -4,7 +4,7 @@
  * Receives commands via hal_msg_recv(), parses and executes them using
  * HAL file/kv/http/system calls, and sends output back via hal_msg_send().
  *
- * Build: cd wapps/archive/terminal && make
+ * Build: cd apps/terminal && make
  */
 
 #include "../hal/xprs_wasm_hal.h"

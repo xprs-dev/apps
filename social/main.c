@@ -22,7 +22,7 @@
  *    so the `sig` the archive verified travels with every post and the feed
  *    says which ones are signed.
  *
- * Build: cd wapps/social && WASI_SDK_PATH=~/wasi-sdk make
+ * Build: cd apps/social && WASI_SDK_PATH=~/wasi-sdk make
  */
 #include "../hal/xprs_wasm_hal.h"
 
