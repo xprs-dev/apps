@@ -1,10 +1,9 @@
 {
   "screen.store": "Store",
-  "screen.store_tip": "Browse and install wapps shared over Reticulum.",
+  "screen.store_tip": "Apps published on xprs.dev/apps. Install with one tap; the trash icon removes an installed one.",
   "screen.settings": "Settings",
-  "screen.settings_tip": "Manage the repositories the wapp store downloads from.",
+  "screen.settings_tip": "Manage the repositories the store reads its catalog from.",
   "screen.sources": "Repositories",
-  "group.output_tip": "Wapp catalog and status messages.",
   "group.sources_name": "Sources",
-  "group.sources_tip": "Add a repository: a Reticulum folder key (npub… or rns:npub…) or a URL. The store fetches only its index of available wapps; you choose what to install."
+  "group.sources_tip": "The store starts with https://xprs.dev/apps. Add another repository as a URL (it must answer with a catalog.json or an index.json) or a Reticulum folder key (npub... or rns:npub...). Only the catalog is fetched; you choose what to install."
 }

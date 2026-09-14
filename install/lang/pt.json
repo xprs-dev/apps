@@ -1,9 +1,9 @@
 {
   "screen.store": "Loja",
-  "screen.store_tip": "Procurar, instalar e atualizar wapps a partir de um repositório.",
-  "screen.settings": "Definições",
-  "screen.settings_tip": "Gerir os repositórios de onde a loja de wapps descarrega.",
-  "group.output_tip": "Catálogo de wapps e mensagens de estado.",
+  "screen.store_tip": "Aplicacoes publicadas em xprs.dev/apps. Instale com um toque; o icone do lixo remove uma instalada.",
+  "screen.settings": "Definicoes",
+  "screen.settings_tip": "Gerir os repositorios de onde a loja le o catalogo.",
+  "screen.sources": "Repositorios",
   "group.sources_name": "Fontes",
-  "group.sources_tip": "Escreva um URL e clique Adicionar — a loja verifica /wapps/index.json antes de aceitar. Pode remover qualquer entrada a qualquer momento."
+  "group.sources_tip": "A loja comeca com https://xprs.dev/apps. Adicione outro repositorio como URL (tem de responder com um catalog.json ou um index.json) ou como chave de pasta Reticulum (npub... ou rns:npub...). So o catalogo e descarregado; e voce quem escolhe o que instalar."
 }

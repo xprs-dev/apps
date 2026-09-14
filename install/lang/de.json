@@ -1,9 +1,9 @@
 {
   "screen.store": "Store",
-  "screen.store_tip": "Wapps aus einem Repository durchsuchen, installieren und aktualisieren.",
+  "screen.store_tip": "Auf xprs.dev/apps veroeffentlichte Apps. Mit einem Tipp installieren; das Papierkorb-Symbol entfernt eine installierte.",
   "screen.settings": "Einstellungen",
-  "screen.settings_tip": "Repositories verwalten, aus denen der Wapp-Store lädt.",
-  "group.output_tip": "Wapp-Katalog und Statusmeldungen.",
+  "screen.settings_tip": "Die Repositories verwalten, aus denen der Store seinen Katalog liest.",
+  "screen.sources": "Repositories",
   "group.sources_name": "Quellen",
-  "group.sources_tip": "URL eingeben und auf Hinzufügen klicken — der Store prüft /wapps/index.json bevor er akzeptiert. Einträge lassen sich jederzeit entfernen."
+  "group.sources_tip": "Der Store beginnt mit https://xprs.dev/apps. Ein weiteres Repository als URL (muss mit catalog.json oder index.json antworten) oder als Reticulum-Ordnerschluessel (npub... oder rns:npub...) hinzufuegen. Nur der Katalog wird geladen; was installiert wird, entscheiden Sie."
 }

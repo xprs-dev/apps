@@ -149,8 +149,10 @@ git commit && git push          # Pages republishes xprs.dev/apps on push
 ```
 
 `./build-catalog.py --check` fails when the committed catalog is stale.
-The in-app store still reads `binaries/index.json` (every version, six
-fields); a coming version reads `catalog.json`.
+The Wapp Store inside the application reads this file: its default source
+is `https://xprs.dev/apps`, the host fetches `catalog.json` from there (an
+`index.json` still works for an older repository), keeps a copy, and
+downloads each package from the URL the catalog names, checking its sha256.
 
 ## Adding a new wapp
 

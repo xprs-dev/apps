@@ -83,19 +83,11 @@ static unsigned u64_to_str(uint64_t v, char *buf, unsigned buf_len) {
 
 /* ── Output ──────────────────────────────────────────────────────────── */
 
+/* Status lines go to the host log. The store screen has no output group
+ * (the cards are the whole UI), so what a user needs to see is a card
+ * (push_status_card) or a host snackbar; this is for the developer. */
 static void send_output(const char *text, const char *level) {
-    char buf[1024] = "{\"type\":\"ui.append\",\"target\":\"output-list\",\"item\":{\"text\":\"";
-    unsigned len = str_len(buf);
-    for (unsigned i = 0; text[i] && len < sizeof(buf) - 40; i++) {
-        if (text[i] == '"')       { buf[len++] = '\\'; buf[len++] = '"'; }
-        else if (text[i] == '\\') { buf[len++] = '\\'; buf[len++] = '\\'; }
-        else if (text[i] == '\n') { buf[len++] = '\\'; buf[len++] = 'n'; }
-        else                      { buf[len++] = text[i]; }
-    }
-    str_copy(buf + len, "\",\"level\":\"", sizeof(buf) - len); len = str_len(buf);
-    str_cat(buf + len, level, sizeof(buf) - len); len = str_len(buf);
-    str_copy(buf + len, "\"}}", sizeof(buf) - len); len = str_len(buf);
-    hal_msg_send(buf, len);
+    hal_log(str_eq(level, "err") ? 2 : 1, text, str_len(text));
 }
 
 /* Forward declaration — defined later next to the sources state. */
@@ -103,7 +95,7 @@ static void send_sources_list(void);
 
 /* ── Catalog entry ───────────────────────────────────────────────────── */
 
-#define MAX_ENTRIES 64
+#define MAX_ENTRIES 128
 
 typedef struct {
     char name[64];              /* folder name, e.g. "maps" */
@@ -142,10 +134,6 @@ static int source_count = 0;
 static int fetching_idx = -1;           /* -1 = idle */
 static char fetch_current_src[256] = "";
 static char fetch_current_host[96] = "";
-
-static int source_str_is_url(const char *s) {
-    return str_starts(s, "http://") || str_starts(s, "https://");
-}
 
 /* Extract a short human-readable host label from a source string.
  * For URLs, this is the hostname (before any port / path). For file
@@ -195,23 +183,21 @@ static void parse_sources_raw(void) {
     }
 }
 
-/* Default catalog source when no user configuration exists yet. The
- * Settings tab can add or replace it; this is just the seed so a
- * fresh install isn't staring at an empty catalog. Self-hosted on
- * xprs.dev — the store appends "/index.json" and downloads
- * "<base>/<file>" for each wapp.
+/* Default catalog source when no user configuration exists yet: the
+ * canonical catalog at https://xprs.dev/apps (catalog.json, the apps repo
+ * published through GitHub Pages). The Repositories screen can add or
+ * replace it. The host fetches the catalog, keeps a copy, and downloads
+ * each package from the URL the catalog names, checking its sha256.
  *
  * The shipped binary reaches NO proprietary host: the URL is used exactly as
- * configured, and the github.com -> raw.githubusercontent.com rewriter that
- * used to live here is gone. A catalog served from a code-hosting site has to
- * publish plain-file URLs like any other host. */
-#define DEFAULT_SOURCE "rns:npub1dwfaavw4k2af0snm3q2n4c7vd046xl7ze8scp553x5upw84wm5ns5deehf"
+ * configured. A Reticulum folder (rns:npub...) still works as a source. */
+#define DEFAULT_SOURCE "https://xprs.dev/apps"
 
 /* Bump when DEFAULT_SOURCE changes so devices upgrading from an older store
  * (which may hold a stale local/dev/HTTP source in KV) are migrated ONCE to the
  * current default. After migration we honour user edits again (the marker stays
  * set, so a later saved source is loaded normally). */
-#define SOURCE_SCHEMA "rns1"
+#define SOURCE_SCHEMA "xprs2"
 
 static void load_sources(void) {
     char ver[16] = "";
@@ -430,17 +416,16 @@ static void push_status_card(const char *id, const char *title,
 
 /* ── Fetch index ─────────────────────────────────────────────────────── */
 
-/* Pending HTTP request for async fetch. */
-static int32_t pending_req = -1;
+/* The host's wapp.index reply is copied here before parsing. */
 static char index_buf[32768];
 
-
-/* Kick off the fetch for sources[fetching_idx]. For URL sources the
- * HTTP request is started via hal_http and polled from module_tick.
- * For local paths we delegate to the host via a
- * {"type":"wapp.fetch_index",...} message and the response lands in
- * module_handle_event as `wapp.index`. Either way, on completion
- * advance_fetch_queue() is invoked to move to the next source. */
+/* Kick off the fetch for sources[fetching_idx]. Every source, URL or
+ * Reticulum folder or local path, is handed to the host with a
+ * {"type":"wapp.fetch_index",...} message: the core fetches and caches
+ * the catalog (a phone without internet still gets the last copy) and the
+ * reply lands in module_handle_event as `wapp.index`, which calls
+ * advance_fetch_queue() to move to the next source. The wapp makes no
+ * HTTP request of its own. */
 static void start_current_fetch(void) {
     if (fetching_idx < 0 || fetching_idx >= source_count) return;
     const char *src = sources[fetching_idx];
@@ -452,31 +437,10 @@ static void start_current_fetch(void) {
     str_cat(msg, "...", sizeof(msg));
     send_output(msg, "info");
 
-    if (source_str_is_url(src)) {
-        char url[600] = "";
-        str_cat(url, src, sizeof(url));
-        unsigned slen = str_len(src);
-        if (slen < 5 || !str_eq(src + slen - 5, ".json")) {
-            if (src[slen - 1] != '/') str_cat(url, "/", sizeof(url));
-            str_cat(url, "index.json", sizeof(url));
-        }
-        hal_log(1, "[install] http GET", 18);
-        hal_log(1, url, str_len(url));
-        pending_req = hal_http_request(0, url, str_len(url), "", 0);
-        if (pending_req < 0) {
-            send_output("  failed to start HTTP request", "err");
-            hal_log(2, "[install] http_request returned <0", 34);
-            push_status_card("__http_err",
-                             "Could not start HTTP request",
-                             fetch_current_host);
-            advance_fetch_queue();
-        }
-    } else {
-        char m[700] = "{\"type\":\"wapp.fetch_index\",\"source\":\"";
-        str_cat(m, src, sizeof(m));
-        str_cat(m, "\"}", sizeof(m));
-        hal_msg_send(m, str_len(m));
-    }
+    char m[700] = "{\"type\":\"wapp.fetch_index\",\"source\":\"";
+    str_cat(m, src, sizeof(m));
+    str_cat(m, "\"}", sizeof(m));
+    hal_msg_send(m, str_len(m));
 }
 
 /* Called after a source's response is fully parsed (success or skip).
@@ -581,7 +545,7 @@ static unsigned append_json_string(char *buf, unsigned len, unsigned cap,
 
 /* Buffer for the catalog ui.data emission. ~16KB handles ~50 entries
  * with all fields populated. */
-static char catalog_buf[16384];
+static char catalog_buf[32768];
 
 /* Emit the catalog as a structured `ui.data` message that the host's
  * generic `$type="cards"` group renders. The host knows nothing about
@@ -846,11 +810,11 @@ static void do_remove(const char *name) {
     str_cat(msg, name, sizeof(msg));
     str_cat(msg, "\"}", sizeof(msg));
     hal_msg_send(msg, str_len(msg));
+    /* The installed marker goes when the host confirms with wapp.removed. */
 
-    remove_installed_version(name);
-
-    char out[128] = "Removed ";
+    char out[128] = "Removing ";
     str_cat(out, name, sizeof(out));
+    str_cat(out, "...", sizeof(out));
     send_output(out, "info");
 }
 
@@ -1029,68 +993,18 @@ void module_init(void) {
 }
 
 void module_tick(void) {
-    /* Check for pending HTTP response */
-    if (pending_req >= 0) {
-        int32_t status = hal_http_poll(pending_req);
-        if (status == 0) return; /* still pending */
+    /* Nothing periodic: the host answers wapp.fetch_index and wapp.install
+     * with messages, and the cards are pushed when they arrive. */
+}
 
-        if (status < 0) {
-            char msg[96] = "HTTP request failed for ";
-            str_cat(msg, fetch_current_host, sizeof(msg));
-            send_output(msg, "err");
-            hal_log(2, "[install] http poll <0", 22);
-            push_status_card("__http_err",
-                             "HTTP request failed",
-                             fetch_current_host);
-            hal_http_free(pending_req);
-            pending_req = -1;
-            advance_fetch_queue();
-            return;
-        }
-
-        int32_t code = hal_http_status(pending_req);
-        if (code < 200 || code >= 300) {
-            char msg[96] = "HTTP error ";
-            char code_buf[16];
-            u64_to_str((uint64_t)(code > 0 ? code : 0), code_buf, sizeof(code_buf));
-            str_cat(msg, code_buf, sizeof(msg));
-            str_cat(msg, " from ", sizeof(msg));
-            str_cat(msg, fetch_current_host, sizeof(msg));
-            send_output(msg, "err");
-            hal_log(2, msg, str_len(msg));
-            push_status_card("__http_err", msg, fetch_current_host);
-            hal_http_free(pending_req);
-            pending_req = -1;
-            advance_fetch_queue();
-            return;
-        }
-
-        int32_t n = hal_http_read_response(pending_req, index_buf,
-                                            sizeof(index_buf) - 1);
-        hal_http_free(pending_req);
-        pending_req = -1;
-
-        if (n <= 0) {
-            send_output("  empty response", "err");
-            hal_log(2, "[install] http empty body", 25);
-            push_status_card("__http_err",
-                             "Empty response from source",
-                             fetch_current_host);
-            advance_fetch_queue();
-            return;
-        }
-        index_buf[n] = '\0';
-        int prev = catalog_count;
-        parse_index(index_buf, (unsigned)n);
-        char done[96] = "[install] parsed ";
-        char nbuf[16];
-        u64_to_str((uint64_t)(catalog_count - prev), nbuf, sizeof(nbuf));
-        str_cat(done, nbuf, sizeof(done));
-        str_cat(done, " entries from ", sizeof(done));
-        str_cat(done, fetch_current_host, sizeof(done));
-        hal_log(1, done, str_len(done));
-        advance_fetch_queue();
+static int json_has_key(const char *buf, const char *key) {
+    unsigned kl = str_len(key);
+    for (const char *p = buf; *p; p++) {
+        unsigned i = 0;
+        while (i < kl && p[i] == key[i]) i++;
+        if (i == kl) return 1;
     }
+    return 0;
 }
 
 void module_handle_event(void) {
@@ -1149,6 +1063,11 @@ void module_handle_event(void) {
                  * action button emits this when tapped. */
                 if (str_starts(action, "install:")) {
                     do_install(action + 8);
+                    return;
+                }
+                /* "remove:<slug>": uninstall through the host. */
+                if (str_starts(action, "remove:")) {
+                    do_remove(action + 7);
                     return;
                 }
                 if (str_eq(action, "set_sources")) {
@@ -1228,6 +1147,16 @@ void module_handle_event(void) {
             }
         }
 
+        /* wapp.removed: the host uninstalled one (its card's trash icon or
+         * our wapp.remove); drop the installed marker so the card reads
+         * Install again after the next refresh. */
+        if (json_has_key(buf, "\"wapp.removed\"")) {
+            char rname[64] = "";
+            json_find_str(buf, buf + n, "name", rname, sizeof(rname));
+            if (rname[0]) remove_installed_version(rname);
+            return;
+        }
+
         /* Check for wapp.index response from renderer */
         const char *idx_key = "\"wapp.index\"";
         const char *tp = buf;
@@ -1301,11 +1230,7 @@ void module_handle_event(void) {
 }
 
 void module_destroy(void) {
-    if (pending_req >= 0) {
-        hal_http_free(pending_req);
-        pending_req = -1;
-    }
     hal_log(1, "[install] destroy", 17);
 }
 
-uint32_t module_tick_interval_ms(void) { return 500; }
+uint32_t module_tick_interval_ms(void) { return 5000; }

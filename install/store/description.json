@@ -3,21 +3,21 @@
   "descriptions": {
     "en": {
       "title": "Wapp Store",
-      "summary": "Browse, install, and update wapps from repositories",
-      "body": "The central store for discovering and installing XPRS wapps. Add repository URLs to browse available wapps, install with one tap, and receive update notifications when new versions are published."
+      "summary": "Install, search and remove apps from xprs.dev/apps",
+      "body": "The app store for XPRS. It reads the catalog published at https://xprs.dev/apps, shows what each app does, and installs, updates or removes it with one tap. Other repositories, a URL or a Reticulum folder, can be added on its Repositories screen."
     },
     "pt": {
-      "title": "Loja de Wapps",
-      "summary": "Navegue, instale e atualize wapps de repositorios",
-      "body": "A loja central para descobrir e instalar wapps XPRS. Adicione URLs de repositorios para navegar wapps disponiveis, instale com um toque e receba notificacoes quando novas versoes sao publicadas."
+      "title": "Loja de Apps",
+      "summary": "Instale, procure e remova aplicacoes de xprs.dev/apps",
+      "body": "A loja de aplicacoes do XPRS. Le o catalogo publicado em https://xprs.dev/apps, mostra o que cada aplicacao faz e instala, atualiza ou remove com um toque. Outros repositorios, um URL ou uma pasta Reticulum, podem ser adicionados no ecra Repositorios."
     },
     "de": {
-      "title": "Wapp Store",
-      "summary": "Wapps aus Repositories durchsuchen, installieren und aktualisieren",
-      "body": "Der zentrale Store zum Entdecken und Installieren von XPRS-Wapps. Repository-URLs hinzufuegen, verfuegbare Wapps durchsuchen, mit einem Klick installieren und Update-Benachrichtigungen erhalten."
+      "title": "App Store",
+      "summary": "Apps von xprs.dev/apps installieren, suchen und entfernen",
+      "body": "Der App Store fuer XPRS. Er liest den auf https://xprs.dev/apps veroeffentlichten Katalog, zeigt, was jede App tut, und installiert, aktualisiert oder entfernt sie mit einem Tipp. Weitere Repositories, eine URL oder ein Reticulum-Ordner, lassen sich im Bildschirm Repositories hinzufuegen."
     }
   },
   "screenshots": [],
   "videos": [],
-  "changelog": "## 1.0.0\n- Multi-source repository support\n- Install and update wapps\n- Publisher verification via NOSTR signatures"
+  "changelog": "## 1.4.0\n- Reads the catalog at https://xprs.dev/apps (catalog.json) by default\n- The host fetches and caches the catalog and checks each package's sha256\n- Search, and remove from a card\n\n## 1.0.0\n- Multi-source repository support\n- Install and update wapps\n- Publisher verification via NOSTR signatures"
 }

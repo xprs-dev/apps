@@ -135,12 +135,14 @@ Reserved message types the engine **must** handle:
 | wapp → host | `widget.request` | Call a functionality on another wapp |
 | wapp → host | `widget.response` | Reply to a `widget.request` |
 | wapp → host | `wapp.fetch_index` | Ask the host to fetch a remote wapp index |
-| wapp → host | `wapp.install` | Ask the host to download + extract a `.wapp` |
+| wapp → host | `wapp.install` | Ask the host to download + extract a `.wapp` (an HTTP catalog entry is fetched from the URL the catalog named and checked against its sha256) |
+| wapp → host | `wapp.remove` | Ask the host to uninstall a wapp by folder name |
 | wapp → host | `store.sources` | Push the current wapp-store source list |
 | host → wapp | `command` | Generic command + scalar fields bag |
 | host → wapp | `action` | GeoUI action button fired |
-| host → wapp | `wapp.index` | Reply to `wapp.fetch_index` |
+| host → wapp | `wapp.index` | Reply to `wapp.fetch_index`: the six-field list (`file` as `<name>/<leaf>`, `id`, `version`, `size`, `title`, `description`), whatever shape the source served |
 | host → wapp | `wapp.installed` | Confirmation for `wapp.install` |
+| host → wapp | `wapp.removed` | Confirmation for `wapp.remove`, also sent when the host uninstalled from its own card control |
 | wapp → host | `profile.read` / `write` / `list` / `exists` / `size` / `mkdir` / `remove` | Permission-gated access to a profile-scoped path — see §15.1 |
 | host → wapp | `profile.<op>.response` | Response to a `profile.<op>` request — see §15.1 |
 | wapp → host | `identity.get` | Read the active profile's callsign + npub — see §15.1 |

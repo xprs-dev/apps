@@ -28,7 +28,7 @@
         "name": "catalog",
         "$type": "cards",
         "layout": "list",
-        "empty": "No wapps found yet. Open the menu (top right) → Repositories to add one."
+        "empty": "No apps yet. Pull the menu (top right) and choose Refresh, or add a repository there."
       }
     ]
   },
