@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.things",
-  "version":         "0.1.0",
+  "version":         "0.1.1",
   "kind":            "app",
   "title":           "Things",
   "description":     "Things - the devices around you: pumps, generators, sensors and plugs (X4 callsigns), what they report, and the ones you pin.",

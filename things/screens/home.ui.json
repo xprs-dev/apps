@@ -4,11 +4,13 @@
     "name": "Things",
     "icon": "power",
     "children": [
+      { "$": "action", "name": "scan", "label": "Scan", "style": "primary", "icon": "radar" },
+      { "$": "field", "name": "th_scan", "$type": "details", "empty": "" },
       {
         "$": "field",
         "name": "things",
         "$type": "people",
-        "empty": "No device yet.\n\nA device (an X4 callsign: a pump, a generator, a sensor, a plug) appears here when its controller is heard nearby, or once this station's archive holds its identity.\n\nTap one and Pin it to keep its readings, in range or not."
+        "empty": "No device yet.\n\nA device (an X4 callsign: a pump, a generator, a sensor, a plug) appears here when its controller is heard nearby or answers a Scan, or once this station's archive holds its identity.\n\nTap one and Pin it to keep its readings, in range or not."
       }
     ]
   },

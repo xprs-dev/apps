@@ -1453,6 +1453,16 @@ int32_t hal_xprs_follow(const char *call, uint32_t call_len, int32_t on);
 __attribute__((import_module("hal"), import_name("xprs_followed")))
 int32_t hal_xprs_followed(char *out, uint32_t out_cap);
 
+/* Ask what is in local reach to identify itself now (XPRS.md 8, 29.1:
+ * q:identity asks "directly rather than waiting for the next period"),
+ * instead of waiting for its next beacon. Where to ask is the core's: today
+ * every host on the local network, over UDP 4242. The answers are ordinary
+ * packets and appear in hal_xprs_stations; core.monitor says when. 1 when
+ * the core asked, 0 when it did not (no local network, no callsign yet, or
+ * it asked within the last 30 s). */
+__attribute__((import_module("hal"), import_name("xprs_discover")))
+int32_t hal_xprs_discover(void);
+
 /* ── Flashing a board over USB (permission device.flash) ─────────────────
  * The serial port, the ESP ROM loader, the catalogue (xprs.dev/firmware)
  * and the downloaded images are the core's. A wapp asks with the verbs

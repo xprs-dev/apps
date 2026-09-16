@@ -24,6 +24,7 @@ extern char g_followed[8][16];
 extern uint64_t g_ms, g_epoch;
 extern int g_ui_attached;
 extern int g_subn;
+extern int g_discover_calls, g_discover_rc;
 void station_set(const char *call, const char *json);
 void history_set(const char *key, const char *answer);
 int history_calls(const char *key);
@@ -83,6 +84,9 @@ static void reset(void)
     g_follow_calls = 0;
     g_subn = 0;
     g_ui_attached = 1;
+    g_discover_calls = 0;
+    g_discover_rc = 1;
+    g_asked = -1;
     g_ms += 60000;
     /* the wapp's own state, as a fresh engine has it */
     g_nth = 0;
@@ -102,6 +106,7 @@ static void test_no_page_no_subscriptions(void)
     g_ui_attached = 0;
     module_init();
     CHECK(g_subn == 0, "subscribed to %d topics with no page", g_subn);
+    CHECK(g_discover_calls == 0, "asked the network with nobody looking");
     CHECK(cap_count("ui.people.set") == 0, "drew with no page");
 }
 
@@ -241,6 +246,35 @@ static void test_the_archive_knows_devices_not_heard_now(void)
     CHECK(l && strstr(l, "\"title\":\"cabin-generator\""), "named from the identity row itself");
 }
 
+static void test_opening_the_page_asks_the_core_to_look(void)
+{
+    reset();
+    module_init();
+    CHECK(g_discover_calls == 1, "one ask on opening, got %d", g_discover_calls);
+    const char *l = cap_last("\"field\":\"th_scan\"");
+    CHECK(l && strstr(l, "Asked the local network who is there"), "says it asked: %s", l ? l : "");
+
+    /* Scan again inside the core's half minute: the core says no, the
+     * screen does not pretend otherwise. */
+    g_discover_rc = 0;
+    command("{\"command\":\"scan\",\"fields\":{}}");
+    CHECK(g_discover_calls == 2, "Scan asks the core");
+    l = cap_last("\"field\":\"th_scan\"");
+    CHECK(l && strstr(l, "Asked the local network"), "a recent ask still stands: %s", l ? l : "");
+
+    g_ms += 40000;
+    command("{\"command\":\"scan\",\"fields\":{}}");
+    l = cap_last("\"field\":\"th_scan\"");
+    CHECK(l && strstr(l, "Not asked now"), "and says when it was not asked: %s", l ? l : "");
+
+    /* A device answering is just a station the core now lists. */
+    strcpy(g_stations_json, NEARBY);
+    g_ms += 2500;
+    deliver("core.monitor");
+    const char *p = cap_last("ui.people.set");
+    CHECK(p && strstr(p, "X4PL3M"), "the answer shows up as a Nearby device");
+}
+
 int main(void)
 {
     test_no_page_no_subscriptions();
@@ -251,6 +285,7 @@ int main(void)
     test_energy_is_split_by_source();
     test_redraws_are_throttled_and_the_archive_cached();
     test_the_archive_knows_devices_not_heard_now();
+    test_opening_the_page_asks_the_core_to_look();
     printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

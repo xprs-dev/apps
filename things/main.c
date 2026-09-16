@@ -20,6 +20,11 @@
  * (docs/architecture.md, "A device is followed by callsign"). It sends
  * nothing on the air.
  *
+ * Opening the page asks the core to have what is in local reach say who it
+ * is now (hal_xprs_discover), and Scan asks again: a device is otherwise
+ * found only when its controller next airs for it. Where the core looks is
+ * its own business; the answers are packets like any other.
+ *
  * It exists only while its page is open: it subscribes to core.monitor and
  * core.archive then, redraws when they say something moved, and at most
  * once every two seconds however busy the room is (performance.md 8.16: a
@@ -55,6 +60,8 @@ static unsigned g_arch_gen = 1;
 static int  g_dirty;
 static unsigned long long g_drawn_ms;
 static int  g_drawn;
+static unsigned long long g_asked_ms;   /* when the core last agreed to ask */
+static int  g_asked;                    /* 1 asked, 0 not asked, -1 never tried */
 
 static char g_ev[1024];
 static char g_topic[64];
@@ -675,6 +682,35 @@ static void screen_open(const char *name, const char *title)
     say(m);
 }
 
+/* ── Asking what is around ────────────────────────────────────────────── */
+static void push_scan(void)
+{
+    char line[120] = "";
+    if (g_asked > 0) {
+        char ago[32];
+        ago_words(hal_time_ms() - g_asked_ms, ago, sizeof ago);
+        th_cpy(line, "Asked the local network who is there, ", sizeof line);
+        th_cat(line, ago, sizeof line);
+        th_cat(line, ". Devices appear as they answer.", sizeof line);
+    } else if (g_asked == 0) {
+        th_cpy(line, "Not asked now: no local network, or asked in the last half minute.", sizeof line);
+    }
+    details_begin("th_scan");
+    detail("Scan", line);
+    details_end();
+}
+
+static void discover(void)
+{
+    if (hal_xprs_discover() == 1) {
+        g_asked = 1;
+        g_asked_ms = hal_time_ms();
+        note("asked the core to look for devices nearby");
+    } else if (g_asked != 1 || hal_time_ms() - g_asked_ms > 30000ULL) {
+        g_asked = 0;
+    }
+}
+
 /* ── When to draw ─────────────────────────────────────────────────────── */
 static void draw(int force)
 {
@@ -685,6 +721,7 @@ static void draw(int force)
     g_drawn = 1;
     g_drawn_ms = now;
     draw_list();
+    push_scan();
     push_detail();
 }
 
@@ -706,6 +743,9 @@ static void on_command(void)
     if (!th_json(g_buf, "command", cmd, sizeof cmd)) return;
     if (th_eq(cmd, "refresh") || th_eq(cmd, "ready")) {
         g_arch_gen++;
+        draw(1);
+    } else if (th_eq(cmd, "scan")) {
+        discover();
         draw(1);
     } else if (th_eq(cmd, "things_tap")) {
         char id[CALL_MAX];
@@ -742,6 +782,8 @@ int32_t module_init(void)
     static const char mon[] = "core.monitor", arc[] = "core.archive";
     hal_event_subscribe(mon, sizeof mon - 1);
     hal_event_subscribe(arc, sizeof arc - 1);
+    g_asked = -1;
+    discover();
     draw(1);
     return 0;
 }

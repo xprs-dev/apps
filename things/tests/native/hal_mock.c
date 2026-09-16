@@ -114,6 +114,11 @@ int32_t hal_xprs_followed(char *out, uint32_t cap)
     return (int32_t)n;
 }
 
+/* ── asking what is around ────────────────────────────────────────────── */
+int g_discover_calls;
+int g_discover_rc = 1;
+int32_t hal_xprs_discover(void) { g_discover_calls++; return g_discover_rc; }
+
 /* ── what the wapp says to the host ───────────────────────────────────── */
 #define CAPN 400
 static char *g_cap[CAPN];
