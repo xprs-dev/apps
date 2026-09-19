@@ -460,7 +460,33 @@ static void send_message(const char *id, const char *text_in) {
     notify("warning", "No key for this contact yet");
     return;
   }
+  if (form == -3) {
+    /* The core's verdict, not ours: the recipient is on another network
+     * (XPRS.md 3.2) and nothing to it can ever be sealed, so asking again
+     * would be refused again. Turn the room plain and say so; the words the
+     * person typed were not sent and they choose whether to send them. */
+    room_set_private(id, 0);
+    sysnote(id, "This contact is on Meshtastic, which cannot open a sealed "
+                "message. Your message was NOT sent. The conversation is now "
+                "plain text and crosses a public channel anyone nearby can "
+                "read; send again if that is fine.");
+    notify("warning", "Not sent: a Meshtastic contact cannot be sealed to");
+    return;
+  }
   if (form <= 0) { notify("warning", "Could not send"); return; }
+  if (form == 3) {
+    /* Plain, through a gateway onto another network's public channel. Said
+     * once per conversation while the wapp runs, not on every bubble. */
+    static char told[8][16]; static unsigned told_n;
+    int seen = 0;
+    for (unsigned i = 0; i < told_n && i < 8; i++) if (s_eq(told[i], id)) { seen = 1; break; }
+    if (!seen) {
+      s_cpy(told[told_n % 8], id, sizeof told[0]);
+      told_n++;
+      sysnote(id, "Sent through a gateway to Meshtastic, on a public channel: "
+                  "anyone nearby with a Meshtastic radio can read it.");
+    }
+  }
   if (mid[0]) room_tx_note(mid, id);
   admit(id, mid[0] ? mid : "", "out", g_call, text, "", "", "verified", form == 1, 0,
         mid, "sent", 0, 0);

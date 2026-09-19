@@ -1437,6 +1437,15 @@ int32_t hal_xprs_stations(char *out, uint32_t out_cap);
 __attribute__((import_module("hal"), import_name("xprs_station")))
 int32_t hal_xprs_station(const char *call, uint32_t call_len, char *out, uint32_t out_cap);
 
+/* What an ADDRESS names, by the core's one rule: "user" (X1), "station" (X2,
+ * X3 or a licence), "device" (X4), "foreign" (a node of another network,
+ * MT/MC and eight hex, XPRS.md 3.2), "closed" (an X5 closed group) or "open"
+ * (an open group's name, 7.3: LISBOA). A wapp filing a conversation asks
+ * this rather than testing a prefix of its own. Returns the bytes written, 0
+ * for an empty address, or the negated size needed. Not gated. */
+__attribute__((import_module("hal"), import_name("xprs_kind")))
+int32_t hal_xprs_kind(const char *addr, uint32_t addr_len, char *out, uint32_t out_cap);
+
 /* Follow (on=1) or stop following (on=0) a station by its CALLSIGN (XPRS.md
  * 12's middle tier), for what has no person's key to follow: a device found
  * nearby or in the archive. Its packets are then kept, observations included,
@@ -1638,9 +1647,14 @@ int32_t hal_xprs_redact(const char *convo, uint32_t convo_len,
  * find it later. Not one of those is a content decision.
  *
  * Returns  1 sealed, 2 plain,
+ *          3 plain, to a node of another network (section 3.2, `MT...`)
+ *            through a gateway: the words cross a channel anybody can read,
  *         -1 privacy asked for and not possible -- the recipient's key has not
  *            been heard; the core has just asked for it (18.1), so try again
  *            shortly,
+ *         -3 privacy asked for a node of another network, which can never be
+ *            sealed (9.11.5); nothing was sent, and asking again will not
+ *            change that,
  *          0 malformed.
  *
  * -1 IS AN ANSWER, NOT AN ERROR, AND NEVER A DOWNGRADE. Section 36.8 makes

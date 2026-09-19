@@ -122,7 +122,25 @@ void mock_set_send_rc(int32_t rc){ g_send_rc = rc; }
 int32_t hal_xprs_send(const char* w,uint32_t l){ if(g_hk_send) return g_hk_send(w,l); if(g_send_rc) return g_send_rc; if(l>=sizeof(g_last_wire)) return -1; memcpy(g_last_wire,w,l); g_last_wire[l]=0; return 0; }
 int32_t hal_xprs_unlock(const char* id,uint32_t il,const char* pass,uint32_t pl){ if(g_hk_unlock) return g_hk_unlock(id,il,pass,pl); return 0; }
 int32_t hal_xprs_redact(const char* c,uint32_t cl,const char* t,uint32_t tl,const char* p,uint32_t pl){ if(g_hk_redact) return g_hk_redact(c,cl,t,tl,p,pl); return 0; }
-int32_t hal_xprs_message(const char* to,uint32_t tl,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){ if(g_hk_message) return g_hk_message(to,tl,t,l,priv,id,cap); (void)to;(void)tl;(void)t;(void)l; snprintf(id,cap,"m%05d",++g_bcast_n); return priv?1:2; }
+/* hal_xprs_kind: the core's xprsAddressKind, mirrored (a stand-in core,
+ * docs/architecture.md 6). Only the station/open distinction and the
+ * foreign form matter to the wapp. */
+static int mock_is_foreign(const char* to,uint32_t tl);
+int32_t hal_xprs_kind(const char* a,uint32_t l,char* o,uint32_t cap){
+  if(!l) return 0;
+  const char* k;
+  int dash=0, digit=0; for(uint32_t i=0;i<l;i++) if(a[i]=='-') dash=1;
+  for(uint32_t i=1;i<l && i<3;i++) if(a[i]>='0'&&a[i]<='9') digit=1;
+  if(mock_is_foreign(a,l)) k="foreign";
+  else if((l>=6 && a[0]=='X' && a[1]>='1' && a[1]<='5') || dash || digit)
+    k = (a[0]=='X'&&a[1]=='5') ? "closed" : (a[0]=='X'&&a[1]=='1') ? "user" : (a[0]=='X'&&a[1]=='4') ? "device" : "station";
+  else k="open";
+  uint32_t n=strlen(k); if(n>cap) return -(int32_t)n; memcpy(o,k,n); return (int32_t)n;
+}
+/* The core's verdict for a node of another network (XPRS.md 3.2, MT/MC and
+ * eight hex): never sealed (-3), plain through a gateway (3). */
+static int mock_is_foreign(const char* to,uint32_t tl){ if(tl!=10||to[0]!='M'||(to[1]!='T'&&to[1]!='C')) return 0; for(uint32_t i=2;i<tl;i++){ char c=to[i]; if(!((c>='0'&&c<='9')||(c>='A'&&c<='F'))) return 0; } return 1; }
+int32_t hal_xprs_message(const char* to,uint32_t tl,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){ if(g_hk_message) return g_hk_message(to,tl,t,l,priv,id,cap); (void)t;(void)l; int fx=mock_is_foreign(to,tl); if(fx&&priv) return -3; snprintf(id,cap,"m%05d",++g_bcast_n); return fx?3:(priv?1:2); }
 int32_t hal_xprs_broadcast(const char* t,uint32_t l,const char* s,uint32_t sl,const char* r,uint32_t rl,char* id,uint32_t cap){ if(g_hk_broadcast) return g_hk_broadcast(t,l,s,sl,r,rl,id,cap); (void)t;(void)l;(void)s;(void)sl;(void)r;(void)rl; snprintf(id,cap,"b%05d",++g_bcast_n); return 2; }
 static char g_reads[2048]; static int g_reads_n=0;
 const char* mock_reads(void){ return g_reads; }

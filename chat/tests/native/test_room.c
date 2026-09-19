@@ -266,6 +266,33 @@ TEST(a_sent_one_to_one_carries_its_tick_and_the_tick_finds_it_after_restart) {
   CHECK(cap_contains("\"status\":\"delivered\""));
 }
 
+/* XPRS.md 3.2 and 9.11.5: a Meshtastic node is a room like any other, is
+ * never sealed to, and the person is told once that the words cross a public
+ * channel. The verdicts are the core's (the mock mirrors them). */
+TEST(a_meshtastic_contact_is_a_room_never_sealed_and_says_so_once) {
+  fresh();
+  CHECK(room_renderable("MTA1B2C3D4"));
+  inbox_set("{\"command\":\"rooms_private\",\"rooms_convo\":\"MTA1B2C3D4\"}");
+  module_handle_event();
+  CHECK(room_is_private("MTA1B2C3D4"));
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"MTA1B2C3D4\",\"rooms_input\":\"sealed?\"}");
+  module_handle_event();
+  CHECK(!cap_contains("\"status\":\"sent\""));
+  CHECK(cap_contains("cannot open a sealed"));
+  CHECK(!room_is_private("MTA1B2C3D4"));
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"MTA1B2C3D4\",\"rooms_input\":\"hello mesh\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"status\":\"sent\""));
+  CHECK(cap_count("public channel") == 1);
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"MTA1B2C3D4\",\"rooms_input\":\"again\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"status\":\"sent\""));
+  CHECK(cap_count("public channel") == 0);
+}
+
 TEST(a_read_receipt_is_asked_for_on_open_and_survives_the_other_engine) {
   /* THE BUG this guards: a live 1:1 is stored by whichever engine hears it
    * (often the headless one) while the room is opened by the page engine.
@@ -749,6 +776,7 @@ int main(void) {
   run_hide_forgets_a_message_for_good();
   run_a_one_to_one_arrives_by_callsign_and_creates_its_room();
   run_a_sent_one_to_one_carries_its_tick_and_the_tick_finds_it_after_restart();
+  run_a_meshtastic_contact_is_a_room_never_sealed_and_says_so_once();
   run_a_read_receipt_is_asked_for_on_open_and_survives_the_other_engine();
   run_a_1to1_like_is_a_directed_reaction_65();
   run_a_closed_group_like_is_a_directed_reaction_with_a_local_echo_65();

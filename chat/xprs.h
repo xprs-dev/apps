@@ -52,8 +52,10 @@ int xprs_unpack(const char *wire, char *from, unsigned fmax, char *to,
 void xprs_stamp(char *out, unsigned max, unsigned long long epoch);
 unsigned long long xprs_parse_stamp(const char *s);
 
-/* Does an XPRS address name a station rather than a group (section 6.3)? */
+/* Does an address name a callsign rather than an open group? The core's
+ * verdict (hal_xprs_kind), remembered. */
 int xprs_is_station(const char *addr);
+
 
 /* Message identifier, XPRS section 5: first 6 lowercase hex characters of
  * sha256 over [len] bytes of [wire]. The caller passes the wire WITHOUT

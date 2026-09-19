@@ -32,7 +32,6 @@
 
 static unsigned pf_len(const char *s) { unsigned n = 0; while (s && s[n]) n++; return n; }
 static char pf_up(char c) { return (c >= 'a' && c <= 'z') ? (char)(c - 32) : c; }
-static int pf_digit(char c) { return c >= '0' && c <= '9'; }
 static int pf_streq(const char *a, const char *b) {
   while (*a && *b) { if (*a != *b) return 0; a++; b++; }
   return *a == *b;
@@ -126,14 +125,15 @@ static int pf_next_object(const char **cur, char *out, unsigned cap) {
 }
 /* Does an XPRS address name a station rather than a group (XPRS.md 6.3)?
  * The exact rule the chat wapp uses, so the candidate filter is unchanged. */
+/* A callsign rather than an open group's name: the core's verdict
+ * (hal_xprs_kind), never a prefix test of the finder's own. */
 static int pf_is_station(const char *addr) {
   if (!addr || !addr[0]) return 0;
-  unsigned n = pf_len(addr);
-  if (n >= 6 && addr[0] == 'X' &&
-      (addr[1] == '1' || addr[1] == '3' || addr[1] == '5')) return 1;
-  for (unsigned i = 0; i < n; i++) if (addr[i] == '-') return 1;
-  for (unsigned i = 1; i < n && i < 3; i++) if (pf_digit(addr[i])) return 1;
-  return 0;
+  char kind[16];
+  int32_t n = hal_xprs_kind(addr, pf_len(addr), kind, sizeof kind - 1);
+  if (n <= 0) return 0;
+  kind[n] = 0;
+  return !(kind[0] == 'o' && kind[1] == 'p');   /* "open" */
 }
 static int pf_is_self(const char *call) {
   char me[24]; uint32_t n = hal_identity(me, sizeof me - 1);
@@ -147,7 +147,7 @@ static int pf_is_self(const char *call) {
 #ifndef PF_MAX
 #define PF_MAX 128
 #endif
-typedef struct { char call[24]; char seen[24]; char bearer[12]; int local; } pf_person;
+typedef struct { char call[24]; char seen[24]; char bearer[16]; char nick[24]; int local; } pf_person;
 static pf_person pf_people[PF_MAX];
 static int pf_people_n;
 
@@ -174,7 +174,12 @@ static void pf_collect(const char *q) {
       if (!pf_next_object(&cur, row, sizeof row)) break;
       p = cur;
       char call[24]; pf_jstr(row, "id", call, sizeof call);
-      if (!call[0] || !pf_is_station(call) || pf_is_self(call)) continue;
+      /* The core names what a callsign is (`kind`, XPRS.md 3), so a row that
+       * carries one is somebody to talk to whatever its prefix: a Meshtastic
+       * node (MTA1B2C3D4, 3.2) has no digit where a licence has one. The
+       * prefix test stays for a row the core gave no kind, a group. */
+      char kind[12]; pf_jstr(row, "kind", kind, sizeof kind);
+      if (!call[0] || (!kind[0] && !pf_is_station(call)) || pf_is_self(call)) continue;
       if (want[0]) {
         char up[24]; unsigned k = 0;
         for (; call[k] && k < sizeof up - 1; k++) up[k] = pf_up(call[k]);
@@ -189,6 +194,9 @@ static void pf_collect(const char *q) {
       e->call[k] = 0;
       pf_jarr(row, "tags", 0, e->seen, sizeof e->seen);
       pf_jarr(row, "tags", 1, e->bearer, sizeof e->bearer);
+      /* Only a node of another network carries one: the name its network
+       * gave it, relayed by a gateway (6.3.1). */
+      pf_jstr(row, "nick", e->nick, sizeof e->nick);
       e->local = local;
     }
     section++;
@@ -201,6 +209,7 @@ static void pf_row(char *o, unsigned sz, const pf_person *e) {
   pf_cat(o, sz, "\",\"subtitle\":\"");
   if (e->seen[0]) pf_esc(o, sz, e->seen); else pf_cat(o, sz, "heard");
   if (e->bearer[0]) { pf_cat(o, sz, " - "); pf_esc(o, sz, e->bearer); }
+  if (e->nick[0]) { pf_cat(o, sz, " - "); pf_esc(o, sz, e->nick); }
   pf_cat(o, sz, "\",\"icon\":\""); pf_cat(o, sz, grp ? "tag" : "person");
   pf_cat(o, sz, "\"}");
 }

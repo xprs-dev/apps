@@ -64,6 +64,22 @@ WAPP_TEST(stations_are_told_from_groups) {
   WAPP_EXPECT_TRUE(!xprs_is_station(""));
 }
 
+/* Section 3.2: a node of another network is somebody to talk to, never a
+ * group, even with no digit where a licence has one. The rule is the core's
+ * (hal_xprs_kind, tested in the app's xprs_presence_test); this checks the
+ * wapp files conversations by it. */
+WAPP_TEST(a_node_of_another_network_is_not_a_group) {
+  WAPP_EXPECT_TRUE(xprs_is_station("MTA1B2C3D4"));
+  WAPP_EXPECT_TRUE(xprs_is_station("MT0C39F654"));
+  WAPP_EXPECT_TRUE(xprs_is_station("MCDEADBEEF"));
+  WAPP_EXPECT_TRUE(!xprs_is_station("MTABCDEFGH"));
+  char f[16], to[24], text[64]; unsigned long long ts = 0;
+  WAPP_EXPECT_TRUE(xprs_unpack(
+      "t:message f:X1QZ3N d:MTA1B2C3D4 ts:2026-09-19_12:06:00 m:hi there",
+      f, sizeof f, to, sizeof to, text, sizeof text, &ts));
+  WAPP_EXPECT_STR_EQ(to, "MTA1B2C3D4");
+}
+
 /* ── Building ────────────────────────────────────────────────────── */
 
 WAPP_TEST(a_direct_message_is_a_documented_packet) {

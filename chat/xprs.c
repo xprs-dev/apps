@@ -5,6 +5,7 @@
  * already defines are used here; nothing is invented.
  */
 #include "xprs.h"
+#include "xprs_wasm_hal.h"
 
 /* ── file-local libc (static, so nothing clashes with main.c's) ────────── */
 static unsigned x_len(const char *s) { unsigned n = 0; while (s[n]) n++; return n; }
@@ -88,19 +89,36 @@ unsigned long long xprs_parse_stamp(const char *s) {
 
 /* ── Addresses ─────────────────────────────────────────────────────────── */
 
-/* Section 6.3: an open group is uppercase 1..16 and may not be named like a
- * station, and a station is told from a group by its prefix. XPRS callsigns
- * are X1/X3/X5 plus four; an amateur callsign carries a digit inside the first
- * three characters (CT1ABC) and often an SSID (CT1ABC-9). Everything else —
- * LISBOA, FEED, NOSTR — is a group. */
+/* Is this address a callsign (a person, a station, a device, a closed group,
+ * or a node of another network) rather than an open group's name? The core
+ * decides, by its one rule (hal_xprs_kind, XPRS.md 3, 3.2, 7.3); this wapp
+ * used to keep a prefix test of its own, which read the Meshtastic node
+ * MTA1B2C3D4 as a group. The answer for a string never changes, so the last
+ * few are remembered: this is asked for every row a room renders. */
+#define KIND_MEMO 16
+static struct { char addr[24]; signed char station; } g_kind[KIND_MEMO];
+static unsigned g_kind_next;
+
 int xprs_is_station(const char *addr) {
   if (!addr || !addr[0]) return 0;
   unsigned n = x_len(addr);
-  if (n >= 6 && addr[0] == 'X' &&
-      (addr[1] == '1' || addr[1] == '3' || addr[1] == '5')) return 1;
-  for (unsigned i = 0; i < n; i++) if (addr[i] == '-') return 1;
-  for (unsigned i = 1; i < n && i < 3; i++) if (x_digit(addr[i])) return 1;
-  return 0;
+  if (n >= sizeof g_kind[0].addr) n = sizeof g_kind[0].addr - 1;
+  for (unsigned i = 0; i < KIND_MEMO; i++) {
+    if (!g_kind[i].addr[0]) continue;
+    unsigned k = 0;
+    while (k < n && g_kind[i].addr[k] == addr[k]) k++;
+    if (k == n && g_kind[i].addr[n] == 0) return g_kind[i].station;
+  }
+  char kind[16];
+  int32_t got = hal_xprs_kind(addr, n, kind, sizeof kind - 1);
+  if (got < 0) got = 0;
+  kind[got] = 0;
+  int station = got > 0 && !(kind[0] == 'o' && kind[1] == 'p');   /* "open" */
+  unsigned slot = g_kind_next++ % KIND_MEMO;
+  for (unsigned k = 0; k < n; k++) g_kind[slot].addr[k] = addr[k];
+  g_kind[slot].addr[n] = 0;
+  g_kind[slot].station = (signed char)station;
+  return station;
 }
 
 /* ── Building ──────────────────────────────────────────────────────────── */
