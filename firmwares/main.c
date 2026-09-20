@@ -46,6 +46,7 @@ typedef struct {
     /* What it said about itself (11.10 results, zdiag, q:policy, q:mail). */
     char nick[20], wifi[12], ip[20], ap[4], zone[8];
     char lora[12];                /* its LoRa mode (14.8); empty: no radio */
+    char freq[16];                /* the channel it is on, as it reported it */
     char fw[24], uptime[16], peers[8], heap[20], reset[16];
     char health[16], slot[16], radio[48], crash[32], mail[8];
     char pol_owner[40], pol_use[12], pol_first[40], pol_serve[40];
@@ -622,6 +623,9 @@ static void push_stats(void)
         tile("lora", "LoRa", fw_eq(s->lora, "meshtastic") ? "XPRS+Meshtastic"
                            : fw_eq(s->lora, "meshcore") ? "XPRS+MeshCore" : "XPRS",
              "", "which network shares its channel", "", 0);
+    if (s->freq[0])
+        tile("freq", "Channel", s->freq, "", "the frequency its radio is on",
+             "", 0);
     tiles_end();
     v[0] = 0; if (have) fw_json_list(g_host, "hears", v, sizeof v);
     one_line("st_hears", "Hears", v);
@@ -843,6 +847,7 @@ static void take_state(st_t *s, const char *wire)
     if (fw_field(wire, "nick", v, sizeof v)) fw_cpy(s->nick, v, sizeof s->nick);
     if (fw_field(wire, "zone", v, sizeof v)) fw_cpy(s->zone, v, sizeof s->zone);
     if (fw_field(wire, "lora", v, sizeof v)) fw_cpy(s->lora, v, sizeof s->lora);
+    if (fw_field(wire, "freq", v, sizeof v)) fw_cpy(s->freq, v, sizeof s->freq);
     if (fw_field(wire, "fw", v, sizeof v)) fw_cpy(s->fw, v, sizeof s->fw);
     if (fw_field(wire, "uptime", v, sizeof v)) fw_cpy(s->uptime, v, sizeof s->uptime);
     if (fw_field(wire, "peers", v, sizeof v)) fw_cpy(s->peers, v, sizeof s->peers);
@@ -1741,11 +1746,13 @@ static void on_command(void)
         if (!s->mine) log_line(s->call, "Claim it first");
         else do_set(s, "wifi:off", "wifi");
     } else if (fw_eq(cmd, "station_apply")) {
-        char nick[24] = "", zone[12] = "", ap[8] = "", lora[16] = "", f[112] = "";
+        char nick[24] = "", zone[12] = "", ap[8] = "", lora[16] = "";
+        char freq[20] = "", f[160] = "";
         fields("nick", nick, sizeof nick);
         fields("zone", zone, sizeof zone);
         fields("hotspot", ap, sizeof ap);
         fields("lora", lora, sizeof lora);
+        fields("freq", freq, sizeof freq);
         if (nick[0]) { fw_cat(f, "nick:", sizeof f); fw_cat(f, nick, sizeof f); }
         if (zone[0] && !fw_eq(zone, s->zone[0] ? s->zone : "auto")) {
             if (f[0]) fw_cat(f, " ", sizeof f);
@@ -1761,6 +1768,14 @@ static void on_command(void)
              fw_eq(lora, "meshcore")) && !fw_eq(lora, s->lora)) {
             if (f[0]) fw_cat(f, " ", sizeof f);
             fw_cat(f, "lora:", sizeof f); fw_cat(f, lora, sizeof f);
+        }
+        /* 14.8: the channel. Not every board is an 868 MHz board, and a
+         * network's presets differ by region, so the owner may name a
+         * frequency (433.900MHz, or hertz) or `preset` to take the
+         * region's own back. The station answers with where it landed. */
+        if (freq[0] && !fw_eq(freq, s->freq)) {
+            if (f[0]) fw_cat(f, " ", sizeof f);
+            fw_cat(f, "freq:", sizeof f); fw_cat(f, freq, sizeof f);
         }
         if (!s->mine) log_line(s->call, "Claim it first");
         else if (!f[0]) log_line(s->call, "Nothing to change");

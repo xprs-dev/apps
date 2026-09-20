@@ -282,6 +282,28 @@ static void test_lora_mode(void)
     CHECK(g_aired_n == aired, "the mode it already runs is not sent");
     CHECK(cap_count("Nothing to change") >= 1, "and the person is told");
 
+    /* 14.8: the channel. Not every board is an 868 MHz board, so an owner
+     * names a frequency and reads back where the station landed. */
+    cap_clear();
+    command("{\"command\":\"station_apply\",\"fields\":{\"nick\":\"\",\"zone\":\"+01:00\",\"hotspot\":\"same\",\"lora\":\"same\",\"freq\":\"433.900MHz\"}}");
+    CHECK(strstr(last_aired(), " cmd:set freq:433.900MHz") != 0,
+          "the frequency is sent: %s", last_aired());
+    last_id(id);
+    result(ST, id, "code:200 wifi:up ip:192.168.1.40 ap:off lora:xprs "
+                   "freq:433.900MHz region:eu nick:roof zone:+01:00");
+    cap_clear();
+    command("{\"command\":\"stats\",\"fields\":{}}");
+    last_id(id);
+    result(ST, id, "code:200 wifi:up ip:192.168.1.40 ap:off lora:xprs "
+                   "freq:433.900MHz region:eu nick:roof zone:+01:00");
+    const char *st3 = cap_last("\"field\":\"st_station\"");
+    CHECK(st3 && strstr(st3, "\"label\":\"Channel\",\"value\":\"433.900MHz\""),
+          "and shown: %s", st3 ? st3 : "");
+    cap_clear();
+    int aired2 = g_aired_n;
+    command("{\"command\":\"station_apply\",\"fields\":{\"nick\":\"\",\"zone\":\"+01:00\",\"hotspot\":\"same\",\"lora\":\"same\",\"freq\":\"433.900MHz\"}}");
+    CHECK(g_aired_n == aired2, "the channel it already has is not sent again");
+
     /* The third mode is a mode like the others, not a special case. */
     cap_clear();
     command("{\"command\":\"station_apply\",\"fields\":{\"nick\":\"\",\"zone\":\"+01:00\",\"hotspot\":\"same\",\"lora\":\"meshcore\"}}");

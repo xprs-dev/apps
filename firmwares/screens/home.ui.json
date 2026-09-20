@@ -157,7 +157,10 @@
               { "$": "option", "name": "xprs", "label": "XPRS" },
               { "$": "option", "name": "meshtastic", "label": "XPRS+Meshtastic" },
               { "$": "option", "name": "meshcore", "label": "XPRS+MeshCore" }
-            ] }
+            ] },
+          { "$": "field", "name": "freq", "$type": "text", "label": "Channel",
+            "hint": "433.900MHz, or preset for the region's own",
+            "placeholder": "leave empty to keep it" }
         ]
       },
       { "$": "action", "name": "station_apply", "label": "Save", "style": "primary", "icon": "save" },

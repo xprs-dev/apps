@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.firmwares",
-  "version":         "0.3.7",
+  "version":         "0.3.8",
   "kind":            "app",
   "title":           "Firmwares",
   "description":     "Firmwares - flash an XPRS board over USB, then set it up: claim it, put it on your WiFi, name it, and read how it is doing.",
