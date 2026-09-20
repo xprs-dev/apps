@@ -56,6 +56,12 @@ unsigned long long xprs_parse_stamp(const char *s);
  * verdict (hal_xprs_kind), remembered. */
 int xprs_is_station(const char *addr);
 
+/* The other network this address belongs to, written the way a person reads
+ * it ("Meshtastic", "MeshCore"), or "" when it is one of ours. The core
+ * names the network in its kind word (`foreign:meshcore`); this wapp does
+ * not know the prefixes and must not learn them. */
+const char *xprs_network_name(const char *addr);
+
 
 /* Message identifier, XPRS section 5: first 6 lowercase hex characters of
  * sha256 over [len] bytes of [wire]. The caller passes the wire WITHOUT

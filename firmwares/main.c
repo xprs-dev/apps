@@ -45,6 +45,7 @@ typedef struct {
     int  asking;                  /* a Refresh is out: empty tiles read "..." */
     /* What it said about itself (11.10 results, zdiag, q:policy, q:mail). */
     char nick[20], wifi[12], ip[20], ap[4], zone[8];
+    char lora[12];                /* its LoRa mode (14.8); empty: no radio */
     char fw[24], uptime[16], peers[8], heap[20], reset[16];
     char health[16], slot[16], radio[48], crash[32], mail[8];
     char pol_owner[40], pol_use[12], pol_first[40], pol_serve[40];
@@ -617,6 +618,10 @@ static void push_stats(void)
     }
     v[0] = 0; if (have) fw_json(g_host, "sig", v, sizeof v);
     tile("sig", "Signatures", v, "", "", "", fw_eq(v, "forged"));
+    if (s->lora[0])
+        tile("lora", "LoRa", fw_eq(s->lora, "meshtastic") ? "XPRS+Meshtastic"
+                           : fw_eq(s->lora, "meshcore") ? "XPRS+MeshCore" : "XPRS",
+             "", "which network shares its channel", "", 0);
     tiles_end();
     v[0] = 0; if (have) fw_json_list(g_host, "hears", v, sizeof v);
     one_line("st_hears", "Hears", v);
@@ -837,6 +842,7 @@ static void take_state(st_t *s, const char *wire)
     if (fw_field(wire, "ap", v, sizeof v)) fw_cpy(s->ap, v, sizeof s->ap);
     if (fw_field(wire, "nick", v, sizeof v)) fw_cpy(s->nick, v, sizeof s->nick);
     if (fw_field(wire, "zone", v, sizeof v)) fw_cpy(s->zone, v, sizeof s->zone);
+    if (fw_field(wire, "lora", v, sizeof v)) fw_cpy(s->lora, v, sizeof s->lora);
     if (fw_field(wire, "fw", v, sizeof v)) fw_cpy(s->fw, v, sizeof s->fw);
     if (fw_field(wire, "uptime", v, sizeof v)) fw_cpy(s->uptime, v, sizeof s->uptime);
     if (fw_field(wire, "peers", v, sizeof v)) fw_cpy(s->peers, v, sizeof s->peers);
@@ -1666,6 +1672,9 @@ static void on_command(void)
         field_set("nick", s->nick);
         field_set("zone", s->zone[0] ? s->zone : "auto");
         field_set("hotspot", "same");
+        field_set("lora", "same");
+        /* A station reports lora: only when it has a radio (11.10). */
+        flag_hidden("lora", !s->lora[0]);
         screen_open("Name", s->call);
         return;
     }
@@ -1732,10 +1741,11 @@ static void on_command(void)
         if (!s->mine) log_line(s->call, "Claim it first");
         else do_set(s, "wifi:off", "wifi");
     } else if (fw_eq(cmd, "station_apply")) {
-        char nick[24] = "", zone[12] = "", ap[8] = "", f[80] = "";
+        char nick[24] = "", zone[12] = "", ap[8] = "", lora[16] = "", f[112] = "";
         fields("nick", nick, sizeof nick);
         fields("zone", zone, sizeof zone);
         fields("hotspot", ap, sizeof ap);
+        fields("lora", lora, sizeof lora);
         if (nick[0]) { fw_cat(f, "nick:", sizeof f); fw_cat(f, nick, sizeof f); }
         if (zone[0] && !fw_eq(zone, s->zone[0] ? s->zone : "auto")) {
             if (f[0]) fw_cat(f, " ", sizeof f);
@@ -1744,6 +1754,13 @@ static void on_command(void)
         if (fw_eq(ap, "on") || fw_eq(ap, "off")) {
             if (f[0]) fw_cat(f, " ", sizeof f);
             fw_cat(f, "ap:", sizeof f); fw_cat(f, ap, sizeof f);
+        }
+        /* 14.8: the LoRa mode, taken at once (the station retunes and
+         * answers 200; it does not restart). Only a change is sent. */
+        if ((fw_eq(lora, "xprs") || fw_eq(lora, "meshtastic") ||
+             fw_eq(lora, "meshcore")) && !fw_eq(lora, s->lora)) {
+            if (f[0]) fw_cat(f, " ", sizeof f);
+            fw_cat(f, "lora:", sizeof f); fw_cat(f, lora, sizeof f);
         }
         if (!s->mine) log_line(s->call, "Claim it first");
         else if (!f[0]) log_line(s->call, "Nothing to change");

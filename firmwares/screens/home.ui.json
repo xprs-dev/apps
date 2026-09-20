@@ -149,6 +149,14 @@
               { "$": "option", "name": "same", "label": "Keep" },
               { "$": "option", "name": "on", "label": "On" },
               { "$": "option", "name": "off", "label": "Off" }
+            ] },
+          { "$": "field", "name": "lora", "$type": "enum", "label": "LoRa", "default": "same",
+            "hint": "taken at once, the station stays up",
+            "children": [
+              { "$": "option", "name": "same", "label": "Keep" },
+              { "$": "option", "name": "xprs", "label": "XPRS" },
+              { "$": "option", "name": "meshtastic", "label": "XPRS+Meshtastic" },
+              { "$": "option", "name": "meshcore", "label": "XPRS+MeshCore" }
             ] }
         ]
       },

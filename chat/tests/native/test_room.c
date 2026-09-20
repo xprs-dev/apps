@@ -291,6 +291,15 @@ TEST(a_meshtastic_contact_is_a_room_never_sealed_and_says_so_once) {
   module_handle_event();
   CHECK(cap_contains("\"status\":\"sent\""));
   CHECK(cap_count("public channel") == 0);
+
+  /* And the sentence names the network the core named, not Meshtastic by
+   * habit: the same words to a MeshCore contact say MeshCore. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"MC00C0FFEE\",\"rooms_input\":\"hello core\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"status\":\"sent\""));
+  CHECK(cap_contains("gateway to MeshCore"));
+  CHECK(!cap_contains("Meshtastic"));
 }
 
 TEST(a_read_receipt_is_asked_for_on_open_and_survives_the_other_engine) {

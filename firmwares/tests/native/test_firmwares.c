@@ -253,6 +253,51 @@ static void test_408_restamps_once(void)
     CHECK(cap_count("phone's clock") >= 1, "the second 408 is the clock, said once");
 }
 
+/* 14.8: the LoRa mode is read from the station's answer, shown, and sent
+ * only when it changes. */
+static void test_lora_mode(void)
+{
+    cap_clear();
+    command("{\"command\":\"stats\",\"fields\":{}}");
+    char id[7];
+    last_id(id);
+    result(ST, id, "code:200 wifi:up ip:192.168.1.40 ap:off lora:meshtastic nick:roof zone:+01:00");
+    const char *st = cap_last("\"field\":\"st_station\"");
+    CHECK(st && strstr(st, "\"label\":\"LoRa\",\"value\":\"XPRS+Meshtastic\""),
+          "the running mode, shown: %s", st ? st : "");
+
+    cap_clear();
+    command("{\"command\":\"open_name\",\"fields\":{}}");
+    CHECK(cap_count("\"field\":\"lora__hidden\",\"value\":false") >= 1,
+          "a station with a radio offers the choice");
+    command("{\"command\":\"station_apply\",\"fields\":{\"nick\":\"\",\"zone\":\"+01:00\",\"hotspot\":\"same\",\"lora\":\"xprs\"}}");
+    CHECK(strstr(last_aired(), " cmd:set lora:xprs") != 0, "a new mode is sent: %s", last_aired());
+    /* The station takes it at once: 200, and the mode it is now running. */
+    last_id(id);
+    result(ST, id, "code:200 wifi:up ip:192.168.1.40 ap:off lora:xprs nick:roof zone:+01:00");
+
+    cap_clear();
+    int aired = g_aired_n;
+    command("{\"command\":\"station_apply\",\"fields\":{\"nick\":\"\",\"zone\":\"+01:00\",\"hotspot\":\"same\",\"lora\":\"xprs\"}}");
+    CHECK(g_aired_n == aired, "the mode it already runs is not sent");
+    CHECK(cap_count("Nothing to change") >= 1, "and the person is told");
+
+    /* The third mode is a mode like the others, not a special case. */
+    cap_clear();
+    command("{\"command\":\"station_apply\",\"fields\":{\"nick\":\"\",\"zone\":\"+01:00\",\"hotspot\":\"same\",\"lora\":\"meshcore\"}}");
+    CHECK(strstr(last_aired(), " cmd:set lora:meshcore") != 0,
+          "MeshCore is sent too: %s", last_aired());
+    last_id(id);
+    result(ST, id, "code:200 wifi:up ip:192.168.1.40 ap:off lora:meshcore nick:roof zone:+01:00");
+    cap_clear();
+    command("{\"command\":\"stats\",\"fields\":{}}");
+    last_id(id);
+    result(ST, id, "code:200 wifi:up ip:192.168.1.40 ap:off lora:meshcore nick:roof zone:+01:00");
+    const char *st2 = cap_last("\"field\":\"st_station\"");
+    CHECK(st2 && strstr(st2, "\"label\":\"LoRa\",\"value\":\"XPRS+MeshCore\""),
+          "and shown by name: %s", st2 ? st2 : "");
+}
+
 static void test_zdiag(void)
 {
     cap_clear();
@@ -719,6 +764,7 @@ int main(void)
     test_wifi_long_goes_in_two();
     test_the_core_delivers();
     test_408_restamps_once();
+    test_lora_mode();
     test_zdiag();
     test_new_key();
     test_new_key_202_missed();

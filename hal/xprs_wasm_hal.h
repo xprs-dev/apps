@@ -1441,8 +1441,12 @@ int32_t hal_xprs_station(const char *call, uint32_t call_len, char *out, uint32_
  * X3 or a licence), "device" (X4), "foreign" (a node of another network,
  * MT/MC and eight hex, XPRS.md 3.2), "closed" (an X5 closed group) or "open"
  * (an open group's name, 7.3: LISBOA). A wapp filing a conversation asks
- * this rather than testing a prefix of its own. Returns the bytes written, 0
- * for an empty address, or the negated size needed. Not gated. */
+ * this rather than testing a prefix of its own. A node of another network
+ * (3.2) carries that network after a colon, `foreign:meshtastic` or
+ * `foreign:meshcore`, which is the longest answer there is: give it 32
+ * bytes, and read only the head of the word if the network is not your
+ * business. Returns the bytes written, 0 for an empty address, or the
+ * negated size needed. Not gated. */
 __attribute__((import_module("hal"), import_name("xprs_kind")))
 int32_t hal_xprs_kind(const char *addr, uint32_t addr_len, char *out, uint32_t out_cap);
 

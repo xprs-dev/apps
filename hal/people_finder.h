@@ -129,7 +129,7 @@ static int pf_next_object(const char **cur, char *out, unsigned cap) {
  * (hal_xprs_kind), never a prefix test of the finder's own. */
 static int pf_is_station(const char *addr) {
   if (!addr || !addr[0]) return 0;
-  char kind[16];
+  char kind[32];   /* `foreign:meshtastic` is the longest the core writes */
   int32_t n = hal_xprs_kind(addr, pf_len(addr), kind, sizeof kind - 1);
   if (n <= 0) return 0;
   kind[n] = 0;

@@ -109,7 +109,7 @@ int xprs_is_station(const char *addr) {
     while (k < n && g_kind[i].addr[k] == addr[k]) k++;
     if (k == n && g_kind[i].addr[n] == 0) return g_kind[i].station;
   }
-  char kind[16];
+  char kind[32];   /* `foreign:meshtastic` is the longest the core writes */
   int32_t got = hal_xprs_kind(addr, n, kind, sizeof kind - 1);
   if (got < 0) got = 0;
   kind[got] = 0;
@@ -119,6 +119,24 @@ int xprs_is_station(const char *addr) {
   g_kind[slot].addr[n] = 0;
   g_kind[slot].station = (signed char)station;
   return station;
+}
+
+const char *xprs_network_name(const char *addr) {
+  if (!addr || !addr[0]) return "";
+  char kind[24];
+  int32_t got = hal_xprs_kind(addr, x_len(addr), kind, sizeof kind - 1);
+  if (got <= 0) return "";
+  kind[got] = 0;
+  /* `foreign:<network>`; anything without the colon is one of ours. */
+  const char *colon = kind;
+  while (*colon && *colon != ':') colon++;
+  if (*colon != ':') return "";
+  colon++;
+  if (colon[0] == 'm' && colon[1] == 'e' && colon[2] == 's' &&
+      colon[3] == 'h' && colon[4] == 't') return "Meshtastic";
+  if (colon[0] == 'm' && colon[1] == 'e' && colon[2] == 's' &&
+      colon[3] == 'h' && colon[4] == 'c') return "MeshCore";
+  return "another network";
 }
 
 /* ── Building ──────────────────────────────────────────────────────────── */

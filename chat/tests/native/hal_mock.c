@@ -131,7 +131,7 @@ int32_t hal_xprs_kind(const char* a,uint32_t l,char* o,uint32_t cap){
   const char* k;
   int dash=0, digit=0; for(uint32_t i=0;i<l;i++) if(a[i]=='-') dash=1;
   for(uint32_t i=1;i<l && i<3;i++) if(a[i]>='0'&&a[i]<='9') digit=1;
-  if(mock_is_foreign(a,l)) k="foreign";
+  if(mock_is_foreign(a,l)) k = a[1]=='T' ? "foreign:meshtastic" : "foreign:meshcore";
   else if((l>=6 && a[0]=='X' && a[1]>='1' && a[1]<='5') || dash || digit)
     k = (a[0]=='X'&&a[1]=='5') ? "closed" : (a[0]=='X'&&a[1]=='1') ? "user" : (a[0]=='X'&&a[1]=='4') ? "device" : "station";
   else k="open";

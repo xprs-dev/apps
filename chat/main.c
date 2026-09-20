@@ -466,11 +466,21 @@ static void send_message(const char *id, const char *text_in) {
      * would be refused again. Turn the room plain and say so; the words the
      * person typed were not sent and they choose whether to send them. */
     room_set_private(id, 0);
-    sysnote(id, "This contact is on Meshtastic, which cannot open a sealed "
-                "message. Your message was NOT sent. The conversation is now "
-                "plain text and crosses a public channel anyone nearby can "
-                "read; send again if that is fine.");
-    notify("warning", "Not sent: a Meshtastic contact cannot be sealed to");
+    {
+      const char *net = xprs_network_name(id);
+      char line[240], warn[64];
+      s_cpy(line, "This contact is on ", sizeof line);
+      s_cat(line, net, sizeof line);
+      s_cat(line, ", which cannot open a sealed message. Your message was "
+                  "NOT sent. The conversation is now plain text and crosses "
+                  "a public channel anyone nearby can read; send again if "
+                  "that is fine.", sizeof line);
+      s_cpy(warn, "Not sent: a ", sizeof warn);
+      s_cat(warn, net, sizeof warn);
+      s_cat(warn, " contact cannot be sealed to", sizeof warn);
+      sysnote(id, line);
+      notify("warning", warn);
+    }
     return;
   }
   if (form <= 0) { notify("warning", "Could not send"); return; }
@@ -483,8 +493,14 @@ static void send_message(const char *id, const char *text_in) {
     if (!seen) {
       s_cpy(told[told_n % 8], id, sizeof told[0]);
       told_n++;
-      sysnote(id, "Sent through a gateway to Meshtastic, on a public channel: "
-                  "anyone nearby with a Meshtastic radio can read it.");
+      const char *net = xprs_network_name(id);
+      char line[200];
+      s_cpy(line, "Sent through a gateway to ", sizeof line);
+      s_cat(line, net, sizeof line);
+      s_cat(line, ", on a public channel: anyone nearby with a ", sizeof line);
+      s_cat(line, net, sizeof line);
+      s_cat(line, " radio can read it.", sizeof line);
+      sysnote(id, line);
     }
   }
   if (mid[0]) room_tx_note(mid, id);
