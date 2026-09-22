@@ -95,6 +95,17 @@ static char g_host[2048];         /* one hal_xprs_station answer */
 static char g_row[1200];
 static char g_wire[300];
 
+/* ── A picture, and what it costs to hold one ─────────────────────────
+ *
+ * 96 KB is the bound, stated rather than hoped for (performance.md 8.9): a
+ * 640x480 still off a camera's substream is 20 to 60 KB, and a 5 MP one off
+ * its main stream is not something a phone should be handed down a wapp's
+ * throat. Bigger than this is refused with a line saying so. The base64 of
+ * it, plus the little JSON around it, is the message the host is given. */
+#define PIC_MAX 98304u
+static unsigned char g_pic[PIC_MAX];
+static char g_msg[PIC_MAX * 4 / 3 + 256];
+
 static void say(const char *json) { hal_msg_send(json, th_len(json)); }
 
 static void note(const char *text)
@@ -937,6 +948,323 @@ static void draw_list(void)
     say(g_out);
 }
 
+/* ── Reaching a camera on the LAN ─────────────────────────────────────
+ *
+ * A thing's XPRS identity and its address on the house network are two
+ * facts, and this is what joins them. The wire says WHAT happened; the
+ * picture of it comes off the camera itself, over plain HTTP, and that is
+ * not XPRS traffic: no packet crosses it, no bearer is chosen, nothing is
+ * relayed. The core still owns every XPRS lane (docs/architecture.md); this
+ * is a client speaking a vendor's own protocol to a box on the same LAN, the
+ * way the Wapp Store speaks HTTP to fetch a catalogue.
+ *
+ * Two drivers, because two is what proves the shape:
+ *
+ *   link      fetch whatever address the thing published in url: (11.7.2)
+ *             or the person typed. No credentials, nothing to leak.
+ *   reolink   log in to the camera's own api.cgi, hold the token for its
+ *             lease, and ask it for a still. The password is sealed to this
+ *             device's key before it is written down.
+ *
+ * A vendor that needs a third is a third row in DRIVER[].
+ */
+typedef struct {
+    char vendor[12];        /* "", "link", "reolink"                     */
+    char host[64];          /* address on the LAN                        */
+    char user[24];
+    char pass[64];          /* plaintext ONLY in memory, never written   */
+    char path[80];          /* what to GET for the "link" driver         */
+} conn_t;
+
+static char g_my_npub[70];
+
+/* This device's own key, so a password can be sealed to it and to nothing
+ * else. The private half never leaves the host (hal_encrypt). */
+static const char *my_npub(void)
+{
+    if (!g_my_npub[0]) {
+        char pk[70];
+        uint32_t n = hal_identity_pubkey(pk, sizeof pk - 1);
+        if (n > 0) { pk[n] = 0; th_cpy(g_my_npub, pk, sizeof g_my_npub); }
+    }
+    return g_my_npub;
+}
+
+static void conn_key(char *out, unsigned cap, const char *call)
+{
+    th_cpy(out, "conn.", cap);
+    th_cat(out, call, cap);
+}
+
+static void conn_load(const char *call, conn_t *c)
+{
+    for (unsigned i = 0; i < sizeof *c; i++) ((char *)c)[i] = 0;
+    char key[32], rec[400], v[200];
+    conn_key(key, sizeof key, call);
+    if (!kv_get(key, rec, sizeof rec)) return;
+    if (th_field(rec, "vendor", v, sizeof v)) th_cpy(c->vendor, v, sizeof c->vendor);
+    if (th_field(rec, "host", v, sizeof v)) th_cpy(c->host, v, sizeof c->host);
+    if (th_field(rec, "user", v, sizeof v)) th_cpy(c->user, v, sizeof c->user);
+    if (th_field(rec, "path", v, sizeof v)) th_cpy(c->path, v, sizeof c->path);
+    /* The password comes back only if this device's key can open it. */
+    if (th_field(rec, "pass", v, sizeof v) && my_npub()[0]) {
+        char clear[80];
+        uint32_t n = hal_decrypt(my_npub(), th_len(my_npub()), v, th_len(v),
+                                 clear, sizeof clear - 1);
+        if (n > 0) { clear[n] = 0; th_cpy(c->pass, clear, sizeof c->pass); }
+    }
+}
+
+static void conn_save(const char *call, const conn_t *c)
+{
+    char key[32], rec[400] = "";
+    conn_key(key, sizeof key, call);
+    if (!c->vendor[0] && !c->host[0] && !c->path[0]) {
+        hal_kv_delete(key, th_len(key));
+        return;
+    }
+    if (c->vendor[0]) th_put(rec, "vendor", c->vendor, sizeof rec);
+    if (c->host[0]) th_put(rec, "host", c->host, sizeof rec);
+    if (c->user[0]) th_put(rec, "user", c->user, sizeof rec);
+    if (c->path[0]) th_put(rec, "path", c->path, sizeof rec);
+    if (c->pass[0] && my_npub()[0]) {
+        /* Sealed to this device's key: what is written down is of no use on
+         * another phone, and of no use to anything that reads the file. */
+        char sealed[200];
+        uint32_t n = hal_encrypt(my_npub(), th_len(my_npub()),
+                                 c->pass, th_len(c->pass), sealed, sizeof sealed - 1);
+        if (n > 0) { sealed[n] = 0; th_put(rec, "pass", sealed, sizeof rec); }
+        else note("could not seal the password, so it was not kept");
+    }
+    kv_put(key, rec);
+    index_add(call);
+}
+
+/* ── Fetching one still ──────────────────────────────────────────────
+ *
+ * One request in flight, polled once per tick and never spun on: the
+ * Terminal wapp's fetch loops hal_http_poll 200 times inside one call, which
+ * is a wapp blocking the isolate the widgets run on. */
+#define FETCH_IDLE  0
+#define FETCH_LOGIN 1
+#define FETCH_SNAP  2
+
+static struct {
+    char call[CALL_MAX];
+    int  req;                  /* hal_http_request handle, -1 when none  */
+    int  stage;
+    char token[80];            /* reolink session, for its lease         */
+    unsigned long long asked_ms;
+    unsigned long long token_ms;
+    unsigned long long pic_ms;   /* when the picture on screen was taken */
+    char note[120];            /* what to say under the picture          */
+} g_fetch = { .req = -1 };
+
+static void picnote(void);          /* defined with the other panels */
+
+static void ago_words(unsigned long long ms, char *out, unsigned cap);
+
+static void fetch_done(const char *why)
+{
+    if (g_fetch.req >= 0) hal_http_free(g_fetch.req);
+    g_fetch.req = -1;
+    g_fetch.stage = FETCH_IDLE;
+    if (why) {
+        th_cpy(g_fetch.note, why, sizeof g_fetch.note);
+        /* The last picture is still on the screen. Saying only that this
+         * attempt failed leaves a person reading an old doorstep as the
+         * doorstep now. */
+        if (g_fetch.pic_ms && !th_starts(why, "Taken")) {
+            char a[40];
+            ago_words(hal_time_ms() - g_fetch.pic_ms, a, sizeof a);
+            th_cat(g_fetch.note, " The picture above is from ", sizeof g_fetch.note);
+            th_cat(g_fetch.note, a, sizeof g_fetch.note);
+            th_cat(g_fetch.note, ".", sizeof g_fetch.note);
+        }
+    }
+    g_dirty = 1;
+    picnote();
+}
+
+/* GET, or POST when [body] is given. 1 when the host took it. */
+static int fetch_http(int post, const char *url, const char *body)
+{
+    int r = hal_http_request(post ? 1 : 0, url, th_len(url),
+                             body ? body : "", body ? th_len(body) : 0);
+    if (r < 0) { fetch_done("Could not reach it."); return 0; }
+    g_fetch.req = r;
+    g_fetch.asked_ms = hal_time_ms();
+    return 1;
+}
+
+/* Where a "link" thing's picture lives: what it published, else what the
+ * person typed, else the host and path they gave. */
+static void link_url(const th_t *t, const conn_t *c, char *out, unsigned cap)
+{
+    out[0] = 0;
+    if (t->url[0]) { th_cpy(out, t->url, cap); return; }
+    if (!c->host[0]) return;
+    th_cpy(out, "http://", cap);
+    th_cat(out, c->host, cap);
+    if (c->path[0] && c->path[0] != '/') th_cat(out, "/", cap);
+    th_cat(out, c->path[0] ? c->path : "/door/snapshot.jpg", cap);
+}
+
+static void reolink_login_url(const conn_t *c, char *out, unsigned cap)
+{
+    th_cpy(out, "http://", cap);
+    th_cat(out, c->host, cap);
+    th_cat(out, "/cgi-bin/api.cgi?cmd=Login", cap);
+}
+
+static void reolink_login_body(const conn_t *c, char *out, unsigned cap)
+{
+    th_cpy(out, "[{\"cmd\":\"Login\",\"action\":0,\"param\":{\"User\":{\"Version\":\"0\",\"userName\":\"", cap);
+    th_jesc(out, c->user[0] ? c->user : "admin", cap);
+    th_cat(out, "\",\"password\":\"", cap);
+    th_jesc(out, c->pass, cap);
+    th_cat(out, "\"}}}]", cap);
+}
+
+static void reolink_snap_url(const conn_t *c, const char *token, char *out, unsigned cap)
+{
+    th_cpy(out, "http://", cap);
+    th_cat(out, c->host, cap);
+    th_cat(out, "/cgi-bin/api.cgi?cmd=Snap&channel=0&rs=", cap);
+    th_cat_u(out, hal_time_ms() % 1000000ULL, cap);   /* the camera wants one */
+    th_cat(out, "&token=", cap);
+    th_cat(out, token, cap);
+}
+
+/* Ask for a picture of [t]. */
+static void fetch_start(th_t *t)
+{
+    if (g_fetch.req >= 0) return;            /* one at a time, per 8.6 */
+    conn_t c;
+    conn_load(t->call, &c);
+    th_cpy(g_fetch.call, t->call, sizeof g_fetch.call);
+    g_fetch.note[0] = 0;
+    char url[240];
+    if (th_eq(c.vendor, "reolink")) {
+        if (!c.host[0]) { fetch_done("No address for it yet."); return; }
+        if (!c.pass[0]) { fetch_done("It needs its password."); return; }
+        /* A token lasts an hour; the camera allows only a few at once and
+         * cannot be made to forget one, so a new login per picture is a way
+         * to lock the household out of its own doorbell. */
+        if (g_fetch.token[0] && hal_time_ms() - g_fetch.token_ms < 1800000ULL) {
+            reolink_snap_url(&c, g_fetch.token, url, sizeof url);
+            g_fetch.stage = FETCH_SNAP;
+            fetch_http(0, url, 0);
+            return;
+        }
+        char body[300];
+        reolink_login_url(&c, url, sizeof url);
+        reolink_login_body(&c, body, sizeof body);
+        g_fetch.stage = FETCH_LOGIN;
+        fetch_http(1, url, body);
+        return;
+    }
+    link_url(t, &c, url, sizeof url);
+    if (!url[0]) { fetch_done("No address for its picture yet."); return; }
+    g_fetch.stage = FETCH_SNAP;
+    fetch_http(0, url, 0);
+}
+
+/* The body of the finished request, into g_pic. Returns its length; 0 and a
+ * note when there is nothing usable. */
+static unsigned fetch_body(void)
+{
+    unsigned len = 0;
+    for (;;) {
+        int n = hal_http_read_response(g_fetch.req, (char *)g_pic + len,
+                                       PIC_MAX - len);
+        if (n <= 0) break;
+        len += (unsigned)n;
+        if (len >= PIC_MAX) {
+            /* More than the bound: the camera was asked for its big stream.
+             * Say so rather than showing the top of a picture. */
+            fetch_done("That picture is too big; ask it for the small stream.");
+            return 0;
+        }
+    }
+    return len;
+}
+
+static void show_picture(unsigned len)
+{
+    /* data: URI, built in one buffer: prefix, the base64, then the tail. */
+    th_cpy(g_msg, "{\"type\":\"ui.field.set\",\"field\":\"th_pic\",\"value\":\"data:image/jpeg;base64,", sizeof g_msg);
+    unsigned at = th_len(g_msg);
+    unsigned n = th_b64(g_pic, len, g_msg + at, (unsigned)sizeof g_msg - at - 8);
+    if (!n) { fetch_done("The picture did not fit."); return; }
+    th_cat(g_msg, "\"}", sizeof g_msg);
+    say(g_msg);
+    g_fetch.pic_ms = hal_time_ms();
+    char l[80] = "";
+    th_cat(l, "Taken just now, ", sizeof l);
+    th_cat_u(l, len / 1024, sizeof l);
+    th_cat(l, " KB.", sizeof l);
+    fetch_done(l);
+}
+
+/* Called from the tick and from every event: poll, and take the next step. */
+static void fetch_pump(void)
+{
+    if (g_fetch.req < 0) return;
+    int rc = hal_http_poll(g_fetch.req);
+    if (rc == 0) {
+        if (hal_time_ms() - g_fetch.asked_ms > 35000ULL)
+            fetch_done("It did not answer.");
+        return;
+    }
+    if (rc < 0) { fetch_done("Could not reach it."); return; }
+    int code = hal_http_status(g_fetch.req);
+    if (code < 200 || code >= 300) {
+        char l[80] = "It answered ";
+        th_cat_u(l, (unsigned long long)(code < 0 ? 0 : code), sizeof l);
+        th_cat(l, ".", sizeof l);
+        fetch_done(l);
+        return;
+    }
+    unsigned len = fetch_body();
+    if (!len) { if (g_fetch.req >= 0) fetch_done("It sent nothing."); return; }
+
+    if (g_fetch.stage == FETCH_LOGIN) {
+        /* [{"cmd":"Login","code":0,"value":{"Token":{"leaseTime":3600,
+         *   "name":"..."}}}] -- the only "name" in it is the token's. */
+        g_pic[len < PIC_MAX ? len : PIC_MAX - 1] = 0;
+        const char *tok = (const char *)g_pic;
+        for (const char *p = tok; *p; p++)
+            if (th_starts(p, "\"Token\"")) { tok = p; break; }
+        char name[80];
+        if (!th_json(tok, "name", name, sizeof name) || !name[0]) {
+            fetch_done("It would not log this phone in.");
+            return;
+        }
+        th_cpy(g_fetch.token, name, sizeof g_fetch.token);
+        g_fetch.token_ms = hal_time_ms();
+        hal_http_free(g_fetch.req);
+        g_fetch.req = -1;
+        th_t *t = find(g_fetch.call);
+        conn_t c;
+        conn_load(g_fetch.call, &c);
+        char url[240];
+        reolink_snap_url(&c, g_fetch.token, url, sizeof url);
+        g_fetch.stage = FETCH_SNAP;
+        if (t) fetch_http(0, url, 0);
+        return;
+    }
+
+    /* A still is a JPEG: FF D8. Anything else is the camera talking back
+     * (an error page, a JSON refusal), and showing it as a picture would be
+     * a broken box where an answer should be. */
+    if (len < 4 || g_pic[0] != 0xFF || g_pic[1] != 0xD8) {
+        fetch_done("What came back was not a picture.");
+        return;
+    }
+    show_picture(len);
+}
+
 /* ── One thing ────────────────────────────────────────────────────────── */
 static void tile(const char *id, const char *label, const char *text)
 {
@@ -1028,6 +1356,20 @@ static void flag_hidden(const char *name, int hidden)
     th_cat(m, name, sizeof m);
     th_cat(m, hidden ? "__hidden\",\"value\":true}" : "__hidden\",\"value\":false}", sizeof m);
     say(m);
+}
+
+/* What the picture is doing: asking, or why there is none. */
+static void picnote(void)
+{
+    if (!g_sel[0] || !hal_ui_attached()) return;
+    int mine = th_eq(g_fetch.call, g_sel);
+    flag_hidden("th_picnote", !mine || (g_fetch.req < 0 && !g_fetch.note[0]));
+    details_begin("th_picnote");
+    if (g_fetch.req >= 0 && th_eq(g_fetch.call, g_sel))
+        detail("Picture", "Asking it now...");
+    else if (g_fetch.note[0] && th_eq(g_fetch.call, g_sel))
+        detail("Picture", g_fetch.note);
+    details_end();
 }
 
 static void push_detail(void)
@@ -1161,6 +1503,15 @@ static void push_detail(void)
         detail("Nothing yet", "It has not said what it can do");
     details_end();
 
+    /* The picture, when this thing has one to offer. */
+    int can_pic = (c->panels & P_PICTURE) != 0;
+    int asking = g_fetch.req >= 0 && th_eq(g_fetch.call, t->call);
+    int said = g_fetch.note[0] && th_eq(g_fetch.call, t->call);
+    flag_hidden("th_pic", !can_pic);
+    flag_hidden("snap", !can_pic || g_fetch.req >= 0);
+    flag_hidden("th_picnote", !can_pic || !(asking || said));
+    if (can_pic) picnote();
+
     /* The person's corrections, pushed when the screen opens and after they
      * are taken -- never on a redraw. A redraw two seconds into typing an
      * address, or one second after picking a kind, would put the stored
@@ -1170,6 +1521,16 @@ static void push_detail(void)
         th_cpy(g_fields_for, t->call, sizeof g_fields_for);
         say_field("th_class", t->klass[0] ? t->klass : "auto");
         say_field("th_url", t->url);
+        conn_t cn;
+        conn_load(t->call, &cn);
+        say_field("th_vendor", cn.vendor[0] ? cn.vendor : "link");
+        say_field("th_host", cn.host);
+        say_field("th_user", cn.user);
+        say_field("th_path", cn.path);
+        /* The password is never pushed back out: what is kept is sealed, and
+         * a field that shows it again is a field that has unsealed it for
+         * anybody looking over a shoulder. An empty box means "unchanged". */
+        say_field("th_pass", "");
     }
 
     flag_hidden("pin", pinned(t->call));
@@ -1411,6 +1772,32 @@ static void on_command(void)
             else if (class_by_id(v)) th_cpy(t->klass, v, sizeof t->klass);
             else { char l[80] = "kind not recognised: "; th_cat(l, v, sizeof l); note(l); }
         }
+        conn_t cn;
+        conn_load(t->call, &cn);
+        int conn_changed = 0;
+        if (th_json(g_buf, "th_vendor", v, sizeof v) && v[0]) {
+            th_cpy(cn.vendor, v, sizeof cn.vendor); conn_changed = 1;
+        }
+        if (th_json(g_buf, "th_host", v, sizeof v)) {
+            th_cpy(cn.host, v, sizeof cn.host); conn_changed = 1;
+        }
+        if (th_json(g_buf, "th_user", v, sizeof v)) {
+            th_cpy(cn.user, v, sizeof cn.user); conn_changed = 1;
+        }
+        if (th_json(g_buf, "th_path", v, sizeof v)) {
+            th_cpy(cn.path, v, sizeof cn.path); conn_changed = 1;
+        }
+        /* An empty password box leaves the sealed one alone: the person who
+         * only meant to change the address has not just wiped it. */
+        if (th_json(g_buf, "th_pass", v, sizeof v) && v[0]) {
+            th_cpy(cn.pass, v, sizeof cn.pass); conn_changed = 1;
+            g_fetch.token[0] = 0;
+        }
+        if (conn_changed) {
+            conn_save(t->call, &cn);
+            /* An address the person gave is evidence too. */
+            if (cn.host[0] || cn.path[0]) t->forced |= CAP_PICTURE;
+        }
         if (th_json(g_buf, "th_url", v, sizeof v)) {
             th_cpy(t->url, v, sizeof t->url);
             /* An address the person typed is evidence like any other: it is
@@ -1422,12 +1809,22 @@ static void on_command(void)
         g_fields_for[0] = 0;       /* show what was taken, once */
         note("kept what you said about this thing");
         draw(1);
+    } else if (th_eq(cmd, "snap")) {
+        if (!g_sel[0]) return;
+        th_t *t = get(g_sel);
+        if (!t) return;
+        fetch_start(t);
+        draw(1);
     } else if (th_eq(cmd, "th_forget")) {
         if (!g_sel[0]) return;
         th_t *t = get(g_sel);
         if (!t) return;
         t->forced = t->denied = 0;
         t->klass[0] = t->url[0] = 0;
+        conn_t none;
+        for (unsigned i = 0; i < sizeof none; i++) ((char *)&none)[i] = 0;
+        conn_save(t->call, &none);
+        g_fetch.token[0] = 0;
         t->notmine = 0;
         save_thing(t);
         g_fields_for[0] = 0;
@@ -1435,6 +1832,9 @@ static void on_command(void)
         draw(1);
     } else if (th_eq(cmd, "back")) {
         g_sel[0] = 0;
+        g_fetch.note[0] = 0;
+        g_fetch.pic_ms = 0;
+        say("{\"type\":\"ui.field.set\",\"field\":\"th_pic\",\"value\":\"\"}");
         say("{\"type\":\"ui.screen.close\"}");
     }
 }
@@ -1460,6 +1860,7 @@ int32_t module_init(void)
 int32_t module_tick(void)
 {
     drain_events();
+    fetch_pump();
     draw(0);
     return 0;
 }
@@ -1467,6 +1868,7 @@ int32_t module_tick(void)
 int32_t module_handle_event(void)
 {
     drain_events();
+    fetch_pump();
     uint32_t n = hal_msg_recv(g_buf, sizeof g_buf - 1);
     if (n > 0) {
         g_buf[n] = 0;

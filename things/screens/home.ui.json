@@ -37,6 +37,26 @@
         "$type": "stats"
       },
       {
+        "$": "field",
+        "name": "th_pic",
+        "$type": "image",
+        "shape": "wide",
+        "readonly": true,
+        "label": ""
+      },
+      {
+        "$": "field",
+        "name": "th_picnote",
+        "$type": "details",
+        "empty": ""
+      },
+      {
+        "$": "action",
+        "name": "snap",
+        "label": "Picture now",
+        "icon": "image"
+      },
+      {
         "$": "action",
         "name": "pin",
         "label": "Pin",
@@ -166,6 +186,53 @@
             "$type": "string",
             "label": "Picture address",
             "hint": "http://192.168.1.9/door/snapshot.jpg"
+          },
+          {
+            "$": "field",
+            "name": "th_vendor",
+            "$type": "enum",
+            "label": "How to reach it",
+            "default": "link",
+            "children": [
+              {
+                "$": "option",
+                "name": "link",
+                "label": "Fetch the address above"
+              },
+              {
+                "$": "option",
+                "name": "reolink",
+                "label": "Reolink camera (log in to it)"
+              }
+            ]
+          },
+          {
+            "$": "field",
+            "name": "th_host",
+            "$type": "string",
+            "label": "Address on the network",
+            "hint": "192.168.1.9"
+          },
+          {
+            "$": "field",
+            "name": "th_user",
+            "$type": "string",
+            "label": "User",
+            "hint": "admin"
+          },
+          {
+            "$": "field",
+            "name": "th_pass",
+            "$type": "secret",
+            "label": "Password",
+            "hint": "kept sealed to this device; empty leaves it unchanged"
+          },
+          {
+            "$": "field",
+            "name": "th_path",
+            "$type": "string",
+            "label": "Picture path",
+            "hint": "/door/snapshot.jpg"
           },
           {
             "$": "action",

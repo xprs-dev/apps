@@ -44,4 +44,9 @@ const char *th_json_next(const char *p, char *out, unsigned cap);
  * return where the next one starts, NULL at the end. */
 const char *th_json_next_str(const char *p, char *out, unsigned cap);
 
+/* ── Base64 ───────────────────────────────────────────────────────────── */
+/* Standard base64 with padding, null-terminated. Returns the characters
+ * written, or 0 when [cap] cannot hold the lot (nothing is written then). */
+unsigned th_b64(const unsigned char *in, unsigned n, char *out, unsigned cap);
+
 #endif

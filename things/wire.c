@@ -219,3 +219,28 @@ const char *th_json_next_str(const char *p, char *out, unsigned cap)
     if (cap) out[o < cap ? o : cap - 1] = 0;
     return *p ? p + 1 : 0;
 }
+
+/* ── Base64, for a picture that travels as a data: URI ────────────────── */
+static const char B64[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+unsigned th_b64(const unsigned char *in, unsigned n, char *out, unsigned cap)
+{
+    /* Standard alphabet with padding: what a data: URI takes. Writes
+     * nothing and answers 0 when the whole thing would not fit, because
+     * half a picture is not a picture. */
+    unsigned need = ((n + 2) / 3) * 4;
+    if (!out || cap <= need) return 0;
+    unsigned o = 0;
+    for (unsigned i = 0; i < n; i += 3) {
+        unsigned b = (unsigned)in[i] << 16;
+        if (i + 1 < n) b |= (unsigned)in[i + 1] << 8;
+        if (i + 2 < n) b |= (unsigned)in[i + 2];
+        out[o++] = B64[(b >> 18) & 63];
+        out[o++] = B64[(b >> 12) & 63];
+        out[o++] = (i + 1 < n) ? B64[(b >> 6) & 63] : '=';
+        out[o++] = (i + 2 < n) ? B64[b & 63] : '=';
+    }
+    out[o] = 0;
+    return o;
+}

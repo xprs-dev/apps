@@ -235,3 +235,120 @@ uint64_t hal_time_epoch(void) { return g_epoch; }
 void hal_log(int32_t l, const char *m, uint32_t n) { (void)l; (void)m; (void)n; }
 int g_ui_attached = 1;
 int32_t hal_ui_attached(void) { return g_ui_attached; }
+
+/* ── a camera on the far end of HTTP ──────────────────────────────────
+ * Canned answers chosen by a substring of the URL, each with a status, a
+ * body (bytes, so a JPEG is a JPEG) and how many polls it takes to arrive.
+ * The tests read back what was asked for, which is how the login body and
+ * the snapshot URL are held to their shape without a camera. */
+#define HTTPN 8
+static struct {
+    char match[96];
+    int status;
+    unsigned char body[8192];
+    unsigned blen;
+    int polls;             /* polls before it is done */
+} g_canned[HTTPN];
+static int g_canned_n;
+
+void http_set(const char *match, int status, const void *body, unsigned blen, int polls)
+{
+    for (int i = 0; i < g_canned_n; i++) {
+        if (strcmp(g_canned[i].match, match)) continue;
+        g_canned[i].status = status; g_canned[i].blen = blen; g_canned[i].polls = polls;
+        if (blen) memcpy(g_canned[i].body, body, blen > 8192 ? 8192 : blen);
+        return;
+    }
+    if (g_canned_n >= HTTPN) return;
+    snprintf(g_canned[g_canned_n].match, 96, "%s", match);
+    g_canned[g_canned_n].status = status;
+    g_canned[g_canned_n].polls = polls;
+    g_canned[g_canned_n].blen = blen;
+    if (blen) memcpy(g_canned[g_canned_n].body, body, blen > 8192 ? 8192 : blen);
+    g_canned_n++;
+}
+
+#define REQN 8
+static struct { int live, idx, polls; unsigned off; } g_req[REQN];
+static int g_req_next = 1;
+char g_last_url[512];
+char g_last_body[1024];
+int  g_last_method;
+int  g_http_calls;
+
+int32_t hal_http_request(int32_t method, const char *url, uint32_t ul,
+                         const char *body, uint32_t bl)
+{
+    g_http_calls++;
+    g_last_method = method;
+    snprintf(g_last_url, sizeof g_last_url, "%.*s", (int)ul, url);
+    snprintf(g_last_body, sizeof g_last_body, "%.*s", (int)bl, body ? body : "");
+    int h = g_req_next++;
+    if (h >= REQN) return -1;
+    g_req[h].live = 1; g_req[h].polls = 0; g_req[h].off = 0; g_req[h].idx = -1;
+    for (int i = 0; i < g_canned_n; i++)
+        if (strstr(g_last_url, g_canned[i].match)) { g_req[h].idx = i; break; }
+    return h;
+}
+int32_t hal_http_poll(int32_t h)
+{
+    if (h <= 0 || h >= REQN || !g_req[h].live) return -1;
+    if (g_req[h].idx < 0) return -1;                 /* nothing answers there */
+    if (++g_req[h].polls <= g_canned[g_req[h].idx].polls) return 0;
+    return 1;
+}
+int32_t hal_http_status(int32_t h)
+{
+    if (h <= 0 || h >= REQN || !g_req[h].live || g_req[h].idx < 0) return -1;
+    return g_canned[g_req[h].idx].status;
+}
+int32_t hal_http_read_response(int32_t h, char *buf, uint32_t cap)
+{
+    if (h <= 0 || h >= REQN || !g_req[h].live || g_req[h].idx < 0) return 0;
+    unsigned left = g_canned[g_req[h].idx].blen - g_req[h].off;
+    if (!left || !cap) return 0;
+    unsigned n = left < cap ? left : cap;
+    memcpy(buf, g_canned[g_req[h].idx].body + g_req[h].off, n);
+    g_req[h].off += n;
+    return (int32_t)n;
+}
+void hal_http_free(int32_t h) { if (h > 0 && h < REQN) g_req[h].live = 0; }
+void http_reset(void)
+{
+    g_canned_n = 0; g_req_next = 1; g_http_calls = 0;
+    g_last_url[0] = g_last_body[0] = 0;
+    for (int i = 0; i < REQN; i++) g_req[i].live = 0;
+}
+
+/* ── this device's key, and sealing to it ─────────────────────────────
+ * Not the real curve: a reversible transform with the same shape, so the
+ * test holds the wapp to sealing what it keeps and to never writing the
+ * password down in the clear. */
+uint32_t hal_identity_pubkey(char *b, uint32_t cap)
+{
+    const char *k = "npub1mockmockmockmockmockmockmockmockmockmockmockmockmock";
+    uint32_t n = strlen(k); if (n > cap) n = cap;
+    memcpy(b, k, n); return n;
+}
+uint32_t hal_encrypt(const char *pk, uint32_t pl, const char *msg, uint32_t ml,
+                     char *out, uint32_t cap)
+{
+    (void)pk; (void)pl;
+    if (ml * 2 + 6 > cap) return 0;
+    memcpy(out, "seal:", 5);
+    for (uint32_t i = 0; i < ml; i++) sprintf(out + 5 + i * 2, "%02x", (unsigned char)msg[i]);
+    return 5 + ml * 2;
+}
+uint32_t hal_decrypt(const char *pk, uint32_t pl, const char *blob, uint32_t bl,
+                     char *out, uint32_t cap)
+{
+    (void)pk; (void)pl;
+    if (bl < 5 || memcmp(blob, "seal:", 5)) return 0;
+    uint32_t n = (bl - 5) / 2;
+    if (n >= cap) return 0;
+    for (uint32_t i = 0; i < n; i++) {
+        unsigned v; sscanf(blob + 5 + i * 2, "%2x", &v); out[i] = (char)v;
+    }
+    out[n] = 0;
+    return n;
+}
