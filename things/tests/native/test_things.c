@@ -34,11 +34,27 @@ const char *cap_last(const char *s);
 void inbox_set(const char *s);
 void event_push(const char *t, const char *d);
 int subscribed(const char *t);
+void kv_wipe(void);
+const char *kv_peek(const char *k);
 
 static int g_checks, g_fail;
 #define CHECK(c, ...) do { g_checks++; if (!(c)) { g_fail++; printf("  FAIL %s:%d ", __func__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
 static void deliver(const char *topic) { event_push(topic, "{\"rev\":1}"); module_handle_event(); }
+/* One packet the core hands over on xprs.observation, the shape wapp_delivery
+ * publishes: the 5 identifier, the packet's own fields and the wire. */
+static void deliver_obs(const char *id, const char *from, const char *ts, const char *tail)
+{
+    char row[600];
+    snprintf(row, sizeof row,
+             "{\"id\":\"%s\",\"type\":\"observation\",\"from\":\"%s\",\"to\":\"\","
+             "\"ts\":\"%s\",\"forUs\":false,\"sealed\":false,\"scope\":\"local\","
+             "\"bearer\":\"lan\",\"rssi\":0,\"via\":\"\",\"link\":\"\",\"sig\":\"verified\","
+             "\"wire\":\"t:observation f:%s %s ts:%s\"}",
+             id, from, ts, from, tail, ts);
+    event_push("xprs.observation", row);
+    module_handle_event();
+}
 static void command(const char *json) { inbox_set(json); module_handle_event(); }
 
 static const char *NEARBY =
@@ -96,6 +112,8 @@ static void reset(void)
     g_drawn = 0;
     g_arch_gen++;
     g_nknown = 0;
+    g_sub_obs = 0;
+    kv_wipe();
     while (hal_event_available()) { char t[64], d[64]; hal_event_recv(t, sizeof t, d, sizeof d); }
 }
 
@@ -275,6 +293,215 @@ static void test_opening_the_page_asks_the_core_to_look(void)
     CHECK(p && strstr(p, "X4PL3M"), "the answer shows up as a Nearby device");
 }
 
+
+/* ── what a thing is, worked out from what it said ────────────────────── */
+static const char *BELL_ROWS =
+    "[{\"id\":\"r1\",\"ts\":1788999990,\"heardTs\":1788999990,\"bearer\":\"lan\",\"rssi\":0,"
+    "\"from\":\"X4DOOR\",\"to\":\"\",\"type\":\"observation\",\"mine\":false,\"own\":false,"
+    "\"sig\":\"verified\",\"heard\":1,\"wire\":\"t:observation f:X4DOOR state:pressed "
+    "url:http://192.168.1.9/door/snapshot.jpg ts:2026-09-10_14:26:30\"}]";
+
+static void test_a_doorbell_is_worked_out_from_what_it_says(void)
+{
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    history_set("\"from\":\"X4DOOR\",\"types\":[\"observation\"", BELL_ROWS);
+    module_init();
+    const char *l = cap_last("ui.people.set");
+    CHECK(l && strstr(l, "\"icon\":\"campaign\""), "a doorbell's icon: %s", l ? l : "");
+    CHECK(l && strstr(l, "\"Doorbell\""), "named as a doorbell");
+    CHECK(l && strstr(l, "Rang"), "the subtitle says what it did: %s", l ? l : "");
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4DOOR\"}}");
+    CHECK(cap_last("\"field\":\"th_events__hidden\",\"value\":false") != 0, "its events are offered");
+    CHECK(cap_last("\"field\":\"watch__hidden\",\"value\":false") != 0, "Tell me is offered");
+    const char *can = cap_last("\"field\":\"th_can\"");
+    CHECK(can && strstr(can, "Reports a button press"), "says what it can do: %s", can ? can : "");
+    CHECK(can && strstr(can, "Offers a picture"), "the url: is a capability");
+}
+
+static void test_a_sensor_and_a_thing_nobody_knows(void)
+{
+    reset();
+    strcpy(g_stations_json,
+           "[{\"title\":\"Heard over the air (2)\",\"items\":["
+           "{\"id\":\"X4WX01\",\"kind\":\"device\"},{\"id\":\"X4ODD1\",\"kind\":\"device\"}]}]");
+    station_set("X4WX01", "{\"call\":\"X4WX01\",\"kind\":\"device\",\"bearer\":\"lan\","
+                          "\"agoMs\":4000,\"packets\":2,\"sig\":\"verified\","
+                          "\"readings\":{\"temp\":\"14.2C\",\"hum\":\"78%\"}}");
+    station_set("X4ODD1", "{\"call\":\"X4ODD1\",\"kind\":\"device\",\"bearer\":\"lan\","
+                          "\"agoMs\":4000,\"packets\":2,\"sig\":\"verified\","
+                          "\"readings\":{\"uptime\":\"26h\"}}");
+    module_init();
+    const char *l = cap_last("ui.people.set");
+    CHECK(l && strstr(l, "\"icon\":\"monitor_heart\""), "a sensor: %s", l ? l : "");
+    CHECK(l && strstr(l, "14.2C"), "its reading is the subtitle");
+    CHECK(l && strstr(l, "\"icon\":\"developer_board\""), "an unknown thing is still a Device");
+    CHECK(l && strstr(l, "\"Device\""), "and says so");
+}
+
+static void test_the_person_can_correct_it(void)
+{
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    station_set("X4PL3M", PUMP_HERE);
+    module_init();
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4PL3M\"}}");
+    cap_clear();
+    command("{\"command\":\"th_apply\",\"fields\":{\"th_class\":\"camera\","
+            "\"th_url\":\"http://192.168.1.9/door/snapshot.jpg\"}}");
+    const char *l = cap_last("ui.people.set");
+    CHECK(l && strstr(l, "\"icon\":\"video\""), "treated as a camera now: %s", l ? l : "");
+    const char *can = cap_last("\"field\":\"th_can\"");
+    CHECK(can && strstr(can, "You said so"), "and it says who decided: %s", can ? can : "");
+    cap_clear();
+    command("{\"command\":\"th_forget\",\"fields\":{}}");
+    l = cap_last("ui.people.set");
+    CHECK(l && strstr(l, "\"icon\":\"power\""), "back to what it says it is: %s", l ? l : "");
+}
+
+/* ── being told ───────────────────────────────────────────────────────── */
+static void test_telling_is_held_only_while_something_is_watched(void)
+{
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    module_init();
+    CHECK(!subscribed("xprs.observation"), "nothing watched, nothing subscribed");
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4DOOR\"}}");
+    command("{\"command\":\"watch\",\"fields\":{}}");
+    CHECK(subscribed("xprs.observation"), "watching means subscribed");
+    command("{\"command\":\"unwatch\",\"fields\":{}}");
+    CHECK(!subscribed("xprs.observation"), "and it is given back when nobody watches");
+}
+
+static void test_one_press_is_told_once(void)
+{
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    module_init();
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4DOOR\"}}");
+    command("{\"command\":\"watch\",\"fields\":{}}");
+    cap_clear();
+    deliver_obs("p1", "X4DOOR", "2026-09-10_14:30:00", "state:pressed url:http://1.2.3.4/s.jpg");
+    CHECK(cap_count("\"type\":\"notify\"") == 1, "one notification for one press");
+    const char *n = cap_last("\"type\":\"notify\"");
+    CHECK(n && strstr(n, "Someone at the door"), "and it says what happened: %s", n ? n : "");
+    CHECK(n && strstr(n, "\"tag\":\"thing.X4DOOR.pressed.p1\""), "tagged with the packet: %s", n ? n : "");
+    CHECK(n && strstr(n, "\"scope\":\"both\""), "and reaches the shade, not only the app");
+    cap_clear();
+    deliver_obs("p1", "X4DOOR", "2026-09-10_14:30:00", "state:pressed url:http://1.2.3.4/s.jpg");
+    CHECK(cap_count("\"type\":\"notify\"") == 0, "the same packet twice is one press");
+    cap_clear();
+    deliver_obs("p0", "X4DOOR", "2026-09-10_09:00:00", "state:pressed");
+    CHECK(cap_count("\"type\":\"notify\"") == 0, "a backlog replayed is not news");
+    cap_clear();
+    deliver_obs("p2", "X4DOOR", "2026-09-10_14:31:00", "state:clear");
+    CHECK(cap_count("\"type\":\"notify\"") == 0, "`clear` ends an event, it is not news");
+    cap_clear();
+    deliver_obs("p3", "X4DOOR", "2026-09-10_14:32:00", "state:motion");
+    CHECK(cap_count("\"type\":\"notify\"") == 1, "movement is told");
+    n = cap_last("\"type\":\"notify\"");
+    CHECK(n && strstr(n, "\"level\":\"info\""), "movement is quieter than a ring: %s", n ? n : "");
+}
+
+static void test_an_unwatched_packet_costs_nothing(void)
+{
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    module_init();
+    cap_clear();
+    deliver_obs("q1", "X4PL3M", "2026-09-10_14:30:00", "state:pressed");
+    CHECK(cap_count("\"type\":\"notify\"") == 0, "nobody asked to be told about that one");
+}
+
+/* ── it outlives the page ─────────────────────────────────────────────── */
+static void test_what_it_is_survives_a_restart(void)
+{
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    history_set("\"from\":\"X4DOOR\",\"types\":[\"observation\"", BELL_ROWS);
+    module_init();
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4DOOR\"}}");
+    command("{\"command\":\"watch\",\"fields\":{}}");
+    CHECK(kv_peek("cap.X4DOOR") != 0, "what it is was written down");
+    CHECK(kv_peek("cap.list") != 0 && strstr(kv_peek("cap.list"), "X4DOOR"), "and indexed");
+
+    /* a fresh engine, the same phone: only the key-value space survives */
+    int kept_subs = 0;
+    cap_clear();
+    g_nth = 0; g_sel[0] = 0; g_npinned = 0; g_dirty = 0; g_drawn = 0;
+    g_sub_obs = 0; g_subn = 0; g_hist_n = 0;
+    g_ui_attached = 0;
+    module_init();
+    kept_subs = subscribed("xprs.observation");
+    CHECK(kept_subs, "a watched thing is still watched with no page");
+    CHECK(cap_count("ui.people.set") == 0, "and nothing is drawn for nobody");
+    cap_clear();
+    deliver_obs("p9", "X4DOOR", "2026-09-10_15:00:00", "state:pressed");
+    CHECK(cap_count("\"type\":\"notify\"") == 1, "and the ring still reaches the person");
+    CHECK(cap_count("ui.people.set") == 0, "with no page drawn: %d", cap_count("ui.people.set"));
+}
+
+static void test_no_clock_with_no_page(void)
+{
+    reset();
+    g_ui_attached = 1;
+    CHECK(module_tick_interval_ms() == (int32_t)REDRAW_MS, "a page has a clock");
+    g_ui_attached = 0;
+    CHECK(module_tick_interval_ms() == 0, "nobody looking, no clock at all");
+}
+
+/* Two engines of this wapp can be alive at once and they share one
+ * key-value space. A stale one redrawing must not switch off a watch the
+ * person just armed in the other (found on the bench, three engines up). */
+static void test_a_stale_engine_cannot_switch_off_a_watch(void)
+{
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    module_init();
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4DOOR\"}}");
+    command("{\"command\":\"watch\",\"fields\":{}}");
+    CHECK(kv_peek("watch.X4DOOR") != 0, "the watch is written down");
+
+    /* a second engine that started BEFORE the watch was armed: it knows
+     * nothing of it, learns something, and writes what it knows */
+    g_nth = 0; g_sel[0] = 0; g_sub_obs = 0;
+    th_t *stale = get("X4DOOR");
+    stale->seen |= CAP_MEASURE;
+    save_thing(stale);
+    CHECK(kv_peek("watch.X4DOOR") != 0, "and it is still there afterwards");
+
+    /* a fresh engine reads both records back */
+    g_nth = 0; g_sub_obs = 0; g_subn = 0;
+    module_init();
+    th_t *t = find("X4DOOR");
+    CHECK(t && t->watch, "the watch survived the stale engine");
+    CHECK(t && (t->seen & CAP_MEASURE), "and what either engine learned is kept");
+    CHECK(subscribed("xprs.observation"), "so it is still listening");
+}
+
+/* A redraw must not put the stored value back under the person's hands:
+ * the Settings fields are filled when the screen opens, and after a Save. */
+static void test_a_redraw_does_not_undo_what_is_being_typed(void)
+{
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    station_set("X4PL3M", PUMP_HERE);
+    module_init();
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4PL3M\"}}");
+    CHECK(cap_count("\"field\":\"th_class\"") == 1, "the kind is filled in once");
+    cap_clear();
+    /* the person is choosing; the core says something moved */
+    g_ms += 5000;
+    deliver("core.monitor");
+    CHECK(cap_count("\"field\":\"th_class\"") == 0, "and not again while they choose");
+    CHECK(cap_count("\"field\":\"th_url\"") == 0, "nor the address they are typing");
+    cap_clear();
+    command("{\"command\":\"th_apply\",\"fields\":{\"th_class\":\"camera\",\"th_url\":\"\"}}");
+    CHECK(cap_count("\"field\":\"th_class\"") == 1, "after Save it shows what was taken");
+    const char *l = cap_last("ui.people.set");
+    CHECK(l && strstr(l, "\"icon\":\"video\""), "and the kind took: %s", l ? l : "");
+}
+
 int main(void)
 {
     test_no_page_no_subscriptions();
@@ -286,6 +513,16 @@ int main(void)
     test_redraws_are_throttled_and_the_archive_cached();
     test_the_archive_knows_devices_not_heard_now();
     test_opening_the_page_asks_the_core_to_look();
+    test_a_doorbell_is_worked_out_from_what_it_says();
+    test_a_sensor_and_a_thing_nobody_knows();
+    test_the_person_can_correct_it();
+    test_telling_is_held_only_while_something_is_watched();
+    test_one_press_is_told_once();
+    test_an_unwatched_packet_costs_nothing();
+    test_what_it_is_survives_a_restart();
+    test_no_clock_with_no_page();
+    test_a_stale_engine_cannot_switch_off_a_watch();
+    test_a_redraw_does_not_undo_what_is_being_typed();
     printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

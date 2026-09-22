@@ -158,7 +158,63 @@ int32_t hal_event_subscribe(const char *t, uint32_t n)
     if (g_subn < 16) snprintf(g_subs[g_subn++], 40, "%.*s", (int)n, t);
     return 0;
 }
+int32_t hal_event_unsubscribe(const char *t, uint32_t n)
+{
+    for (int i = 0; i < g_subn; i++) {
+        if (strlen(g_subs[i]) != n || memcmp(g_subs[i], t, n)) continue;
+        memmove(g_subs[i], g_subs[i + 1], (size_t)(g_subn - i - 1) * 40);
+        g_subn--;
+        return 0;
+    }
+    return -1;
+}
 int subscribed(const char *t) { for (int i = 0; i < g_subn; i++) if (!strcmp(g_subs[i], t)) return 1; return 0; }
+
+/* ── this wapp's own key-value space, kept across a simulated restart ── */
+#define KVN 64
+char g_kv_key[KVN][64];
+char g_kv_val[KVN][512];
+int  g_kv_n;
+uint32_t hal_kv_get(const char *k, uint32_t kl, char *out, uint32_t cap)
+{
+    for (int i = 0; i < g_kv_n; i++) {
+        if (strlen(g_kv_key[i]) != kl || memcmp(g_kv_key[i], k, kl)) continue;
+        uint32_t n = strlen(g_kv_val[i]);
+        if (n > cap) n = cap;
+        memcpy(out, g_kv_val[i], n);
+        return n;
+    }
+    return 0;
+}
+int32_t hal_kv_set(const char *k, uint32_t kl, const char *v, uint32_t vl)
+{
+    for (int i = 0; i < g_kv_n; i++) {
+        if (strlen(g_kv_key[i]) != kl || memcmp(g_kv_key[i], k, kl)) continue;
+        snprintf(g_kv_val[i], 512, "%.*s", (int)vl, v);
+        return 0;
+    }
+    if (g_kv_n >= KVN) return -1;
+    snprintf(g_kv_key[g_kv_n], 64, "%.*s", (int)kl, k);
+    snprintf(g_kv_val[g_kv_n++], 512, "%.*s", (int)vl, v);
+    return 0;
+}
+int32_t hal_kv_delete(const char *k, uint32_t kl)
+{
+    for (int i = 0; i < g_kv_n; i++) {
+        if (strlen(g_kv_key[i]) != kl || memcmp(g_kv_key[i], k, kl)) continue;
+        memmove(g_kv_key[i], g_kv_key[i + 1], (size_t)(g_kv_n - i - 1) * 64);
+        memmove(g_kv_val[i], g_kv_val[i + 1], (size_t)(g_kv_n - i - 1) * 512);
+        g_kv_n--;
+        return 0;
+    }
+    return -1;
+}
+void kv_wipe(void) { g_kv_n = 0; }
+const char *kv_peek(const char *k)
+{
+    for (int i = 0; i < g_kv_n; i++) if (!strcmp(g_kv_key[i], k)) return g_kv_val[i];
+    return 0;
+}
 uint32_t hal_event_available(void) { return (uint32_t)(g_evw - g_evr); }
 uint32_t hal_event_recv(char *tb, uint32_t tc, char *db, uint32_t dc)
 {

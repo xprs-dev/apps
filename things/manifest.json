@@ -1,21 +1,54 @@
 {
-  "id":              "tools.xprs.things",
-  "version":         "0.1.1",
-  "kind":            "app",
-  "title":           "Things",
-  "description":     "Things - the devices around you: pumps, generators, sensors and plugs (X4 callsigns), what they report, and the ones you pin.",
-  "summary":         "A device with no radio of its own, a pump, a generator, a temperature sensor, a smart plug, is spoken for by a controller that airs its readings under an X4 callsign. Things lists the ones heard nearby and the ones your archive knows, and shows what each reports, energy split by source. Pin one and this phone keeps its readings, and while it is out of range asks your archivers for them.",
-  "icon":            "media/icons/things.svg",
-  "color":           "#2E7D32",
-  "tags":            ["xprs", "devices", "sensors", "energy", "x4"],
-  "entry_ui":        "screens/home.ui.json",
+  "id": "tools.xprs.things",
+  "version": "0.2.0",
+  "kind": "app",
+  "title": "Things",
+  "description": "Things - the devices around you: doorbells, cameras, sensors, meters, switches and locks (X4 callsigns), what each one can do, and the ones you ask to be told about.",
+  "summary": "A device with no radio of its own is spoken for by a controller that airs its readings under an X4 callsign. The format has no way for a device to say what it is, so Things works it out from what it says: the state it reports, the readings it sends, whether it offers a picture. A doorbell gets a doorbell's screen, a meter a meter's, and anything unrecognised still shows everything it aired. Ask to be told and a ring or movement reaches you with the screen off.",
+  "icon": "media/icons/things.svg",
+  "color": "#2E7D32",
+  "tags": [
+    "xprs",
+    "devices",
+    "sensors",
+    "doorbell",
+    "camera",
+    "energy",
+    "x4"
+  ],
+  "entry_ui": "screens/home.ui.json",
   "tick_interval_ms": 2000,
-  "permissions":     ["archive.read"],
-  "platforms":       ["android", "linux", "windows", "macos"],
-  "hardware":        ["N/A", "intel", "arm"],
-  "provides": { "functions": [], "events": [], "variables": [], "functionalities": [] },
+  "permissions": [
+    "archive.read"
+  ],
+  "platforms": [
+    "android",
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "hardware": [
+    "N/A",
+    "intel",
+    "arm"
+  ],
+  "provides": {
+    "functions": [],
+    "events": [],
+    "variables": [],
+    "functionalities": []
+  },
   "requires": {
-    "hal":       ["log", "msg", "xprs", "event", "archive"],
-    "events": [], "libraries": [], "variables": []
+    "hal": [
+      "log",
+      "msg",
+      "kv",
+      "xprs",
+      "event",
+      "archive"
+    ],
+    "events": [],
+    "libraries": [],
+    "variables": []
   }
 }

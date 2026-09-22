@@ -4,8 +4,19 @@
     "name": "Things",
     "icon": "power",
     "children": [
-      { "$": "action", "name": "scan", "label": "Scan", "style": "primary", "icon": "radar" },
-      { "$": "field", "name": "th_scan", "$type": "details", "empty": "" },
+      {
+        "$": "action",
+        "name": "scan",
+        "label": "Scan",
+        "style": "primary",
+        "icon": "radar"
+      },
+      {
+        "$": "field",
+        "name": "th_scan",
+        "$type": "details",
+        "empty": ""
+      },
       {
         "$": "field",
         "name": "things",
@@ -20,18 +31,163 @@
     "icon": "monitor_heart",
     "hidden": true,
     "children": [
-      { "$": "field", "name": "th_now", "$type": "stats" },
-      { "$": "action", "name": "pin", "label": "Pin", "style": "primary", "icon": "star" },
-      { "$": "action", "name": "unpin", "label": "Unpin", "icon": "star" },
+      {
+        "$": "field",
+        "name": "th_now",
+        "$type": "stats"
+      },
+      {
+        "$": "action",
+        "name": "pin",
+        "label": "Pin",
+        "style": "primary",
+        "icon": "star"
+      },
+      {
+        "$": "action",
+        "name": "unpin",
+        "label": "Unpin",
+        "icon": "star"
+      },
+      {
+        "$": "action",
+        "name": "watch",
+        "label": "Tell me",
+        "style": "primary",
+        "icon": "campaign"
+      },
+      {
+        "$": "action",
+        "name": "unwatch",
+        "label": "Stop telling me",
+        "icon": "campaign"
+      },
+      {
+        "$": "field",
+        "name": "th_events",
+        "$type": "details",
+        "empty": "Nothing reported yet."
+      },
       {
         "$": "group",
         "name": "About",
         "children": [
-          { "$": "field", "name": "th_about", "$type": "details", "empty": "" },
-          { "$": "field", "name": "th_totals", "$type": "details", "empty": "" }
+          {
+            "$": "field",
+            "name": "th_about",
+            "$type": "details",
+            "empty": ""
+          },
+          {
+            "$": "field",
+            "name": "th_totals",
+            "$type": "details",
+            "empty": ""
+          },
+          {
+            "$": "field",
+            "name": "th_can",
+            "$type": "details",
+            "empty": ""
+          }
         ]
       },
-      { "$": "action", "name": "back", "label": "Back", "icon": "close" }
+      {
+        "$": "group",
+        "name": "Settings",
+        "children": [
+          {
+            "$": "field",
+            "name": "th_class",
+            "$type": "enum",
+            "label": "Treat it as",
+            "default": "auto",
+            "children": [
+              {
+                "$": "option",
+                "name": "auto",
+                "label": "Work it out from what it says"
+              },
+              {
+                "$": "option",
+                "name": "doorbell",
+                "label": "Doorbell"
+              },
+              {
+                "$": "option",
+                "name": "camera",
+                "label": "Camera"
+              },
+              {
+                "$": "option",
+                "name": "motion",
+                "label": "Movement sensor"
+              },
+              {
+                "$": "option",
+                "name": "lock",
+                "label": "Lock"
+              },
+              {
+                "$": "option",
+                "name": "cover",
+                "label": "Gate or valve"
+              },
+              {
+                "$": "option",
+                "name": "thermostat",
+                "label": "Thermostat"
+              },
+              {
+                "$": "option",
+                "name": "meter",
+                "label": "Meter"
+              },
+              {
+                "$": "option",
+                "name": "switch",
+                "label": "Switch"
+              },
+              {
+                "$": "option",
+                "name": "sensor",
+                "label": "Sensor"
+              },
+              {
+                "$": "option",
+                "name": "thing",
+                "label": "Device"
+              }
+            ]
+          },
+          {
+            "$": "field",
+            "name": "th_url",
+            "$type": "string",
+            "label": "Picture address",
+            "hint": "http://192.168.1.9/door/snapshot.jpg"
+          },
+          {
+            "$": "action",
+            "name": "th_apply",
+            "label": "Save",
+            "style": "primary",
+            "icon": "check"
+          },
+          {
+            "$": "action",
+            "name": "th_forget",
+            "label": "Work it out again",
+            "icon": "refresh"
+          }
+        ]
+      },
+      {
+        "$": "action",
+        "name": "back",
+        "label": "Back",
+        "icon": "close"
+      }
     ]
   }
 ]

@@ -1,34 +1,45 @@
 /*
- * things -- the devices around you and the ones you follow (XPRS.md 11.7.1).
+ * things -- the devices around you, what each one can do, and the ones you
+ * ask to be told about (XPRS.md 11.7, 11.7.1, 11.7.2).
  *
- * An X4 callsign is equipment: a pump, a generator, a temperature sensor,
- * a smart plug. It has no radio. A controller holds its key and airs its
- * `t:identity` and `t:observation` for it, and deposits copies with the
- * archivers it chose (12.3). This wapp lists them and shows what they say:
+ * An X4 callsign is equipment: a doorbell, a camera, a pump, a lock, a
+ * temperature sensor, a smart plug. It has no radio. A controller holds its
+ * key and airs its `t:identity` and `t:observation` for it, and deposits
+ * copies with the archivers it chose (12.3).
  *
- *   Pinned          the ones this phone follows; kept, and fetched from the
- *                   chosen archivers while out of earshot (12.12.2)
- *   Nearby          devices the core hears now
- *   In the archive  devices whose identity this station holds
+ * ── What a thing IS, the format will not say ─────────────────────────────
  *
- * Tap one for its readings, as sent (15.8: the unit is part of the value),
- * with the energy of 15.5.2 split by source when a site sends it that way.
+ * There is no capability field anywhere in XPRS: an identity carries a key,
+ * a name and at most a url:, and a controller's `serve:devices` does not
+ * name the devices it operates. So this wapp works it out from what a thing
+ * SAYS -- the `state:` word it used (a closed list of nine, 11.7), whether
+ * level:, target: or url: ever appeared, which measurement keys it sends,
+ * and what came back when something was asked of it. Those are bits in a
+ * mask (CAP_*), the mask picks a row in CLASS[], and the row decides what
+ * the screen offers. A thing that has said nothing matches the last row and
+ * shows its readings, which is what this wapp did for everything before.
+ * The person can correct it, and the correction is kept.
+ *
+ * Adding a kind of thing is one row in CLASS[]. Adding a capability is one
+ * bit, a row in EV[], and a row in CLASS[].
+ *
+ * ── Being told ──────────────────────────────────────────────────────────
+ *
+ * Ask to be told about a thing and this wapp subscribes to `xprs.observation`
+ * -- only while something is watched, because a subscription is a cost the
+ * whole phone pays for as long as it is held -- and raises a notification on
+ * `state:pressed` and `state:motion`. Once per press: the 5 identifier is
+ * the tag, so the same ring heard over two bearers is one notification, and
+ * a backlog replayed at start is not a doorbell ringing in the night.
+ *
+ * It does this with no page open and no clock at all (module_tick_interval_ms
+ * is 0 without a UI), which is the only time it matters.
  *
  * The wapp asks the core and draws. It never learns which lane carried a
  * reading or which archiver held it: pinning is hal_xprs_follow, and keeping
- * the device's packets and fetching them while it is away are the core's
+ * a device's packets and fetching them while it is away are the core's
  * (docs/architecture.md, "A device is followed by callsign"). It sends
  * nothing on the air.
- *
- * Opening the page asks the core to have what is in local reach say who it
- * is now (hal_xprs_discover), and Scan asks again: a device is otherwise
- * found only when its controller next airs for it. Where the core looks is
- * its own business; the answers are packets like any other.
- *
- * It exists only while its page is open: it subscribes to core.monitor and
- * core.archive then, redraws when they say something moved, and at most
- * once every two seconds however busy the room is (performance.md 8.16: a
- * wapp's cost is what it does per event).
  */
 #include "../hal/xprs_wasm_hal.h"
 #include "wire.h"
@@ -49,6 +60,18 @@ typedef struct {
     char rd_sig[12];
     unsigned long long rd_ts;     /* epoch of the newest observation; 0 none */
     unsigned rd_gen;              /* g_arch_gen when read */
+    /* What it can do: the wire's evidence, what it refused, what the person
+     * said. A capability is never derived from the callsign (see caps_of). */
+    unsigned seen, denied, forced;
+    int  notmine;                 /* a code:403 came back: it can, we may not */
+    char klass[12];               /* the person's word for it; "" = work it out */
+    char url[128];                /* 11.7.2's pointer, newest first */
+    char state[12];               /* the newest state: word it aired */
+    unsigned long long state_ms;  /* epoch of that state */
+    char events[400];             /* what it did: "word:<epoch> .." newest first */
+    int  watch;                   /* tell me when it reports */
+    char cur_id[28];              /* the newest report already told about */
+    char cur_ts[24];
 } th_t;
 
 static th_t g_th[TH_MAX];
@@ -107,12 +130,321 @@ static const char *const TOTALS[][2] = {
 };
 #define NTOTALS ((int)(sizeof TOTALS / sizeof TOTALS[0]))
 
-/* What the one-line summary under a name says, in this order. */
-static const char *const SUMMARY[] = {
-    "state", "level", "temp", "hum", "produces", "load", "consumes",
-    "volt", "batt", "charged", "dose",
+/* ── What a thing can do (XPRS.md 11.7) ───────────────────────────────
+ *
+ * The format has no way for a device to SAY what it is. An X4 identity
+ * carries a key, a name and at most a url:, and 11.7.1's controller airs
+ * `serve:devices` without naming the devices it operates. So capability is
+ * evidence: the state: word it used (a closed list of nine, 11.7), whether
+ * level:, target: or url: ever appeared, which measurement keys it sends,
+ * and what came back when something was asked of it. A device that has
+ * never spoken is a Device with its readings, which is what this wapp
+ * showed for everything before this table existed.
+ */
+#define CAP_SWITCH   (1u << 0)    /* state:on | off                        */
+#define CAP_OPENING  (1u << 1)    /* state:open | closed                   */
+#define CAP_LOCK     (1u << 2)    /* state:locked | unlocked               */
+#define CAP_OCCUP    (1u << 3)    /* state:motion | clear -- report only   */
+#define CAP_BUTTON   (1u << 4)    /* state:pressed        -- report only   */
+#define CAP_DIM      (1u << 5)    /* level:                                */
+#define CAP_SETPOINT (1u << 6)    /* target:                               */
+#define CAP_MEASURE  (1u << 7)    /* a reading of 15.3 .. 15.5.1           */
+#define CAP_ENERGY   (1u << 8)    /* 15.5.2                                */
+#define CAP_TOTALS   (1u << 9)    /* life*, odometer                       */
+#define CAP_PICTURE  (1u << 10)   /* url: seen (11.7.2)                    */
+#define CAP_SNAPSHOT (1u << 11)   /* s:snapshot answered                   */
+#define CAP_STREAM   (1u << 12)   /* s:stream answered                     */
+#define CAP_ANSWERS  (1u << 13)   /* it answered something it was asked    */
+#define NCAP 14
+
+static const char *const CAPNAME[NCAP] = {
+    "Switches on and off", "Opens and closes", "Locks and unlocks",
+    "Reports movement", "Reports a button press", "Takes a level",
+    "Holds a setpoint", "Reports readings", "Reports energy",
+    "Keeps running totals", "Offers a picture", "Answers q:snapshot",
+    "Answers q:stream", "Answers what it is asked",
 };
-#define NSUMMARY ((int)(sizeof SUMMARY / sizeof SUMMARY[0]))
+
+typedef struct { const char *key; const char *word; unsigned cap; } ev_t;
+
+/* One row per thing a wire can prove. `word` narrows a key to one value,
+ * which is what the closed state: list needs; a null word means any value. */
+static const ev_t EV[] = {
+    {"state", "on", CAP_SWITCH},      {"state", "off", CAP_SWITCH},
+    {"state", "open", CAP_OPENING},   {"state", "closed", CAP_OPENING},
+    {"state", "locked", CAP_LOCK},    {"state", "unlocked", CAP_LOCK},
+    {"state", "motion", CAP_OCCUP},   {"state", "clear", CAP_OCCUP},
+    {"state", "pressed", CAP_BUTTON},
+    {"level", 0, CAP_DIM},            {"target", 0, CAP_SETPOINT},
+    {"url", 0, CAP_PICTURE},
+    {"s", "snapshot", CAP_SNAPSHOT | CAP_PICTURE | CAP_ANSWERS},
+    {"s", "stream", CAP_STREAM | CAP_PICTURE | CAP_ANSWERS},
+    {"s", "state", CAP_ANSWERS},
+    {"temp", 0, CAP_MEASURE},   {"hum", 0, CAP_MEASURE},
+    {"intemp", 0, CAP_MEASURE}, {"inhum", 0, CAP_MEASURE},
+    {"press", 0, CAP_MEASURE},  {"wind", 0, CAP_MEASURE},
+    {"wdir", 0, CAP_MEASURE},   {"gust", 0, CAP_MEASURE},
+    {"rain1", 0, CAP_MEASURE},  {"rain24", 0, CAP_MEASURE},
+    {"solar", 0, CAP_MEASURE},  {"volt", 0, CAP_MEASURE},
+    {"batt", 0, CAP_MEASURE},   {"dose", 0, CAP_MEASURE},
+    {"radon", 0, CAP_MEASURE},  {"rf", 0, CAP_MEASURE},
+    {"efield", 0, CAP_MEASURE}, {"mfield", 0, CAP_MEASURE},
+    {"produces", 0, CAP_ENERGY | CAP_MEASURE},
+    {"consumes", 0, CAP_ENERGY | CAP_MEASURE},
+    {"grid", 0, CAP_ENERGY | CAP_MEASURE},
+    {"storage", 0, CAP_ENERGY | CAP_MEASURE},
+    {"charged", 0, CAP_ENERGY | CAP_MEASURE},
+    {"load", 0, CAP_ENERGY | CAP_MEASURE},
+    {"lifeproduces", 0, CAP_TOTALS}, {"lifeconsumes", 0, CAP_TOTALS},
+    {"lifegridin", 0, CAP_TOTALS},   {"lifegridout", 0, CAP_TOTALS},
+    {"lifeload", 0, CAP_TOTALS},     {"lifedose", 0, CAP_TOTALS},
+    {"odometer", 0, CAP_TOTALS},
+};
+#define NEV ((int)(sizeof EV / sizeof EV[0]))
+
+/* What the Thing screen offers. A panel nobody can use is hidden, never
+ * drawn empty: a screen that offers an action a thing cannot do is a screen
+ * lying about what is in front of the person. */
+#define P_READINGS (1u << 0)
+#define P_EVENTS   (1u << 1)
+#define P_PICTURE  (1u << 2)
+
+typedef struct {
+    const char *id, *title, *icon;
+    unsigned need, forbid, panels;
+    const char *summary;      /* the keys of its one-line subtitle, in order */
+} class_t;
+
+/* First match wins, so the specific rows come first and the last row matches
+ * everything. Adding a kind of thing is one row here. */
+static const class_t CLASS[] = {
+    {"doorbell", "Doorbell", "campaign", CAP_BUTTON | CAP_PICTURE, 0,
+     P_EVENTS | P_PICTURE | P_READINGS, "state,batt,volt"},
+    {"bell", "Doorbell", "campaign", CAP_BUTTON, 0,
+     P_EVENTS | P_READINGS, "state,batt,volt"},
+    {"camera", "Camera", "video", CAP_PICTURE, CAP_BUTTON,
+     P_EVENTS | P_PICTURE | P_READINGS, "state,batt,volt"},
+    {"motion", "Movement sensor", "radar", CAP_OCCUP, CAP_PICTURE,
+     P_EVENTS | P_READINGS, "state,batt,volt"},
+    {"lock", "Lock", "lock", CAP_LOCK, 0, P_EVENTS | P_READINGS, "state,batt,volt"},
+    {"cover", "Gate or valve", "update", CAP_OPENING, 0,
+     P_EVENTS | P_READINGS, "state,level,batt,volt"},
+    {"thermostat", "Thermostat", "tune", CAP_SETPOINT, 0,
+     P_READINGS, "temp,target,batt,volt"},
+    {"meter", "Meter", "grid", CAP_ENERGY, 0, P_READINGS,
+     "produces,load,consumes,charged"},
+    {"switch", "Switch", "power", CAP_SWITCH, 0, P_READINGS,
+     "state,level,load,volt,batt"},
+    {"sensor", "Sensor", "monitor_heart", CAP_MEASURE, CAP_SWITCH, P_READINGS,
+     "temp,hum,volt,batt,dose"},
+    {"thing", "Device", "developer_board", 0, 0, P_READINGS,
+     "state,level,temp,hum,produces,load,consumes,volt,batt,charged,dose"},
+};
+#define NCLASS ((int)(sizeof CLASS / sizeof CLASS[0]))
+
+/* Every capability [wire] is evidence for. A wire and the "k:v" list this
+ * wapp keeps are the same shape, so one walker reads both. */
+static unsigned caps_of(const char *wire)
+{
+    unsigned caps = 0;
+    char key[20], v[40];
+    for (const char *f = wire; *f; ) {
+        while (*f == ' ') f++;
+        if (!*f || th_starts(f, "m:")) break;
+        unsigned k = 0;
+        while (f[k] && f[k] != ':' && f[k] != ' ' && k < sizeof key - 1) { key[k] = f[k]; k++; }
+        key[k] = 0;
+        while (*f && *f != ' ') f++;
+        if (!key[0] || !th_field(wire, key, v, sizeof v)) continue;
+        for (int i = 0; i < NEV; i++) {
+            if (!th_eq(EV[i].key, key)) continue;
+            if (EV[i].word && !th_eq(EV[i].word, v)) continue;
+            caps |= EV[i].cap;
+        }
+    }
+    return caps;
+}
+
+/* What it can do, all three sources folded: what it showed, what the person
+ * said, and what it refused. A refusal the person has overruled is ignored --
+ * a code:403 says "not on its allow list today", which its owner can change. */
+static unsigned caps_of_thing(const th_t *t)
+{
+    return (t->seen | t->forced) & ~(t->denied & ~t->forced);
+}
+
+static const class_t *class_by_id(const char *id)
+{
+    for (int i = 0; i < NCLASS; i++) if (th_eq(CLASS[i].id, id)) return &CLASS[i];
+    return 0;
+}
+
+static const class_t *class_of(const th_t *t)
+{
+    if (t->klass[0]) {
+        const class_t *c = class_by_id(t->klass);
+        if (c) return c;
+    }
+    unsigned caps = caps_of_thing(t);
+    for (int i = 0; i < NCLASS; i++)
+        if ((caps & CLASS[i].need) == CLASS[i].need && !(caps & CLASS[i].forbid))
+            return &CLASS[i];
+    return &CLASS[NCLASS - 1];
+}
+
+/* ── What this phone remembers about a thing ──────────────────────────
+ *
+ * A capability learned from a packet has to outlive the packet: a doorbell
+ * that rang yesterday is still a doorbell with the page closed and the
+ * archive swept. The record is one line per thing in this wapp's own
+ * key-value space, in the same "k:v" shape as a wire so one parser reads
+ * both, plus an index key naming the things there are records for.
+ */
+#define KV_INDEX "cap.list"
+
+static void kv_put(const char *key, const char *val)
+{
+    hal_kv_set(key, th_len(key), val, th_len(val));
+}
+
+static int kv_get(const char *key, char *out, unsigned cap)
+{
+    uint32_t n = hal_kv_get(key, th_len(key), out, cap - 1);
+    if (n >= cap) n = cap - 1;
+    out[n] = 0;
+    return n > 0;
+}
+
+static void kv_key(char *out, unsigned cap, const char *prefix, const char *call)
+{
+    th_cpy(out, prefix, cap);
+    th_cat(out, call, cap);
+}
+
+/* Is there anything worth writing down? A thing nobody watches, nobody
+ * renamed and that has shown nothing is not worth a key. */
+static int worth_keeping(const th_t *t)
+{
+    return t->seen || t->forced || t->denied || t->klass[0] || t->url[0];
+}
+
+static void index_add(const char *call)
+{
+    char list[1024] = "";
+    kv_get(KV_INDEX, list, sizeof list);
+    /* Already there? The list is comma separated, so compare whole words. */
+    for (const char *p = list; *p; ) {
+        const char *e = p;
+        while (*e && *e != ',') e++;
+        char one[CALL_MAX];
+        unsigned n = (unsigned)(e - p);
+        if (n >= sizeof one) n = sizeof one - 1;
+        for (unsigned i = 0; i < n; i++) one[i] = p[i];
+        one[n] = 0;
+        if (th_eq(one, call)) return;
+        p = *e ? e + 1 : e;
+    }
+    if (list[0]) th_cat(list, ",", sizeof list);
+    th_cat(list, call, sizeof list);
+    kv_put(KV_INDEX, list);
+}
+
+/* Two records, deliberately.
+ *
+ * More than one engine of this wapp can be alive at once -- a page and the
+ * headless one, and the host keeps a page's engine a while after it closes --
+ * and they share this key-value space. So what each one writes has to be
+ * safe to write from a copy that may be out of date. Capabilities are a
+ * UNION, which cannot go backwards whoever writes it; the watch flag and its
+ * cursor are written ONLY where they change, so a stale engine redrawing
+ * cannot switch off a watch somebody just armed. Found on the bench with
+ * three engines up (2026-09-22). */
+static void save_caps(th_t *t)
+{
+    char key[32], rec[400] = "", stored[400], v[128];
+    kv_key(key, sizeof key, "cap.", t->call);
+    unsigned seen = t->seen;
+    if (kv_get(key, stored, sizeof stored) &&
+        th_field(stored, "seen", v, sizeof v))
+        seen |= (unsigned)th_num(v);       /* what any engine ever saw */
+    t->seen = seen;
+    if (!worth_keeping(t)) { hal_kv_delete(key, th_len(key)); return; }
+    char n[24];
+    n[0] = 0; th_cat_u(n, seen, sizeof n);      th_put(rec, "seen", n, sizeof rec);
+    n[0] = 0; th_cat_u(n, t->denied, sizeof n); th_put(rec, "denied", n, sizeof rec);
+    n[0] = 0; th_cat_u(n, t->forced, sizeof n); th_put(rec, "forced", n, sizeof rec);
+    if (t->klass[0]) th_put(rec, "class", t->klass, sizeof rec);
+    if (t->url[0]) th_put(rec, "url", t->url, sizeof rec);
+    kv_put(key, rec);
+    index_add(t->call);
+}
+
+/* Written where the watch is armed, dropped, or moved on by a report. */
+static void save_watch(th_t *t)
+{
+    char key[32], rec[120] = "";
+    kv_key(key, sizeof key, "watch.", t->call);
+    if (!t->watch) { hal_kv_delete(key, th_len(key)); return; }
+    th_put(rec, "on", "1", sizeof rec);
+    if (t->cur_ts[0]) th_put(rec, "cts", t->cur_ts, sizeof rec);
+    if (t->cur_id[0]) th_put(rec, "cid", t->cur_id, sizeof rec);
+    kv_put(key, rec);
+    index_add(t->call);
+}
+
+static void save_thing(th_t *t) { save_caps(t); }
+
+static th_t *get(const char *call);
+
+static void load_thing(const char *call)
+{
+    char key[32], rec[400], v[128];
+    th_t *t = 0;
+    kv_key(key, sizeof key, "cap.", call);
+    if (kv_get(key, rec, sizeof rec)) {
+        t = get(call);
+        if (!t) return;
+        if (th_field(rec, "seen", v, sizeof v)) t->seen = (unsigned)th_num(v);
+        if (th_field(rec, "denied", v, sizeof v)) t->denied = (unsigned)th_num(v);
+        if (th_field(rec, "forced", v, sizeof v)) t->forced = (unsigned)th_num(v);
+        if (th_field(rec, "class", v, sizeof v)) th_cpy(t->klass, v, sizeof t->klass);
+        if (th_field(rec, "url", v, sizeof v)) th_cpy(t->url, v, sizeof t->url);
+    }
+    kv_key(key, sizeof key, "watch.", call);
+    if (!kv_get(key, rec, sizeof rec)) return;
+    if (!t) { t = get(call); if (!t) return; }
+    if (th_field(rec, "on", v, sizeof v)) t->watch = th_num(v) ? 1 : 0;
+    if (th_field(rec, "cts", v, sizeof v)) th_cpy(t->cur_ts, v, sizeof t->cur_ts);
+    if (th_field(rec, "cid", v, sizeof v)) th_cpy(t->cur_id, v, sizeof t->cur_id);
+}
+
+static void load_records(void)
+{
+    char list[1024] = "";
+    if (!kv_get(KV_INDEX, list, sizeof list)) return;
+    for (const char *p = list; *p; ) {
+        const char *e = p;
+        while (*e && *e != ',') e++;
+        char one[CALL_MAX];
+        unsigned n = (unsigned)(e - p);
+        if (n >= sizeof one) n = sizeof one - 1;
+        for (unsigned i = 0; i < n; i++) one[i] = p[i];
+        one[n] = 0;
+        if (one[0]) load_thing(one);
+        p = *e ? e + 1 : e;
+    }
+}
+
+/* Fold one wire's evidence into [t], and keep the pointer and the state word
+ * it carried. Newest first, so the first url: and the first state: win. */
+static void learn(th_t *t, const char *wire)
+{
+    unsigned before = t->seen;
+    t->seen |= caps_of(wire);
+    char v[128];
+    if (!t->url[0] && th_field(wire, "url", v, sizeof v)) th_cpy(t->url, v, sizeof t->url);
+    if (t->seen != before) save_thing(t);
+}
 
 /* ── The things, and what is remembered about each ───────────────────── */
 static th_t *find(const char *call)
@@ -137,7 +469,7 @@ static th_t *get(const char *call)
     } else {
         /* Forget the first one that is neither pinned nor open. */
         for (i = 0; i < g_nth; i++)
-            if (!pinned(g_th[i].call) && !th_eq(g_th[i].call, g_sel)) break;
+            if (!pinned(g_th[i].call) && !g_th[i].watch && !th_eq(g_th[i].call, g_sel)) break;
         if (i == g_nth) return 0;
     }
     t = &g_th[i];
@@ -209,8 +541,9 @@ static void nick_of(th_t *t)
     for (const char *p = th_json_top(g_big); p; ) {
         p = th_json_next(p, g_row, sizeof g_row);
         if (!g_row[0]) break;
-        if (th_json(g_row, "wire", g_wire, sizeof g_wire) &&
-            th_field(g_wire, "nick", t->nick, sizeof t->nick)) return;
+        if (!th_json(g_row, "wire", g_wire, sizeof g_wire)) continue;
+        learn(t, g_wire);
+        if (th_field(g_wire, "nick", t->nick, sizeof t->nick)) return;
     }
 }
 
@@ -229,8 +562,8 @@ static int known_key(const char *key)
  * total. A site with one source sends everything in one packet. */
 static void merge(th_t *t)
 {
-    t->rd[0] = t->src[0] = t->rd_sig[0] = 0;
-    t->rd_ts = 0;
+    t->rd[0] = t->src[0] = t->rd_sig[0] = t->state[0] = t->events[0] = 0;
+    t->rd_ts = t->state_ms = 0;
     int mixed = 0;
     char v[40], s[16];
     for (const char *p = th_json_top(g_big); p; ) {
@@ -243,6 +576,26 @@ static void merge(th_t *t)
         p = th_json_next(p, g_row, sizeof g_row);
         if (!g_row[0]) break;
         if (!th_json(g_row, "wire", g_wire, sizeof g_wire)) continue;
+        learn(t, g_wire);
+        if (th_field(g_wire, "state", v, sizeof v)) {
+            char ts[24];
+            th_json(g_row, "ts", ts, sizeof ts);
+            if (!t->state[0]) {
+                th_cpy(t->state, v, sizeof t->state);
+                t->state_ms = th_num(ts);
+            }
+            /* What it did, kept as it is read: one line per report, and the
+             * detail screen draws from this rather than asking again. */
+            if ((th_eq(v, "pressed") || th_eq(v, "motion") || th_eq(v, "clear")) &&
+                th_len(t->events) < sizeof t->events - 40) {
+                if (t->events[0]) th_cat(t->events, " ", sizeof t->events);
+                th_cat(t->events, v, sizeof t->events);
+                char u[128];
+                if (th_field(g_wire, "url", u, sizeof u)) th_cat(t->events, "+pic", sizeof t->events);
+                th_cat(t->events, ",", sizeof t->events);
+                th_cat(t->events, ts[0] ? ts : "0", sizeof t->events);
+            }
+        }
         if (!t->rd_ts) {
             th_json(g_row, "ts", v, sizeof v);
             t->rd_ts = th_num(v);
@@ -313,7 +666,19 @@ static int readings(th_t *t, int have, char *out, unsigned cap)
             char v[24];
             if (th_json(g_host, self[i], v, sizeof v)) th_put(out, self[i], v, cap);
         }
-        if (out[0]) return 1;
+        if (out[0]) {
+            learn(t, out);
+            /* The state word heard live is the newest there is: the archive's
+             * copy of the same packet may not have been read yet. */
+            char w[16], a[24];
+            if (th_field(out, "state", w, sizeof w)) {
+                th_cpy(t->state, w, sizeof t->state);
+                unsigned long long now = hal_time_epoch(), age = 0;
+                if (th_json(g_host, "agoMs", a, sizeof a)) age = th_num(a) / 1000ULL;
+                t->state_ms = now > age ? now - age : now;
+            }
+            return 1;
+        }
     }
     arch_read(t);
     th_cpy(out, t->rd, cap);
@@ -322,17 +687,22 @@ static int readings(th_t *t, int have, char *out, unsigned cap)
 
 /* "on, 23.8V, 64%" -- the first three that it has. Production says where
  * it comes from: "1900W solar". */
-static void summary(const char *rd, char *out, unsigned cap)
+static void summary(const class_t *c, const char *rd, char *out, unsigned cap)
 {
     out[0] = 0;
     int n = 0;
-    for (int i = 0; i < NSUMMARY && n < 3; i++) {
+    for (const char *k = c->summary; *k && n < 3; ) {
+        char key[20];
+        unsigned i = 0;
+        while (*k && *k != ',' && i < sizeof key - 1) key[i++] = *k++;
+        key[i] = 0;
+        while (*k == ',') k++;
         char v[40];
-        if (!th_field(rd, SUMMARY[i], v, sizeof v)) continue;
+        if (!key[0] || !th_field(rd, key, v, sizeof v)) continue;
         if (n++) th_cat(out, ", ", cap);
         th_cat(out, v, cap);
         char s[16];
-        if (th_eq(SUMMARY[i], "produces") && th_field(rd, "source", s, sizeof s)) {
+        if (th_eq(key, "produces") && th_field(rd, "source", s, sizeof s)) {
             th_cat(out, " ", cap);
             th_cat(out, s, cap);
         }
@@ -348,11 +718,42 @@ static void ago_words(unsigned long long ms, char *out, unsigned cap)
     else                          { th_cat_u(out, ms / 86400000ULL, cap); th_cat(out, " days ago", cap); }
 }
 
+/* "Rang, 12 s ago". XPRS.md 11.7 has no timeout for `motion`, so a movement
+ * nobody cleared is aged rather than left standing: a camera that died
+ * mid-event would otherwise read as moving for ever. */
+static void state_words(const th_t *t, char *out, unsigned cap);
+
 static unsigned long long reading_age_ms(const th_t *t)
 {
     unsigned long long now = hal_time_epoch();
     if (!t->rd_ts || now < t->rd_ts) return 0;
     return (now - t->rd_ts) * 1000ULL;
+}
+
+static unsigned long long state_age_ms(const th_t *t)
+{
+    unsigned long long now = hal_time_epoch();
+    if (!t->state_ms || now < t->state_ms) return 0;
+    return (now - t->state_ms) * 1000ULL;
+}
+
+static void state_words(const th_t *t, char *out, unsigned cap)
+{
+    out[0] = 0;
+    if (!t->state[0]) return;
+    const char *word = th_eq(t->state, "pressed") ? "Rang"
+                     : th_eq(t->state, "motion")  ? "Movement"
+                     : th_eq(t->state, "clear")   ? "Clear" : 0;
+    if (!word) return;
+    unsigned long long age = state_age_ms(t);
+    /* Nothing cleared it and it is old: say when, not that it is happening. */
+    th_cpy(out, word, cap);
+    if (t->state_ms) {
+        char a[32];
+        ago_words(age, a, sizeof a);
+        th_cat(out, ", ", cap);
+        th_cat(out, a, cap);
+    }
 }
 
 /* "LAN" / "BLE -70 dBm", from the core's last sighting. */
@@ -387,10 +788,21 @@ static void item(th_t *t, int *first)
     nick_of(t);
     char rd[512], sum[96], sub[160] = "", tags[160] = "", w[48];
     readings(t, have, rd, sizeof rd);
-    summary(rd, sum, sizeof sum);
+    const class_t *c = class_of(t);
+    summary(c, rd, sum, sizeof sum);
     if (t->nick[0]) th_cpy(sub, t->call, sizeof sub);
-    if (sum[0]) { if (sub[0]) th_cat(sub, ", ", sizeof sub); th_cat(sub, sum, sizeof sub); }
+    char ev[64];
+    state_words(t, ev, sizeof ev);
+    if ((c->panels & P_EVENTS) && ev[0]) {
+        if (sub[0]) th_cat(sub, ", ", sizeof sub);
+        th_cat(sub, ev, sizeof sub);
+    } else if (sum[0]) {
+        if (sub[0]) th_cat(sub, ", ", sizeof sub);
+        th_cat(sub, sum, sizeof sub);
+    }
     if (!sub[0]) th_cpy(sub, "Nothing reported yet", sizeof sub);
+    tag(tags, sizeof tags, c->title);
+    if (t->watch) tag(tags, sizeof tags, "watched");
     if (have) {
         char v[24];
         th_json(g_host, "agoMs", v, sizeof v);
@@ -413,6 +825,8 @@ static void item(th_t *t, int *first)
     th_jesc(g_out, t->nick[0] ? t->nick : t->call, sizeof g_out);
     th_cat(g_out, "\",\"subtitle\":\"", sizeof g_out);
     th_jesc(g_out, sub, sizeof g_out);
+    th_cat(g_out, "\",\"icon\":\"", sizeof g_out);
+    th_cat(g_out, c->icon, sizeof g_out);
     th_cat(g_out, "\",\"tags\":[", sizeof g_out);
     th_cat(g_out, tags, sizeof g_out);
     th_cat(g_out, "]", sizeof g_out);
@@ -444,6 +858,10 @@ static void section(const char *title, char list[][CALL_MAX], int n, int *any)
 
 /* The devices whose identity the archive holds: asked again only after the
  * archive changed (core.archive), never because the room did. */
+/* The thing whose Settings fields have been filled in: they are pushed once
+ * per screen opening, not per draw (see push_detail). */
+static char g_fields_for[CALL_MAX];
+
 static char g_known[TH_MAX][CALL_MAX];
 static int  g_nknown;
 static unsigned g_known_gen;
@@ -463,10 +881,13 @@ static void load_known(void)
         for (int i = 0; i < g_nknown; i++) if (th_eq(g_known[i], from)) dup = 1;
         if (dup) continue;
         th_cpy(g_known[g_nknown++], from, CALL_MAX);
-        /* The row is its identity: the name comes free. */
+        /* The row is its identity: the name comes free, and so does what
+         * it said about itself -- 11.7.2 puts a camera's url: here, and a
+         * thing that has never been asked for is known by this alone. */
         th_t *t = get(from);
-        if (t && !t->nick[0] && th_json(g_row, "wire", g_wire, sizeof g_wire) &&
-            th_field(g_wire, "nick", nick, sizeof nick)) {
+        if (!t || !th_json(g_row, "wire", g_wire, sizeof g_wire)) continue;
+        learn(t, g_wire);
+        if (!t->nick[0] && th_field(g_wire, "nick", nick, sizeof nick)) {
             th_cpy(t->nick, nick, sizeof t->nick);
             t->nick_tried = 1;
             t->nick_ms = hal_time_ms();
@@ -548,12 +969,20 @@ static void tile(const char *id, const char *label, const char *text)
     th_cat(g_out, "}", sizeof g_out);
 }
 
-static void details_begin(const char *field)
+/* A details list, optionally under a heading of its own. A heading that
+ * belongs to the list rather than to a group around it is one that goes
+ * away with it: a group cannot be hidden, and "What it did" standing over
+ * nothing is a heading that lies. */
+static void details_begin_titled(const char *field, const char *title)
 {
     th_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"", sizeof g_out);
     th_cat(g_out, field, sizeof g_out);
-    th_cat(g_out, "\",\"value\":[{\"title\":\"\",\"items\":[", sizeof g_out);
+    th_cat(g_out, "\",\"value\":[{\"title\":\"", sizeof g_out);
+    th_jesc(g_out, title, sizeof g_out);
+    th_cat(g_out, "\",\"items\":[", sizeof g_out);
 }
+
+static void details_begin(const char *field) { details_begin_titled(field, ""); }
 
 static void detail(const char *label, const char *value)
 {
@@ -580,6 +1009,17 @@ static void details_end(void)
         th_cat(g_out, "]}]}", sizeof g_out);
     }
     say(g_out);
+}
+
+/* One field, one value: the enum and string the person corrects with. */
+static void say_field(const char *name, const char *value)
+{
+    char m[320] = "{\"type\":\"ui.field.set\",\"field\":\"";
+    th_cat(m, name, sizeof m);
+    th_cat(m, "\",\"value\":\"", sizeof m);
+    th_jesc(m, value, sizeof m);
+    th_cat(m, "\"}", sizeof m);
+    say(m);
 }
 
 static void flag_hidden(const char *name, int hidden)
@@ -668,8 +1108,81 @@ static void push_detail(void)
         if (th_field(rd, TOTALS[i][0], v, sizeof v)) detail(TOTALS[i][1], v);
     details_end();
 
+    /* What it did: the state: words it aired, newest first. Re-set whole on
+     * every draw, so it cannot double the way an appended log would. */
+    const class_t *c = class_of(t);
+    if (c->panels & P_EVENTS) {
+        arch_read(t);          /* cached on g_arch_gen: one read per change */
+        details_begin_titled("th_events", "What it did");
+        int shown = 0;
+        for (const char *f = t->events; *f && shown < 8; ) {
+            while (*f == ' ') f++;
+            if (!*f) break;
+            char word[40], at[24];
+            unsigned k = 0;
+            while (f[k] && f[k] != ',' && f[k] != ' ' && k < sizeof word - 1) { word[k] = f[k]; k++; }
+            word[k] = 0;
+            if (f[k] == ',') k++;
+            unsigned a = 0;
+            while (f[k] && f[k] != ' ' && a < sizeof at - 1) at[a++] = f[k++];
+            at[a] = 0;
+            f += k;
+            if (!word[0]) continue;
+            int pic = 0;
+            unsigned wl = th_len(word);
+            if (wl > 4 && th_eq(word + wl - 4, "+pic")) { word[wl - 4] = 0; pic = 1; }
+            char when[48], line[80];
+            unsigned long long at_s = th_num(at), now = hal_time_epoch();
+            ago_words(at_s && now > at_s ? (now - at_s) * 1000ULL : 0, when, sizeof when);
+            th_cpy(line, th_eq(word, "pressed") ? "Rang"
+                       : th_eq(word, "motion") ? "Movement" : "Clear", sizeof line);
+            if (pic) th_cat(line, ", picture", sizeof line);
+            detail(when, line);
+            shown++;
+        }
+        details_end();
+    }
+
+    /* What it can do, and who says so. A refusal is shown rather than hidden:
+     * "it can, you may not" is a different thing from "it cannot". */
+    details_begin("th_can");
+    unsigned caps = caps_of_thing(t);
+    for (int i = 0; i < NCAP; i++) {
+        unsigned bit = 1u << i;
+        if (!(caps & bit) && !(t->denied & bit)) continue;
+        const char *why = (t->forced & bit) ? "You said so"
+                        : (t->denied & bit) ? "It answered 400: it has no such state"
+                        : "Heard on the air";
+        detail(CAPNAME[i], why);
+    }
+    if (t->notmine)
+        detail("Refused", "403: this station is not on its allow list");
+    if (!caps && !t->denied)
+        detail("Nothing yet", "It has not said what it can do");
+    details_end();
+
+    /* The person's corrections, pushed when the screen opens and after they
+     * are taken -- never on a redraw. A redraw two seconds into typing an
+     * address, or one second after picking a kind, would put the stored
+     * value back under the person's hands and take the choice with it
+     * (found on the bench: Save then sent "work it out" every time). */
+    if (!th_eq(g_fields_for, t->call)) {
+        th_cpy(g_fields_for, t->call, sizeof g_fields_for);
+        say_field("th_class", t->klass[0] ? t->klass : "auto");
+        say_field("th_url", t->url);
+    }
+
     flag_hidden("pin", pinned(t->call));
     flag_hidden("unpin", !pinned(t->call));
+    /* A thing with no running totals has no Totals list: an empty panel
+     * saying "nothing to show" is a row that says nothing. */
+    flag_hidden("th_totals", !(caps & CAP_TOTALS));
+    /* Telling is offered only for a thing that reports events; a meter has
+     * nothing to interrupt anybody with. */
+    int tellable = (c->panels & P_EVENTS) != 0;
+    flag_hidden("watch", !tellable || t->watch);
+    flag_hidden("unwatch", !tellable || !t->watch);
+    flag_hidden("th_events", !(c->panels & P_EVENTS));
 }
 
 static void screen_open(const char *name, const char *title)
@@ -711,9 +1224,107 @@ static void discover(void)
     }
 }
 
+/* ── Being told, and telling ──────────────────────────────────────────
+ *
+ * A watched thing is one the person asked to hear about. The packets come
+ * from the core on `xprs.observation` (one topic per 4.2 type), and the
+ * subscription is held only while something is watched: a subscription is a
+ * cost the whole phone pays for as long as it is held. Nothing polls, and
+ * with no page open there is no clock at all.
+ */
+static int g_sub_obs;
+
+static int anything_watched(void)
+{
+    for (int i = 0; i < g_nth; i++) if (g_th[i].watch) return 1;
+    return 0;
+}
+
+static void watch_sync(void)
+{
+    static const char obs[] = "xprs.observation";
+    int want = anything_watched();
+    if (want && !g_sub_obs) {
+        hal_event_subscribe(obs, sizeof obs - 1);
+        g_sub_obs = 1;
+    } else if (!want && g_sub_obs) {
+        hal_event_unsubscribe(obs, sizeof obs - 1);
+        g_sub_obs = 0;
+    }
+}
+
+/* Is [a] no later than [b]? Both are 4.8 timestamps, which sort as text. */
+static int ts_le(const char *a, const char *b)
+{
+    if (!a[0] || !b[0]) return 0;
+    for (unsigned i = 0;; i++) {
+        if (a[i] == b[i]) { if (!a[i]) return 1; continue; }
+        return (unsigned char)a[i] < (unsigned char)b[i];
+    }
+}
+
+static void tell(th_t *t, const char *word, const char *id)
+{
+    const char *body = th_eq(word, "pressed") ? "Someone at the door"
+                     : th_eq(word, "motion")  ? "Movement seen" : 0;
+    if (!body) return;                   /* `clear` ends an event, it is not news */
+    char m[420] = "{\"type\":\"notify\",\"level\":\"";
+    th_cat(m, th_eq(word, "pressed") ? "warning" : "info", sizeof m);
+    th_cat(m, "\",\"title\":\"", sizeof m);
+    th_jesc(m, t->nick[0] ? t->nick : t->call, sizeof m);
+    th_cat(m, "\",\"body\":\"", sizeof m);
+    th_jesc(m, body, sizeof m);
+    /* The 5 identifier, so the same press heard twice over two bearers is one
+     * notification even if this wapp were restarted between them. */
+    th_cat(m, "\",\"tag\":\"thing.", sizeof m);
+    th_jesc(m, t->call, sizeof m);
+    th_cat(m, ".", sizeof m);
+    th_jesc(m, word, sizeof m);
+    th_cat(m, ".", sizeof m);
+    th_jesc(m, id, sizeof m);
+    th_cat(m, "\",\"scope\":\"both\"}", sizeof m);
+    say(m);
+}
+
+/* One `t:observation` the core handed over. */
+static void on_observation(void)
+{
+    char from[CALL_MAX];
+    if (!th_json(g_ev, "from", from, sizeof from) || !from[0]) return;
+    th_t *t = find(from);
+    if (!t || !t->watch) return;          /* the whole cost of an unwatched packet */
+
+    char id[28] = "", ts[24] = "", wire[300] = "";
+    th_json(g_ev, "id", id, sizeof id);
+    if (!th_json(g_ev, "wire", wire, sizeof wire)) return;
+    th_field(wire, "ts", ts, sizeof ts);   /* the packet's own 4.8 stamp */
+
+    learn(t, wire);
+    g_dirty = 1;
+
+    char word[16];
+    if (!th_field(wire, "state", word, sizeof word)) return;
+    if (!th_eq(word, "pressed") && !th_eq(word, "motion") && !th_eq(word, "clear")) return;
+
+    /* Already told about: the same packet, or one older than the last we told
+     * about (a backlog replayed at start is not news). */
+    if (id[0] && th_eq(t->cur_id, id)) return;
+    if (ts[0] && t->cur_ts[0] && ts_le(ts, t->cur_ts)) return;
+
+    th_cpy(t->cur_id, id, sizeof t->cur_id);
+    th_cpy(t->cur_ts, ts, sizeof t->cur_ts);
+    th_cpy(t->state, word, sizeof t->state);
+    t->state_ms = hal_time_epoch();
+    save_watch(t);
+    tell(t, word, id);
+}
+
 /* ── When to draw ─────────────────────────────────────────────────────── */
 static void draw(int force)
 {
+    /* Nobody is looking: an engine woken by a packet with no page draws
+     * nothing, and the host would drop it anyway. Telling still happens. */
+    if (!hal_ui_attached()) { g_dirty = 0; return; }
     unsigned long long now = hal_time_ms();
     if (!force && !g_dirty) return;
     if (!force && g_drawn && now - g_drawn_ms < REDRAW_MS) return;  /* the tick finishes it */
@@ -733,6 +1344,7 @@ static void drain_events(void)
         g_topic[sizeof g_topic - 1] = 0;
         if (th_eq(g_topic, "core.archive")) { g_arch_gen++; g_dirty = 1; }
         else if (th_eq(g_topic, "core.monitor")) g_dirty = 1;
+        else if (th_eq(g_topic, "xprs.observation")) on_observation();
     }
 }
 
@@ -751,6 +1363,7 @@ static void on_command(void)
         char id[CALL_MAX];
         if (!th_json(g_buf, "things_id", id, sizeof id) || !id[0]) return;
         th_cpy(g_sel, id, sizeof g_sel);
+        g_fields_for[0] = 0;
         push_detail();
         th_t *t = find(g_sel);
         screen_open("Thing", t && t->nick[0] ? t->nick : g_sel);
@@ -767,6 +1380,59 @@ static void on_command(void)
         note(l);
         g_arch_gen++;      /* what the archive keeps for it just changed */
         draw(1);
+    } else if (th_eq(cmd, "watch") || th_eq(cmd, "unwatch")) {
+        if (!g_sel[0]) return;
+        th_t *t = get(g_sel);
+        if (!t) return;
+        t->watch = th_eq(cmd, "watch");
+        if (t->watch) {
+            /* Start from the newest report already held: the archive is full
+             * of yesterday's presses and nobody wants to be told about those. */
+            char q[96];
+            query_from(q, sizeof q, t->call, "observation", 1);
+            t->cur_ts[0] = t->cur_id[0] = 0;
+            if (history(q)) {
+                const char *p = th_json_top(g_big);
+                if (p && th_json_next(p, g_row, sizeof g_row) &&
+                    th_json(g_row, "wire", g_wire, sizeof g_wire))
+                    th_field(g_wire, "ts", t->cur_ts, sizeof t->cur_ts);
+            }
+        }
+        save_watch(t);
+        watch_sync();
+        draw(1);
+    } else if (th_eq(cmd, "th_apply")) {
+        if (!g_sel[0]) return;
+        th_t *t = get(g_sel);
+        if (!t) return;
+        char v[128];
+        if (th_json(g_buf, "th_class", v, sizeof v)) {
+            if (th_eq(v, "auto") || !v[0]) t->klass[0] = 0;
+            else if (class_by_id(v)) th_cpy(t->klass, v, sizeof t->klass);
+            else { char l[80] = "kind not recognised: "; th_cat(l, v, sizeof l); note(l); }
+        }
+        if (th_json(g_buf, "th_url", v, sizeof v)) {
+            th_cpy(t->url, v, sizeof t->url);
+            /* An address the person typed is evidence like any other: it is
+             * a camera whether or not it has ever aired a url:. */
+            if (t->url[0]) t->forced |= CAP_PICTURE;
+            else t->forced &= ~CAP_PICTURE;
+        }
+        save_thing(t);
+        g_fields_for[0] = 0;       /* show what was taken, once */
+        note("kept what you said about this thing");
+        draw(1);
+    } else if (th_eq(cmd, "th_forget")) {
+        if (!g_sel[0]) return;
+        th_t *t = get(g_sel);
+        if (!t) return;
+        t->forced = t->denied = 0;
+        t->klass[0] = t->url[0] = 0;
+        t->notmine = 0;
+        save_thing(t);
+        g_fields_for[0] = 0;
+        note("worked it out again from what it says");
+        draw(1);
     } else if (th_eq(cmd, "back")) {
         g_sel[0] = 0;
         say("{\"type\":\"ui.screen.close\"}");
@@ -776,8 +1442,11 @@ static void on_command(void)
 /* ── Entry points ─────────────────────────────────────────────────────── */
 int32_t module_init(void)
 {
-    /* Nobody looking, nothing to do: the core keeps and fetches what is
-     * pinned whether or not this wapp runs. */
+    /* What is known about each thing outlives the page: a doorbell that rang
+     * yesterday is still a doorbell with nobody looking, and being told about
+     * the next ring is the one job that matters when the screen is off. */
+    load_records();
+    watch_sync();
     if (!hal_ui_attached()) return 0;
     static const char mon[] = "core.monitor", arc[] = "core.archive";
     hal_event_subscribe(mon, sizeof mon - 1);
@@ -808,7 +1477,12 @@ int32_t module_handle_event(void)
 }
 
 /* The page's clock, only to finish a redraw the two-second throttle held
- * back; the engine exists only while the page is open. */
-int32_t module_tick_interval_ms(void) { return (int32_t)REDRAW_MS; }
+ * back. With no page there is nothing to draw and so no clock at all: a
+ * watched thing costs a wake per packet the core hands over, and nothing
+ * per hour (performance.md 8.4). */
+int32_t module_tick_interval_ms(void)
+{
+    return hal_ui_attached() ? (int32_t)REDRAW_MS : 0;
+}
 
 void module_destroy(void) {}
