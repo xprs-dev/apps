@@ -352,3 +352,78 @@ uint32_t hal_decrypt(const char *pk, uint32_t pl, const char *blob, uint32_t bl,
     out[n] = 0;
     return n;
 }
+
+/* ── a socket, and what a camera would send down one ──────────────────
+ * The live view is a TCP connection carrying multipart JPEGs. The test
+ * scripts what the far end does: whether it connects at all, and the bytes
+ * it sends, handed over in pieces the way a socket hands them over. */
+static struct {
+    int  live;
+    int  state;                 /* 0 connecting, 1 open, 2 closed */
+    char host[64];
+    int  port;
+    char sent[512];
+    unsigned char rx[1200000];
+    unsigned rxn, rxoff;
+} g_sock;
+int g_sock_opens;
+int g_sock_open_rc = 0;         /* -1 = the host refuses to open one */
+int g_sock_closes;
+
+void sock_reset(void)
+{
+    memset(&g_sock, 0, sizeof g_sock);
+    g_sock_opens = g_sock_closes = 0;
+    g_sock_open_rc = 0;
+}
+void sock_state(int s) { g_sock.state = s; }
+void sock_feed(const void *b, unsigned n)
+{
+    if (g_sock.rxn + n > sizeof g_sock.rx) return;
+    memcpy(g_sock.rx + g_sock.rxn, b, n);
+    g_sock.rxn += n;
+}
+const char *sock_sent(void) { return g_sock.sent; }
+const char *sock_host(void) { return g_sock.host; }
+int sock_port(void) { return g_sock.port; }
+unsigned sock_unread(void) { return g_sock.rxn - g_sock.rxoff; }
+
+int32_t hal_socket_open(const char *host, uint32_t hl, int32_t port)
+{
+    g_sock_opens++;
+    if (g_sock_open_rc < 0) return -1;
+    memset(&g_sock, 0, sizeof g_sock);
+    snprintf(g_sock.host, sizeof g_sock.host, "%.*s", (int)hl, host);
+    g_sock.port = port;
+    g_sock.live = 1;
+    g_sock.state = 1;
+    return 7;
+}
+int32_t hal_socket_status(int32_t h) { return h == 7 && g_sock.live ? g_sock.state : 2; }
+int32_t hal_socket_send(int32_t h, const char *b, uint32_t n)
+{
+    if (h != 7 || !g_sock.live || g_sock.state != 1) return -1;
+    unsigned at = (unsigned)strlen(g_sock.sent);
+    unsigned room = (unsigned)sizeof g_sock.sent - at - 1;
+    if (n > room) n = room;
+    memcpy(g_sock.sent + at, b, n);
+    g_sock.sent[at + n] = 0;
+    return (int32_t)n;
+}
+uint32_t hal_socket_recv(int32_t h, char *b, uint32_t cap)
+{
+    if (h != 7 || !g_sock.live) return 0;
+    unsigned left = g_sock.rxn - g_sock.rxoff;
+    if (!left || !cap) return 0;
+    unsigned n = left < cap ? left : cap;
+    memcpy(b, g_sock.rx + g_sock.rxoff, n);
+    g_sock.rxoff += n;
+    return n;
+}
+void hal_socket_close(int32_t h)
+{
+    if (h != 7) return;
+    g_sock_closes++;
+    g_sock.live = 0;
+    g_sock.state = 2;
+}

@@ -86,7 +86,14 @@ static int  g_drawn;
 static unsigned long long g_asked_ms;   /* when the core last agreed to ask */
 static int  g_asked;                    /* 1 asked, 0 not asked, -1 never tried */
 
-static char g_ev[1024];
+/* A delivered packet is bigger than it looks: the core's row carries the
+ * packet's fields as pairs AND the wire as one string AND the provenance
+ * (bearer, via:, link:, the signature verdict), so a doorbell's press --
+ * seven fields, a url: and a 64-character signature -- lands at well over a
+ * kilobyte. At 1024 the row arrived truncated: `from` parsed, `wire` did
+ * not, and the press was dropped without a word. Found with a real doorbell
+ * on 2026-09-23; a weather station's observation is longer still. */
+static char g_ev[4096];
 static char g_topic[64];
 static char g_buf[2048];
 static char g_out[16384];
@@ -97,12 +104,21 @@ static char g_wire[300];
 
 /* ── A picture, and what it costs to hold one ─────────────────────────
  *
- * 96 KB is the bound, stated rather than hoped for (performance.md 8.9): a
- * 640x480 still off a camera's substream is 20 to 60 KB, and a 5 MP one off
- * its main stream is not something a phone should be handed down a wapp's
- * throat. Bigger than this is refused with a line saying so. The base64 of
- * it, plus the little JSON around it, is the message the host is given. */
-#define PIC_MAX 98304u
+ * One megabyte is the bound, stated rather than hoped for (performance.md
+ * 8.9), and it is what a real doorbell turned out to need: the D340W serves
+ * one size of picture and one only, 2560x1920 at about 700 KB, on its still
+ * and in every frame of its live view. Asked for a small one five different
+ * ways -- `width=`, `snapType=sub`, the sub channel its own web client uses
+ * -- it answers with the same 5 MP JPEG (measured 2026-09-23). A camera that
+ * serves a 40 KB substream still costs 40 KB here; this bound is what the
+ * expensive kind needs, not what the usual kind costs.
+ *
+ * What the size then decides is CADENCE, not admission: a live view of
+ * 700 KB frames is paced to one every two seconds, because each one is a
+ * megabyte of base64 through the host and a 5 MP decode on the isolate the
+ * widgets run on (performance.md 8.14). Bigger than the bound is refused
+ * with a line saying so. */
+#define PIC_MAX 1048576u
 static unsigned char g_pic[PIC_MAX];
 static char g_msg[PIC_MAX * 4 / 3 + 256];
 
@@ -219,6 +235,7 @@ static const ev_t EV[] = {
 #define P_READINGS (1u << 0)
 #define P_EVENTS   (1u << 1)
 #define P_PICTURE  (1u << 2)
+#define P_LIVE     (1u << 3)    /* it can be watched, not only sampled */
 
 typedef struct {
     const char *id, *title, *icon;
@@ -230,11 +247,11 @@ typedef struct {
  * everything. Adding a kind of thing is one row here. */
 static const class_t CLASS[] = {
     {"doorbell", "Doorbell", "campaign", CAP_BUTTON | CAP_PICTURE, 0,
-     P_EVENTS | P_PICTURE | P_READINGS, "state,batt,volt"},
+     P_EVENTS | P_PICTURE | P_LIVE | P_READINGS, "state,batt,volt"},
     {"bell", "Doorbell", "campaign", CAP_BUTTON, 0,
      P_EVENTS | P_READINGS, "state,batt,volt"},
     {"camera", "Camera", "video", CAP_PICTURE, CAP_BUTTON,
-     P_EVENTS | P_PICTURE | P_READINGS, "state,batt,volt"},
+     P_EVENTS | P_PICTURE | P_LIVE | P_READINGS, "state,batt,volt"},
     {"motion", "Movement sensor", "radar", CAP_OCCUP, CAP_PICTURE,
      P_EVENTS | P_READINGS, "state,batt,volt"},
     {"lock", "Lock", "lock", CAP_LOCK, 0, P_EVENTS | P_READINGS, "state,batt,volt"},
@@ -967,6 +984,23 @@ static void draw_list(void)
  *             device's key before it is written down.
  *
  * A vendor that needs a third is a third row in DRIVER[].
+ *
+ * ── Connecting is something a person does ───────────────────────────────
+ *
+ * Nothing on this side happens by itself. Hearing a doorbell ring does not
+ * make this phone open a connection to a camera on the house network, and a
+ * thing appearing in the list does not either: a device is heard on the air,
+ * it is listed, and what this wapp does about it over the LAN begins when
+ * somebody presses Connect. Connecting asks the thing what it can do
+ * (`/api/services`, the one request that answers instead of probing), writes
+ * down the answer, and only then does the screen offer the actions that
+ * answer supports. Before that the LAN actions are not greyed out, they are
+ * not there: a button that needs an address nobody has given is a button
+ * that exists to disappoint.
+ *
+ * What is kept per thing: how to reach it (the person's), and what it said
+ * when asked (the thing's). `at` is the second one's date, and it is what
+ * "connected" means here -- there is no socket held open between actions.
  */
 typedef struct {
     char vendor[12];        /* "", "link", "reolink"                     */
@@ -974,6 +1008,9 @@ typedef struct {
     char user[24];
     char pass[64];          /* plaintext ONLY in memory, never written   */
     char path[80];          /* what to GET for the "link" driver         */
+    char svc[48];           /* what it answered: "snapshot,stream"       */
+    char base[96];          /* the address that answered                 */
+    unsigned long long at;  /* when it answered; 0 = never connected     */
 } conn_t;
 
 static char g_my_npub[70];
@@ -1006,6 +1043,9 @@ static void conn_load(const char *call, conn_t *c)
     if (th_field(rec, "host", v, sizeof v)) th_cpy(c->host, v, sizeof c->host);
     if (th_field(rec, "user", v, sizeof v)) th_cpy(c->user, v, sizeof c->user);
     if (th_field(rec, "path", v, sizeof v)) th_cpy(c->path, v, sizeof c->path);
+    if (th_field(rec, "svc", v, sizeof v)) th_cpy(c->svc, v, sizeof c->svc);
+    if (th_field(rec, "base", v, sizeof v)) th_cpy(c->base, v, sizeof c->base);
+    if (th_field(rec, "at", v, sizeof v)) c->at = th_num(v);
     /* The password comes back only if this device's key can open it. */
     if (th_field(rec, "pass", v, sizeof v) && my_npub()[0]) {
         char clear[80];
@@ -1019,7 +1059,7 @@ static void conn_save(const char *call, const conn_t *c)
 {
     char key[32], rec[400] = "";
     conn_key(key, sizeof key, call);
-    if (!c->vendor[0] && !c->host[0] && !c->path[0]) {
+    if (!c->vendor[0] && !c->host[0] && !c->path[0] && !c->base[0] && !c->at) {
         hal_kv_delete(key, th_len(key));
         return;
     }
@@ -1027,6 +1067,13 @@ static void conn_save(const char *call, const conn_t *c)
     if (c->host[0]) th_put(rec, "host", c->host, sizeof rec);
     if (c->user[0]) th_put(rec, "user", c->user, sizeof rec);
     if (c->path[0]) th_put(rec, "path", c->path, sizeof rec);
+    if (c->svc[0]) th_put(rec, "svc", c->svc, sizeof rec);
+    if (c->base[0]) th_put(rec, "base", c->base, sizeof rec);
+    if (c->at) {
+        char n[24]; n[0] = 0;
+        th_cat_u(n, c->at, sizeof n);
+        th_put(rec, "at", n, sizeof rec);
+    }
     if (c->pass[0] && my_npub()[0]) {
         /* Sealed to this device's key: what is written down is of no use on
          * another phone, and of no use to anything that reads the file. */
@@ -1040,6 +1087,76 @@ static void conn_save(const char *call, const conn_t *c)
     index_add(call);
 }
 
+/* Does the thing's answer name [what]? The list is what `/api/services`
+ * said, comma separated, so a whole word is compared and "snapshot" never
+ * matches inside "snapshotting". */
+static int svc_has_str(const char *list, const char *what)
+{
+    for (const char *p = list; *p; ) {
+        const char *e = p;
+        while (*e && *e != ',') e++;
+        unsigned n = (unsigned)(e - p), w = th_len(what);
+        if (n == w) {
+            unsigned i = 0;
+            while (i < n && p[i] == what[i]) i++;
+            if (i == n) return 1;
+        }
+        p = *e ? e + 1 : e;
+    }
+    return 0;
+}
+
+static int svc_has(const conn_t *c, const char *what)
+{
+    return svc_has_str(c->svc, what);
+}
+
+/* Where this thing lives on the network: the address the person gave, else
+ * the origin of the picture address it published itself (11.7.2). An origin
+ * and a path are different things, and a camera that serves its still from
+ * one port and its stream from another is the ordinary case. */
+static void origin_of(const th_t *t, const conn_t *c, char *out, unsigned cap)
+{
+    out[0] = 0;
+    if (c->host[0]) {
+        if (!th_starts(c->host, "http://") && !th_starts(c->host, "https://"))
+            th_cpy(out, "http://", cap);
+        th_cat(out, c->host, cap);
+        unsigned n = th_len(out);
+        while (n && out[n - 1] == '/') out[--n] = 0;
+        return;
+    }
+    if (!t->url[0]) return;
+    unsigned slashes = 0, i = 0;
+    while (t->url[i] && i < cap - 1) {
+        if (t->url[i] == '/') {
+            slashes++;
+            if (slashes == 3) break;
+        }
+        out[i] = t->url[i];
+        i++;
+    }
+    out[i] = 0;
+    if (slashes < 2) out[0] = 0;          /* not an address at all */
+}
+
+/* "http://192.168.1.9:8080" -> host and port. 0 when it is not one. */
+static int split_origin(const char *base, char *host, unsigned cap, int *port)
+{
+    const char *p = base;
+    *port = 80;
+    if (th_starts(p, "http://")) p += 7;
+    else if (th_starts(p, "https://")) { p += 8; *port = 443; }
+    unsigned i = 0;
+    while (p[i] && p[i] != ':' && p[i] != '/' && i < cap - 1) { host[i] = p[i]; i++; }
+    host[i] = 0;
+    if (p[i] == ':') {
+        unsigned long long v = th_num(p + i + 1);
+        if (v > 0 && v < 65536) *port = (int)v;
+    }
+    return host[0] != 0;
+}
+
 /* ── Fetching one still ──────────────────────────────────────────────
  *
  * One request in flight, polled once per tick and never spun on: the
@@ -1048,6 +1165,7 @@ static void conn_save(const char *call, const conn_t *c)
 #define FETCH_IDLE  0
 #define FETCH_LOGIN 1
 #define FETCH_SNAP  2
+#define FETCH_ASK   3     /* connecting: asking it what it serves */
 
 static struct {
     char call[CALL_MAX];
@@ -1058,9 +1176,60 @@ static struct {
     unsigned long long token_ms;
     unsigned long long pic_ms;   /* when the picture on screen was taken */
     char note[120];            /* what to say under the picture          */
+    unsigned long long note_ms;
+    int  probing;              /* this fetch is a Connect, not a picture */
 } g_fetch = { .req = -1 };
 
+/* ── Watching it, rather than sampling it ─────────────────────────────
+ *
+ * A doorbell that only answers "here is a still" is a doorbell somebody
+ * refreshes by hand while a stranger is at the door. Live view is one TCP
+ * connection carrying `multipart/x-mixed-replace` -- a run of JPEGs -- read
+ * straight off a socket, because that is not an XPRS lane and there is no
+ * packet in it: the core owns bearers, custody and keys, and none of the
+ * three is involved in pulling pictures off a box on the same LAN
+ * (docs/architecture.md 1). The permission is declared in the manifest,
+ * which is where a claim on a communication path belongs.
+ *
+ * What bounds it, because an open socket is a cost nobody sees:
+ *
+ *  - it runs only while the page is in front of somebody (`hal_ui_attached`),
+ *  - it stops itself after three minutes rather than streaming all night,
+ *  - the frame being assembled shares the still's buffer, so watching costs
+ *    no more memory than one picture (performance.md 8.9), and a frame that
+ *    would overrun it is dropped rather than shown in halves,
+ *  - the screen is asked to redraw at most a few times a second whatever the
+ *    camera sends, and
+ *  - leaving the screen, or the engine being disposed, closes it.
+ *
+ * A camera with no stream is watched the honest way: one still after
+ * another, about one a second, said in those words on the screen.
+ */
+#define LIVE_OFF     0
+#define LIVE_DIAL    1      /* the socket is opening */
+#define LIVE_STREAM  2      /* JPEGs are arriving on it */
+#define LIVE_STILLS  3      /* no stream: one picture after another */
+#define LIVE_MAX_MS  180000ULL
+#define LIVE_GAP_MS  350ULL     /* the fastest the screen is asked to change */
+#define LIVE_BIG     250000u    /* over this, a frame is paced, not raced */
+#define LIVE_BIG_MS  2000ULL
+#define STILL_GAP_MS 1200ULL    /* a camera with no stream, sampled */
+
+static struct {
+    char call[CALL_MAX];
+    int  sock;                  /* hal_socket handle, -1 when none */
+    int  stage;
+    int  in_frame;
+    unsigned len;               /* bytes of the frame being assembled */
+    unsigned frames, dropped, last_len;
+    unsigned long long began_ms, shown_ms, byte_ms, note_ms;
+    char note[140];
+} g_live = { .sock = -1 };
+
+static unsigned char g_rx[8192];
+
 static void picnote(void);          /* defined with the other panels */
+static void draw(int force);        /* defined with the rest of the drawing */
 
 static void ago_words(unsigned long long ms, char *out, unsigned cap);
 
@@ -1069,8 +1238,10 @@ static void fetch_done(const char *why)
     if (g_fetch.req >= 0) hal_http_free(g_fetch.req);
     g_fetch.req = -1;
     g_fetch.stage = FETCH_IDLE;
+    g_fetch.probing = 0;
     if (why) {
         th_cpy(g_fetch.note, why, sizeof g_fetch.note);
+        g_fetch.note_ms = hal_time_ms();
         /* The last picture is still on the screen. Saying only that this
          * attempt failed leaves a person reading an old doorstep as the
          * doorstep now. */
@@ -1102,6 +1273,13 @@ static int fetch_http(int post, const char *url, const char *body)
 static void link_url(const th_t *t, const conn_t *c, char *out, unsigned cap)
 {
     out[0] = 0;
+    /* The address that answered Connect wins: it is the one a person chose
+     * and this wapp has proof of, where url: is only what was aired. */
+    if (c->at && c->base[0] && svc_has(c, "snapshot")) {
+        th_cpy(out, c->base, cap);
+        th_cat(out, c->path[0] ? c->path : "/door/snapshot.jpg", cap);
+        return;
+    }
     if (t->url[0]) { th_cpy(out, t->url, cap); return; }
     if (!c->host[0]) return;
     th_cpy(out, "http://", cap);
@@ -1143,6 +1321,7 @@ static void fetch_start(th_t *t)
     conn_t c;
     conn_load(t->call, &c);
     th_cpy(g_fetch.call, t->call, sizeof g_fetch.call);
+    g_fetch.probing = 0;
     g_fetch.note[0] = 0;
     char url[240];
     if (th_eq(c.vendor, "reolink")) {
@@ -1170,6 +1349,67 @@ static void fetch_start(th_t *t)
     fetch_http(0, url, 0);
 }
 
+/* ── Connecting ──────────────────────────────────────────────────────
+ *
+ * One request, and it is the thing's own answer about itself: what a camera
+ * running our doorbell firmware serves is a fact it will state, and asking
+ * beats probing six addresses to find out. A camera that has never heard of
+ * `/api/services` (any stock one) is not left out: the fall-back is to fetch
+ * a picture the ordinary way, and a picture coming back is proof enough of
+ * a working connection to offer the actions that need one.
+ */
+static void connect_start(th_t *t)
+{
+    if (g_fetch.req >= 0) return;
+    conn_t c;
+    conn_load(t->call, &c);
+    char base[96];
+    origin_of(t, &c, base, sizeof base);
+    if (!base[0]) {
+        th_cpy(g_fetch.call, t->call, sizeof g_fetch.call);
+        fetch_done("Tell it where it is first: its address goes in Settings, below.");
+        return;
+    }
+    th_cpy(c.base, base, sizeof c.base);
+    conn_save(t->call, &c);                  /* what to try, before trying it */
+    th_cpy(g_fetch.call, t->call, sizeof g_fetch.call);
+    g_fetch.probing = 1;
+    g_fetch.note[0] = 0;
+    char url[240];
+    th_cpy(url, base, sizeof url);
+    th_cat(url, "/api/services", sizeof url);
+    g_fetch.stage = FETCH_ASK;
+    fetch_http(0, url, 0);
+}
+
+/* The same fetch as a picture, but it is the proof a Connect is waiting for. */
+static void fetch_start_probe(th_t *t)
+{
+    fetch_start(t);
+    if (g_fetch.req >= 0) g_fetch.probing = 1;
+}
+
+/* Write down what it answered, and say it in words. */
+static void connected(th_t *t, const char *svc, const char *how)
+{
+    conn_t c;
+    conn_load(t->call, &c);
+    th_cpy(c.svc, svc, sizeof c.svc);
+    c.at = hal_time_epoch();
+    conn_save(t->call, &c);
+    /* What it can do is evidence like any other: the same bits a wire would
+     * have set, set by an answer instead (EV[] reads both the same way). */
+    if (svc_has(&c, "snapshot")) learn(t, "s:snapshot");
+    if (svc_has(&c, "stream")) learn(t, "s:stream");
+    char l[120] = "";
+    th_cpy(l, how, sizeof l);
+    fetch_done(l);
+    /* Connecting is what unlocks the actions below it. Waiting out the
+     * two-second redraw throttle to show them is two seconds of a person
+     * wondering whether the button worked. */
+    draw(1);
+}
+
 /* The body of the finished request, into g_pic. Returns its length; 0 and a
  * note when there is nothing usable. */
 static unsigned fetch_body(void)
@@ -1183,23 +1423,32 @@ static unsigned fetch_body(void)
         if (len >= PIC_MAX) {
             /* More than the bound: the camera was asked for its big stream.
              * Say so rather than showing the top of a picture. */
-            fetch_done("That picture is too big; ask it for the small stream.");
+            fetch_done("That picture is bigger than a megabyte, which is more "
+                      "than this screen will hold.");
             return 0;
         }
     }
     return len;
 }
 
-static void show_picture(unsigned len)
+/* Put what is in g_pic on the screen. 0 when it would not fit, which the
+ * caller says in its own words: a still and a live frame fail differently. */
+static int paint_picture(unsigned len)
 {
     /* data: URI, built in one buffer: prefix, the base64, then the tail. */
     th_cpy(g_msg, "{\"type\":\"ui.field.set\",\"field\":\"th_pic\",\"value\":\"data:image/jpeg;base64,", sizeof g_msg);
     unsigned at = th_len(g_msg);
     unsigned n = th_b64(g_pic, len, g_msg + at, (unsigned)sizeof g_msg - at - 8);
-    if (!n) { fetch_done("The picture did not fit."); return; }
+    if (!n) return 0;
     th_cat(g_msg, "\"}", sizeof g_msg);
     say(g_msg);
     g_fetch.pic_ms = hal_time_ms();
+    return 1;
+}
+
+static void show_picture(unsigned len)
+{
+    if (!paint_picture(len)) { fetch_done("The picture did not fit."); return; }
     char l[80] = "";
     th_cat(l, "Taken just now, ", sizeof l);
     th_cat_u(l, len / 1024, sizeof l);
@@ -1220,6 +1469,17 @@ static void fetch_pump(void)
     if (rc < 0) { fetch_done("Could not reach it."); return; }
     int code = hal_http_status(g_fetch.req);
     if (code < 200 || code >= 300) {
+        /* A camera that never heard of the question answers 404, which is an
+         * answer: ask it for a picture instead. */
+        if (g_fetch.stage == FETCH_ASK) {
+            th_t *t = find(g_fetch.call);
+            hal_http_free(g_fetch.req);
+            g_fetch.req = -1;
+            g_fetch.stage = FETCH_IDLE;
+            if (t) { fetch_start_probe(t); return; }
+            fetch_done("It would not say what it offers.");
+            return;
+        }
         char l[80] = "It answered ";
         th_cat_u(l, (unsigned long long)(code < 0 ? 0 : code), sizeof l);
         th_cat(l, ".", sizeof l);
@@ -1228,6 +1488,52 @@ static void fetch_pump(void)
     }
     unsigned len = fetch_body();
     if (!len) { if (g_fetch.req >= 0) fetch_done("It sent nothing."); return; }
+
+    if (g_fetch.stage == FETCH_ASK) {
+        /* {"ok":true,"api":["services","snapshot","stream"],"callsign":"X4.."} */
+        g_pic[len < PIC_MAX ? len : PIC_MAX - 1] = 0;
+        const char *body = (const char *)g_pic;
+        th_t *t = find(g_fetch.call);
+        char ok[8] = "", said[CALL_MAX] = "";
+        th_json(body, "ok", ok, sizeof ok);
+        th_json(body, "callsign", said, sizeof said);
+        if (!t) { fetch_done(0); return; }
+        if (th_eq(ok, "true")) {
+            /* The wrong address answers too. A thing that names a callsign
+             * that is not this one is somebody else's camera, and connecting
+             * to it would put a stranger's doorstep on this screen under this
+             * device's name. */
+            if (said[0] && !th_eq(said, t->call)) {
+                char l[120] = "That address answers as ";
+                th_cat(l, said, sizeof l);
+                th_cat(l, ", not ", sizeof l);
+                th_cat(l, t->call, sizeof l);
+                th_cat(l, ".", sizeof l);
+                fetch_done(l);
+                return;
+            }
+            char svc[48] = "", one[24];
+            const char *e = th_json_arr(body, "api");
+            while (e && (e = th_json_next_str(e, one, sizeof one)) != 0) {
+                if (!one[0]) continue;
+                if (svc[0]) th_cat(svc, ",", sizeof svc);
+                th_cat(svc, one, sizeof svc);
+            }
+            if (!svc[0]) th_cpy(svc, "snapshot", sizeof svc);
+            char how[120] = "Connected. It offers ";
+            th_cat(how, svc_has_str(svc, "stream") ? "a picture and a live view."
+                                                   : "a picture.", sizeof how);
+            connected(t, svc, how);
+            return;
+        }
+        /* Not ours, or not answering that question: try for a picture, which
+         * is the only thing a stock camera can be asked without a vendor's
+         * own protocol. */
+        hal_http_free(g_fetch.req);
+        g_fetch.req = -1;
+        fetch_start_probe(t);
+        return;
+    }
 
     if (g_fetch.stage == FETCH_LOGIN) {
         /* [{"cmd":"Login","code":0,"value":{"Token":{"leaseTime":3600,
@@ -1262,7 +1568,232 @@ static void fetch_pump(void)
         fetch_done("What came back was not a picture.");
         return;
     }
+    if (g_fetch.probing) {
+        th_t *t = find(g_fetch.call);
+        g_fetch.probing = 0;
+        if (t) {
+            paint_picture(len);           /* the proof, on the screen */
+            connected(t, "snapshot",
+                      "Connected. It answers with a picture, and has no live "
+                      "stream of its own: watching it takes one picture after "
+                      "another.");
+            return;
+        }
+    }
     show_picture(len);
+}
+
+/* ── Watching it ─────────────────────────────────────────────────────── */
+static void live_stop(const char *why)
+{
+    if (g_live.sock >= 0) hal_socket_close(g_live.sock);
+    g_live.sock = -1;
+    g_live.stage = LIVE_OFF;
+    g_live.in_frame = 0;
+    g_live.len = 0;
+    if (why) {
+        th_cpy(g_live.note, why, sizeof g_live.note);
+        g_live.note_ms = hal_time_ms();
+    }
+    g_dirty = 1;
+}
+
+/* What to say under a live picture: how many frames, and from where. */
+static void live_said(void)
+{
+    char l[180] = "Live: ";
+    th_cat_u(l, g_live.frames, sizeof l);
+    th_cat(l, g_live.frames == 1 ? " picture" : " pictures", sizeof l);
+    if (g_live.last_len) {
+        th_cat(l, ", ", sizeof l);
+        th_cat_u(l, g_live.last_len / 1024, sizeof l);
+        th_cat(l, " KB each", sizeof l);
+    }
+    if (g_live.last_len > LIVE_BIG)
+        th_cat(l, ", about one every two seconds: they are too big to come "
+                  "faster", sizeof l);
+    if (g_live.stage == LIVE_STILLS)
+        th_cat(l, ", one after another (it has no stream)", sizeof l);
+    if (g_live.dropped) {
+        th_cat(l, ", ", sizeof l);
+        th_cat_u(l, g_live.dropped, sizeof l);
+        th_cat(l, " too big to show", sizeof l);
+    }
+    th_cat(l, ".", sizeof l);
+    th_cpy(g_live.note, l, sizeof g_live.note);
+    g_live.note_ms = hal_time_ms();
+}
+
+/* One complete JPEG out of the stream. */
+static void live_frame(unsigned len)
+{
+    unsigned long long now = hal_time_ms();
+    g_live.frames++;
+    g_live.last_len = len;
+    /* However fast the camera sends, the screen is asked to change at a rate
+     * a person can see AND this device can pay for: a frame arriving inside
+     * the gap is counted and dropped without being base64'd or decoded, and
+     * the gap is longer for the big frames a 5 MP camera sends
+     * (performance.md 8.14's cost is the host's, per picture). */
+    unsigned long long gap = len > LIVE_BIG ? LIVE_BIG_MS : LIVE_GAP_MS;
+    if (g_live.shown_ms && now - g_live.shown_ms < gap) return;
+    if (!paint_picture(len)) { g_live.dropped++; return; }
+    g_live.shown_ms = now;
+    live_said();
+    g_dirty = 1;
+}
+
+/* Cut frames out of whatever arrived. Multipart boundaries and their headers
+ * are skipped by construction: a frame is what lies between FF D8 and FF D9,
+ * and anything else in the stream is not copied anywhere. */
+static void live_feed(const unsigned char *b, unsigned n)
+{
+    for (unsigned i = 0; i < n; i++) {
+        unsigned char ch = b[i];
+        if (!g_live.in_frame) {
+            if (g_live.len == 0) {
+                if (ch == 0xFF) { g_pic[0] = ch; g_live.len = 1; }
+            } else if (ch == 0xD8) {
+                g_pic[1] = ch;
+                g_live.len = 2;
+                g_live.in_frame = 1;
+            } else if (ch == 0xFF) {
+                g_live.len = 1;
+            } else {
+                g_live.len = 0;
+            }
+            continue;
+        }
+        if (g_live.len >= PIC_MAX) {        /* bigger than the bound: let it go */
+            g_live.in_frame = 0;
+            g_live.len = 0;
+            g_live.dropped++;
+            continue;
+        }
+        g_pic[g_live.len++] = ch;
+        if (ch == 0xD9 && g_pic[g_live.len - 2] == 0xFF) {
+            unsigned len = g_live.len;
+            g_live.in_frame = 0;
+            g_live.len = 0;
+            live_frame(len);
+        }
+    }
+}
+
+static void live_start(th_t *t)
+{
+    conn_t c;
+    conn_load(t->call, &c);
+    if (!c.at) {
+        th_cpy(g_live.note, "Connect to it first.", sizeof g_live.note);
+    g_live.note_ms = hal_time_ms();
+        g_dirty = 1;
+        return;
+    }
+    th_cpy(g_live.call, t->call, sizeof g_live.call);
+    th_cpy(g_fetch.call, t->call, sizeof g_fetch.call);   /* whose picture */
+    g_live.frames = g_live.dropped = 0;
+    g_live.len = 0;
+    g_live.in_frame = 0;
+    g_live.shown_ms = 0;
+    g_live.began_ms = g_live.byte_ms = hal_time_ms();
+    if (svc_has(&c, "stream") && c.base[0]) {
+        char host[64];
+        int port = 80;
+        if (!split_origin(c.base, host, sizeof host, &port)) {
+            live_stop("That address cannot be reached.");
+            return;
+        }
+        int s = hal_socket_open(host, th_len(host), port);
+        if (s < 0) { live_stop("This device would not open a connection."); return; }
+        g_live.sock = s;
+        g_live.stage = LIVE_DIAL;
+        th_cpy(g_live.note, "Opening a connection to it...", sizeof g_live.note);
+    g_live.note_ms = hal_time_ms();
+    } else {
+        g_live.stage = LIVE_STILLS;
+        th_cpy(g_live.note, "Live: one picture after another.", sizeof g_live.note);
+    g_live.note_ms = hal_time_ms();
+        fetch_start(t);
+    }
+    g_dirty = 1;
+}
+
+/* Called from the tick: the whole of the live view's clock. */
+static void live_pump(void)
+{
+    if (g_live.stage == LIVE_OFF) return;
+    /* Nobody is looking: an engine with no page has no business holding a
+     * camera's connection open. */
+    if (!hal_ui_attached()) { live_stop(0); return; }
+    unsigned long long now = hal_time_ms();
+    if (now - g_live.began_ms > LIVE_MAX_MS) {
+        live_stop("Live view stops itself after three minutes. Tap Watch live again.");
+        return;
+    }
+    th_t *t = find(g_live.call);
+    if (!t) { live_stop(0); return; }
+
+    if (g_live.stage == LIVE_STILLS) {
+        /* A picture that arrived, not one that was asked for: pic_ms only
+         * moves when one is on the screen. */
+        if (g_fetch.pic_ms && g_fetch.pic_ms != g_live.shown_ms) {
+            g_live.shown_ms = g_fetch.pic_ms;
+            g_live.frames++;
+            live_said();
+        }
+        if (g_fetch.req < 0 && now - g_fetch.pic_ms >= STILL_GAP_MS) fetch_start(t);
+        return;
+    }
+
+    int st = hal_socket_status(g_live.sock);
+    if (st == 2) {
+        live_stop(g_live.frames ? "It closed the connection."
+                                : "Nothing answered on that address.");
+        return;
+    }
+    if (st == 0) {
+        if (now - g_live.byte_ms > 15000ULL) live_stop("It did not answer.");
+        return;
+    }
+    if (g_live.stage == LIVE_DIAL) {
+        conn_t c;
+        conn_load(t->call, &c);
+        char host[64];
+        int port = 80;
+        split_origin(c.base, host, sizeof host, &port);
+        /* HTTP/1.0 on purpose. Asked in 1.1, a Dart HttpServer (which is
+         * what the doorbell firmware runs) answers `transfer-encoding:
+         * chunked`, and a chunk header lands in the middle of a picture as
+         * often as not: the frames come out with four bytes of hex length
+         * spliced into them. 1.0 has no chunked encoding, so the body is the
+         * multipart stream and nothing else, and every HTTP server has to
+         * answer a 1.0 request. Measured against the doorbell, 2026-09-23. */
+        char req[300] = "GET ";
+        th_cat(req, "/door/stream.mjpeg", sizeof req);
+        th_cat(req, " HTTP/1.0\r\nHost: ", sizeof req);
+        th_cat(req, host, sizeof req);
+        th_cat(req, "\r\nAccept: multipart/x-mixed-replace\r\n\r\n", sizeof req);
+        if (hal_socket_send(g_live.sock, req, th_len(req)) < 0) {
+            live_stop("The connection closed before it was asked anything.");
+            return;
+        }
+        g_live.stage = LIVE_STREAM;
+        g_live.byte_ms = now;
+        th_cpy(g_live.note, "Asked it for a live view...", sizeof g_live.note);
+    g_live.note_ms = hal_time_ms();
+        return;
+    }
+
+    for (;;) {
+        uint32_t n = hal_socket_recv(g_live.sock, (char *)g_rx, sizeof g_rx);
+        if (!n) break;
+        g_live.byte_ms = hal_time_ms();
+        live_feed(g_rx, n);
+    }
+    if (hal_time_ms() - g_live.byte_ms > 20000ULL)
+        live_stop(g_live.frames ? "It stopped sending pictures."
+                                : "It answered, but sent no pictures.");
 }
 
 /* ── One thing ────────────────────────────────────────────────────────── */
@@ -1363,11 +1894,17 @@ static void picnote(void)
 {
     if (!g_sel[0] || !hal_ui_attached()) return;
     int mine = th_eq(g_fetch.call, g_sel);
-    flag_hidden("th_picnote", !mine || (g_fetch.req < 0 && !g_fetch.note[0]));
+    int live = g_live.note[0] && th_eq(g_live.call, g_sel) &&
+               (g_live.stage != LIVE_OFF || !mine ||
+                g_live.note_ms >= g_fetch.note_ms);
+    int said = live || (mine && (g_fetch.req >= 0 || g_fetch.note[0]));
+    flag_hidden("th_picnote", !said);
     details_begin("th_picnote");
-    if (g_fetch.req >= 0 && th_eq(g_fetch.call, g_sel))
+    if (live)
+        detail("Live", g_live.note);
+    else if (g_fetch.req >= 0 && mine)
         detail("Picture", "Asking it now...");
-    else if (g_fetch.note[0] && th_eq(g_fetch.call, g_sel))
+    else if (g_fetch.note[0] && mine)
         detail("Picture", g_fetch.note);
     details_end();
 }
@@ -1503,14 +2040,66 @@ static void push_detail(void)
         detail("Nothing yet", "It has not said what it can do");
     details_end();
 
-    /* The picture, when this thing has one to offer. */
-    int can_pic = (c->panels & P_PICTURE) != 0;
+    /* ── What this thing offers over the network, and only once asked ──
+     *
+     * The order on the screen is the order of the decision: what is known
+     * about the connection, then the button that makes one, then the actions
+     * that connection unlocked. Nothing below Connect exists until it has
+     * answered, because an action whose address nobody has given cannot work
+     * and a screen that offers it is lying. */
+    int can_pic  = (c->panels & P_PICTURE) != 0;
+    int can_live = (c->panels & P_LIVE) != 0;
+    conn_t cn2;
+    conn_load(t->call, &cn2);
+    int linked = cn2.at != 0;
+    int live_on = g_live.stage != LIVE_OFF && th_eq(g_live.call, t->call);
     int asking = g_fetch.req >= 0 && th_eq(g_fetch.call, t->call);
-    int said = g_fetch.note[0] && th_eq(g_fetch.call, t->call);
-    flag_hidden("th_pic", !can_pic);
-    flag_hidden("snap", !can_pic || g_fetch.req >= 0);
-    flag_hidden("th_picnote", !can_pic || !(asking || said));
-    if (can_pic) picnote();
+
+    details_begin_titled("th_conn", "On the network");
+    if (!can_pic && !can_live) {
+        detail("Nothing to fetch",
+               "This kind of thing says what it does on the air; there is "
+               "nothing to fetch from it over the network.");
+    } else if (linked) {
+        char when[48];
+        unsigned long long now_s = hal_time_epoch();
+        ago_words(now_s > cn2.at ? (now_s - cn2.at) * 1000ULL : 0, when, sizeof when);
+        char l[160] = "";
+        th_cpy(l, cn2.base[0] ? cn2.base : "its address", sizeof l);
+        th_cat(l, ", ", sizeof l);
+        th_cat(l, when, sizeof l);
+        detail("Connected", l);
+        char off[120] = "";
+        if (svc_has(&cn2, "snapshot")) th_cat(off, "a picture", sizeof off);
+        if (svc_has(&cn2, "stream"))
+            th_cat(off, off[0] ? ", a live view" : "a live view", sizeof off);
+        if (!off[0]) th_cpy(off, "nothing it will name", sizeof off);
+        detail("It offers", off);
+        if (!svc_has(&cn2, "stream") && can_live)
+            detail("Live view", "One picture after another: it serves no stream.");
+    } else {
+        char where[160] = "";
+        conn_t probe;
+        conn_load(t->call, &probe);
+        origin_of(t, &probe, where, sizeof where);
+        detail("Not connected",
+               "Nothing is fetched from this thing until you connect to it.");
+        if (where[0]) detail("Its address", where);
+        else detail("No address yet",
+                    "It has not published one and none has been typed in "
+                    "Settings, below.");
+    }
+    details_end();
+
+    flag_hidden("th_conn", !can_pic && !can_live && !linked);
+    flag_hidden("connect", linked || (!can_pic && !can_live) || asking);
+    flag_hidden("disconnect", !linked);
+    int haspic = g_fetch.pic_ms != 0 && th_eq(g_fetch.call, t->call);
+    flag_hidden("th_pic", !can_pic || !linked || !haspic);
+    flag_hidden("snap", !linked || !can_pic || g_fetch.req >= 0 || live_on);
+    flag_hidden("live", !linked || !can_live || live_on);
+    flag_hidden("unlive", !live_on);
+    picnote();
 
     /* The person's corrections, pushed when the screen opens and after they
      * are taken -- never on a redraw. A redraw two seconds into typing an
@@ -1809,6 +2398,39 @@ static void on_command(void)
         g_fields_for[0] = 0;       /* show what was taken, once */
         note("kept what you said about this thing");
         draw(1);
+    } else if (th_eq(cmd, "connect")) {
+        if (!g_sel[0]) return;
+        th_t *t = get(g_sel);
+        if (!t) return;
+        connect_start(t);
+        draw(1);
+    } else if (th_eq(cmd, "disconnect")) {
+        if (!g_sel[0]) return;
+        th_t *t = get(g_sel);
+        if (!t) return;
+        if (th_eq(g_live.call, t->call)) live_stop(0);
+        conn_t c;
+        conn_load(t->call, &c);
+        /* What the person typed stays; what the thing answered goes. Being
+         * disconnected is not having forgotten the address. */
+        c.svc[0] = 0;
+        c.at = 0;
+        conn_save(t->call, &c);
+        g_fetch.token[0] = 0;
+        g_fetch.note[0] = 0;
+        g_fetch.pic_ms = 0;
+        say("{\"type\":\"ui.field.set\",\"field\":\"th_pic\",\"value\":\"\"}");
+        note("disconnected");
+        draw(1);
+    } else if (th_eq(cmd, "live")) {
+        if (!g_sel[0]) return;
+        th_t *t = get(g_sel);
+        if (!t) return;
+        live_start(t);
+        draw(1);
+    } else if (th_eq(cmd, "unlive")) {
+        live_stop("Live view stopped.");
+        draw(1);
     } else if (th_eq(cmd, "snap")) {
         if (!g_sel[0]) return;
         th_t *t = get(g_sel);
@@ -1824,13 +2446,19 @@ static void on_command(void)
         conn_t none;
         for (unsigned i = 0; i < sizeof none; i++) ((char *)&none)[i] = 0;
         conn_save(t->call, &none);
+        if (th_eq(g_live.call, t->call)) live_stop(0);
         g_fetch.token[0] = 0;
         t->notmine = 0;
         save_thing(t);
         g_fields_for[0] = 0;
         note("worked it out again from what it says");
         draw(1);
-    } else if (th_eq(cmd, "back")) {
+    } else if (th_eq(cmd, "back") || th_eq(cmd, "screen_closed")) {
+        /* `back` is this wapp's own button; `screen_closed` is the host
+         * saying the person used the arrow on the panel's app bar. Both mean
+         * nobody is looking at this thing any more, and a live view nobody is
+         * looking at is a camera being read for nothing. */
+        live_stop(0);
         g_sel[0] = 0;
         g_fetch.note[0] = 0;
         g_fetch.pic_ms = 0;
@@ -1861,6 +2489,7 @@ int32_t module_tick(void)
 {
     drain_events();
     fetch_pump();
+    live_pump();
     draw(0);
     return 0;
 }
@@ -1869,6 +2498,7 @@ int32_t module_handle_event(void)
 {
     drain_events();
     fetch_pump();
+    live_pump();
     uint32_t n = hal_msg_recv(g_buf, sizeof g_buf - 1);
     if (n > 0) {
         g_buf[n] = 0;
@@ -1878,13 +2508,19 @@ int32_t module_handle_event(void)
     return 0;
 }
 
-/* The page's clock, only to finish a redraw the two-second throttle held
- * back. With no page there is nothing to draw and so no clock at all: a
- * watched thing costs a wake per packet the core hands over, and nothing
- * per hour (performance.md 8.4). */
+/* The page's clock. It finishes a redraw the two-second throttle held back,
+ * polls a picture that was asked for, and carries the live view: a stream of
+ * pictures needs to be read off the socket several times a second or the
+ * host's buffer is the only thing growing. Redraws are still throttled to
+ * REDRAW_MS and the live frames to LIVE_GAP_MS, so a page that is merely
+ * open costs a wake that finds nothing to do.
+ *
+ * With no page there is no clock at all: a watched thing costs a wake per
+ * packet the core hands over, and nothing per hour (performance.md 8.4). */
+#define PAGE_TICK_MS 400
 int32_t module_tick_interval_ms(void)
 {
-    return hal_ui_attached() ? (int32_t)REDRAW_MS : 0;
+    return hal_ui_attached() ? (int32_t)PAGE_TICK_MS : 0;
 }
 
 void module_destroy(void) {}

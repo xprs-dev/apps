@@ -38,6 +38,25 @@
       },
       {
         "$": "field",
+        "name": "th_conn",
+        "$type": "details",
+        "empty": ""
+      },
+      {
+        "$": "action",
+        "name": "connect",
+        "label": "Connect",
+        "style": "primary",
+        "icon": "link"
+      },
+      {
+        "$": "action",
+        "name": "disconnect",
+        "label": "Disconnect",
+        "icon": "link_off"
+      },
+      {
+        "$": "field",
         "name": "th_pic",
         "$type": "image",
         "shape": "wide",
@@ -45,16 +64,29 @@
         "label": ""
       },
       {
-        "$": "field",
-        "name": "th_picnote",
-        "$type": "details",
-        "empty": ""
+        "$": "action",
+        "name": "live",
+        "label": "Watch live",
+        "style": "primary",
+        "icon": "videocam"
+      },
+      {
+        "$": "action",
+        "name": "unlive",
+        "label": "Stop watching",
+        "icon": "stop"
       },
       {
         "$": "action",
         "name": "snap",
         "label": "Picture now",
         "icon": "image"
+      },
+      {
+        "$": "field",
+        "name": "th_picnote",
+        "$type": "details",
+        "empty": ""
       },
       {
         "$": "action",

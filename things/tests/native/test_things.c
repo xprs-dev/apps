@@ -41,6 +41,14 @@ void http_reset(void);
 extern char g_last_url[512];
 extern char g_last_body[1024];
 extern int g_last_method, g_http_calls;
+void sock_reset(void);
+void sock_state(int s);
+void sock_feed(const void *b, unsigned n);
+const char *sock_sent(void);
+const char *sock_host(void);
+int sock_port(void);
+unsigned sock_unread(void);
+extern int g_sock_opens, g_sock_open_rc, g_sock_closes;
 
 static int g_checks, g_fail;
 #define CHECK(c, ...) do { g_checks++; if (!(c)) { g_fail++; printf("  FAIL %s:%d ", __func__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -61,6 +69,8 @@ static void deliver_obs(const char *id, const char *from, const char *ts, const 
     module_handle_event();
 }
 static void command(const char *json) { inbox_set(json); module_handle_event(); }
+/* Connect to the doorbell the way a person does, and let it answer. */
+static void connect_stream(void);
 
 static const char *NEARBY =
     "[{\"title\":\"Heard over the air (3)\",\"items\":["
@@ -125,6 +135,15 @@ static void reset(void)
     g_fetch.token[0] = 0;
     g_fetch.note[0] = 0;
     g_fetch.pic_ms = 0;
+    g_fetch.probing = 0;
+    g_live.stage = LIVE_OFF;
+    g_live.sock = -1;
+    g_live.frames = g_live.dropped = 0;
+    g_live.len = 0;
+    g_live.in_frame = 0;
+    g_live.note[0] = 0;
+    g_live.call[0] = 0;
+    sock_reset();
     while (hal_event_available()) { char t[64], d[64]; hal_event_recv(t, sizeof t, d, sizeof d); }
 }
 
@@ -456,7 +475,8 @@ static void test_no_clock_with_no_page(void)
 {
     reset();
     g_ui_attached = 1;
-    CHECK(module_tick_interval_ms() == (int32_t)REDRAW_MS, "a page has a clock");
+    CHECK(module_tick_interval_ms() == (int32_t)PAGE_TICK_MS,
+          "a page has a clock, fast enough to carry a live view");
     g_ui_attached = 0;
     CHECK(module_tick_interval_ms() == 0, "nobody looking, no clock at all");
 }
@@ -532,8 +552,11 @@ static void test_a_picture_is_fetched_from_the_address_it_published(void)
 {
     reset();
     open_doorbell();
+    /* A picture is offered once somebody has connected to it, and the address
+     * it published is where that connection went. */
+    connect_stream();
     CHECK(cap_last("\"field\":\"snap__hidden\",\"value\":false") != 0,
-          "a thing with a url: offers its picture");
+          "a connected thing with a url: offers its picture");
     cap_clear();
     /* two polls before it lands: the tick must not sit and wait */
     http_set("192.168.1.9/door/snapshot.jpg", 200, JPEG, sizeof JPEG, 1);
@@ -603,7 +626,8 @@ static void test_a_picture_too_big_is_refused(void)
     cap_clear();
     command("{\"command\":\"snap\",\"fields\":{}}");
     g_ms += 2000; module_tick();
-    /* 8 KB is inside the 96 KB bound, so this one is accepted: the bound is
+    /* 8 KB is well inside the one-megabyte bound, so this one is accepted:
+     * the bound is
      * proven by the code path above it, and what matters here is that a body
      * that fills the buffer does not run off the end of it. */
     CHECK(cap_count("\"field\":\"th_pic\"") >= 1, "a full buffer is handled");
@@ -686,6 +710,308 @@ static void test_a_picture_left_on_screen_says_how_old_it_is(void)
           "and what the picture still on the screen is: %s", n ? n : "");
 }
 
+
+/* ── Connecting, and what a connection unlocks ───────────────────────── */
+
+static const char *SERVICES =
+    "{\"ok\":true,\"serve\":[],\"features\":{\"digipeater\":false},"
+    "\"api\":[\"services\",\"snapshot\",\"stream\"],\"callsign\":\"X4DOOR\"}";
+
+/* Two JPEGs the way a camera sends them: multipart headers between, which
+ * are not a frame and must not end up inside one. */
+static const unsigned char MJPEG[] = {
+    '-','-','b','\r','\n','C','o','n','t','e','n','t','-','T','y','p','e',':',
+    ' ','i','m','a','g','e','/','j','p','e','g','\r','\n','\r','\n',
+    0xFF, 0xD8, 0xFF, 0xE0, 'o','n','e', 0xFF, 0xD9,
+    '\r','\n','-','-','b','\r','\n','\r','\n',
+    0xFF, 0xD8, 0xFF, 0xE0, 't','w','o', 0xFF, 0xD9,
+};
+
+static void connect_stream(void)
+{
+    http_set("/api/services", 200, SERVICES, (unsigned)strlen(SERVICES), 0);
+    command("{\"command\":\"connect\",\"fields\":{}}");
+    g_ms += 500; module_tick();
+}
+
+static void test_the_picture_box_waits_for_a_picture(void)
+{
+    reset();
+    open_doorbell();
+    connect_stream();
+    CHECK(cap_last("\"field\":\"th_pic__hidden\",\"value\":true") != 0,
+          "an empty picture box is half a screen of nothing: it is not drawn");
+    http_set("192.168.1.9/door/snapshot.jpg", 200, JPEG, sizeof JPEG, 0);
+    command("{\"command\":\"snap\",\"fields\":{}}");
+    g_ms += 500; module_tick();
+    g_ms += 2500; module_tick();
+    CHECK(cap_last("\"field\":\"th_pic__hidden\",\"value\":false") != 0,
+          "and is drawn once there is a picture in it");
+}
+
+/* The row the core actually delivers: fields as pairs, the wire, and the
+ * provenance. A press from a doorbell that carries a url: and a signature is
+ * over a kilobyte of it, which is where the telling used to fall over. */
+static void deliver_full_obs(const char *id, const char *from, const char *ts,
+                             const char *state, const char *url)
+{
+    static char row[3000];
+    const char *sig = "Oek>da/_fIQUnM]TK,U9rdsIT/#2wv+;i0Y>r_d0PUg.SiPh,uZ/c&e1WNW[";
+    snprintf(row, sizeof row,
+             "{\"id\":\"%s\",\"type\":\"observation\",\"from\":\"%s\",\"to\":\"\","
+             "\"ts\":\"%s\",\"fields\":[[\"t\",\"observation\"],[\"f\",\"%s\"],"
+             "[\"state\",\"%s\"],[\"url\",\"%s\"],[\"ts\",\"%s\"],"
+             "[\"scope\",\"local\"],[\"sig\",\"%s\"]],"
+             "\"forUs\":false,\"sealed\":false,\"obfuscated\":false,\"scope\":\"local\","
+             "\"bearer\":\"lan\",\"rssi\":0,\"via\":\"\",\"link\":\"\","
+             "\"sig\":\"verified\","
+             "\"wire\":\"t:observation f:%s state:%s url:%s ts:%s scope:local sig:%s\"}",
+             id, from, ts, from, state, url, ts, sig, from, state, url, ts, sig);
+    event_push("xprs.observation", row);
+    module_handle_event();
+}
+
+static void test_a_press_is_told_from_the_row_the_core_really_sends(void)
+{
+    reset();
+    open_doorbell();
+    command("{\"command\":\"watch\",\"fields\":{}}");
+    cap_clear();
+    deliver_full_obs("p1", "X4DOOR", "2026-09-23_09:53:12", "pressed",
+                     "http://192.168.178.37:8097/door/snapshot.jpg");
+    const char *n = cap_last("\"type\":\"notify\"");
+    CHECK(n != 0, "a press in a full-size row is still told");
+    CHECK(n && strstr(n, "Someone at the door"), "and says what happened: %s",
+          n ? n : "");
+    CHECK(n && strstr(n, "thing.X4DOOR.pressed.p1"),
+          "tagged with the packet's identifier: %s", n ? n : "");
+}
+
+static void test_nothing_is_fetched_before_connecting(void)
+{
+    reset();
+    open_doorbell();
+    CHECK(cap_last("\"field\":\"connect__hidden\",\"value\":false") != 0,
+          "Connect is what a doorbell offers first");
+    CHECK(cap_last("\"field\":\"snap__hidden\",\"value\":true") != 0,
+          "and Picture now is not offered until it has answered");
+    CHECK(cap_last("\"field\":\"live__hidden\",\"value\":true") != 0,
+          "nor is Watch live");
+    const char *c = cap_last("\"field\":\"th_conn\"");
+    CHECK(c && strstr(c, "Not connected"), "it says so: %s", c ? c : "");
+    CHECK(c && strstr(c, "http://192.168.1.9"),
+          "and shows the address it published: %s", c ? c : "");
+    CHECK(g_http_calls == 0, "and nothing was fetched from it on its own");
+}
+
+static void test_connect_asks_the_thing_what_it_serves(void)
+{
+    reset();
+    open_doorbell();
+    cap_clear();
+    connect_stream();
+    CHECK(strstr(g_last_url, "http://192.168.1.9/api/services") != 0,
+          "it asks the thing itself: %s", g_last_url);
+    CHECK(g_last_method == 0, "with a GET");
+    const char *rec = kv_peek("conn.X4DOOR");
+    CHECK(rec && strstr(rec, "svc:services,snapshot,stream"),
+          "what it answered is written down: %s", rec ? rec : "");
+    CHECK(rec && strstr(rec, "base:http://192.168.1.9"),
+          "with the address that answered: %s", rec ? rec : "");
+    CHECK(rec && strstr(rec, "at:"), "and when");
+    const char *n = cap_last("\"field\":\"th_picnote\"");
+    CHECK(n && strstr(n, "a picture and a live view"),
+          "and it says what that thing offers: %s", n ? n : "");
+    CHECK(cap_last("\"field\":\"snap__hidden\",\"value\":false") != 0,
+          "now a picture can be asked for");
+    CHECK(cap_last("\"field\":\"live__hidden\",\"value\":false") != 0,
+          "and it can be watched");
+    CHECK(cap_last("\"field\":\"connect__hidden\",\"value\":true") != 0,
+          "Connect is done and gone");
+}
+
+static void test_the_wrong_camera_is_refused(void)
+{
+    reset();
+    open_doorbell();
+    const char *other =
+        "{\"ok\":true,\"api\":[\"snapshot\"],\"callsign\":\"X4OTHER\"}";
+    http_set("/api/services", 200, other, (unsigned)strlen(other), 0);
+    command("{\"command\":\"connect\",\"fields\":{}}");
+    g_ms += 500; module_tick();
+    const char *n = cap_last("\"field\":\"th_picnote\"");
+    CHECK(n && strstr(n, "answers as X4OTHER"),
+          "a camera that is not this one is said so: %s", n ? n : "");
+    const char *rec = kv_peek("conn.X4DOOR");
+    CHECK(!rec || !strstr(rec, "at:"), "and it is not connected: %s", rec ? rec : "");
+    CHECK(cap_last("\"field\":\"live__hidden\",\"value\":true") != 0,
+          "so nothing is offered for it");
+}
+
+static void test_a_camera_that_never_heard_of_the_question(void)
+{
+    reset();
+    open_doorbell();
+    http_set("/api/services", 404, "nope", 4, 0);
+    http_set("192.168.1.9/door/snapshot.jpg", 200, JPEG, sizeof JPEG, 0);
+    command("{\"command\":\"connect\",\"fields\":{}}");
+    g_ms += 500; module_tick();
+    g_ms += 500; module_tick();
+    const char *rec = kv_peek("conn.X4DOOR");
+    CHECK(rec && strstr(rec, "svc:snapshot"),
+          "a picture coming back is the connection: %s", rec ? rec : "");
+    CHECK(cap_count("data:image/jpeg;base64") >= 1, "and it is on the screen");
+    const char *n = cap_last("\"field\":\"th_picnote\"");
+    CHECK(n && strstr(n, "no live stream"),
+          "and the wapp says watching it means one picture after another: %s",
+          n ? n : "");
+}
+
+static void test_watching_opens_a_socket_and_cuts_frames_out_of_it(void)
+{
+    reset();
+    open_doorbell();
+    connect_stream();
+    cap_clear();
+    command("{\"command\":\"live\",\"fields\":{}}");
+    CHECK(g_sock_opens == 1, "one connection is opened");
+    CHECK(strcmp(sock_host(), "192.168.1.9") == 0, "to the thing: %s", sock_host());
+    CHECK(sock_port() == 80, "on the port it answered on: %d", sock_port());
+    g_ms += 400; module_tick();
+    CHECK(strstr(sock_sent(), "GET /door/stream.mjpeg HTTP/1.0") != 0,
+          "and asked for the live view, in 1.0 so the frames are not chunked: %s",
+          sock_sent());
+    CHECK(strstr(sock_sent(), "Host: 192.168.1.9") != 0, "with a Host header");
+
+    sock_feed(MJPEG, sizeof MJPEG);
+    g_ms += 400; module_tick();
+    CHECK(g_live.frames == 2, "both pictures were found in it: %u", g_live.frames);
+    CHECK(cap_count("data:image/jpeg;base64") >= 1, "and one is on the screen");
+    const char *n = cap_last("\"field\":\"th_picnote\"");
+    CHECK(n && strstr(n, "Live"), "the note says it is live: %s", n ? n : "");
+    CHECK(sock_unread() == 0, "the socket is drained, not left to fill up");
+
+    cap_clear();
+    command("{\"command\":\"unlive\",\"fields\":{}}");
+    CHECK(g_sock_closes == 1, "stopping closes the connection");
+    CHECK(g_live.stage == LIVE_OFF, "and the live view is off");
+    CHECK(cap_last("\"field\":\"live__hidden\",\"value\":false") != 0,
+          "and it can be started again");
+}
+
+static void test_a_frame_too_big_is_dropped_not_shown_in_halves(void)
+{
+    reset();
+    open_doorbell();
+    connect_stream();
+    command("{\"command\":\"live\",\"fields\":{}}");
+    g_ms += 400; module_tick();
+    cap_clear();
+    /* a picture that never ends, longer than the bound */
+    static unsigned char big[PIC_MAX + 2048];
+    big[0] = 0xFF; big[1] = 0xD8;
+    for (unsigned i = 2; i < sizeof big; i++) big[i] = 0x42;
+    sock_feed(big, sizeof big);
+    g_ms += 400; module_tick();
+    CHECK(cap_count("data:image/jpeg;base64") == 0, "nothing half-drawn is shown");
+    CHECK(g_live.dropped >= 1, "it is counted as dropped: %u", g_live.dropped);
+    /* and the stream recovers: the next whole picture arrives */
+    sock_feed(MJPEG, sizeof MJPEG);
+    g_ms += 400; module_tick();
+    CHECK(g_live.frames >= 1, "the next picture still arrives: %u", g_live.frames);
+}
+
+static void test_a_live_view_stops_itself(void)
+{
+    reset();
+    open_doorbell();
+    connect_stream();
+    command("{\"command\":\"live\",\"fields\":{}}");
+    g_ms += 400; module_tick();
+    sock_feed(MJPEG, sizeof MJPEG);
+    g_ms += 400; module_tick();
+    CHECK(g_live.stage == LIVE_STREAM, "it is watching");
+    g_ms += LIVE_MAX_MS + 1000;
+    module_tick();
+    CHECK(g_live.stage == LIVE_OFF, "three minutes is where it stops");
+    CHECK(g_sock_closes == 1, "and the connection goes with it");
+    const char *n = cap_last("\"field\":\"th_picnote\"");
+    CHECK(n && strstr(n, "three minutes"), "and it says why: %s", n ? n : "");
+}
+
+static void test_nobody_looking_is_nothing_held_open(void)
+{
+    reset();
+    open_doorbell();
+    connect_stream();
+    command("{\"command\":\"live\",\"fields\":{}}");
+    g_ms += 400; module_tick();
+    CHECK(g_sock_closes == 0, "the connection is up while the page is");
+    g_ui_attached = 0;                    /* the page closed */
+    g_ms += 400; module_tick();
+    CHECK(g_live.stage == LIVE_OFF, "the live view goes with the page");
+    CHECK(g_sock_closes == 1, "and the connection is closed, not left open");
+}
+
+static void test_leaving_the_screen_stops_the_live_view(void)
+{
+    reset();
+    open_doorbell();
+    connect_stream();
+    command("{\"command\":\"live\",\"fields\":{}}");
+    g_ms += 400; module_tick();
+    command("{\"command\":\"back\",\"fields\":{}}");
+    CHECK(g_live.stage == LIVE_OFF, "Back stops it");
+    CHECK(g_sock_closes == 1, "and closes the connection");
+
+    /* The arrow on the panel's app bar is the HOST's, and it used to leave the
+     * wapp watching a camera behind a list nobody was looking at. The host
+     * says `screen_closed`; it means the same thing as Back. */
+    reset();
+    open_doorbell();
+    connect_stream();
+    command("{\"command\":\"live\",\"fields\":{}}");
+    g_ms += 400; module_tick();
+    command("{\"command\":\"screen_closed\",\"fields\":{}}");
+    CHECK(g_live.stage == LIVE_OFF, "the host's own arrow stops it too");
+    CHECK(g_sock_closes == 1, "and the connection goes with it");
+}
+
+static void test_disconnect_keeps_the_address_and_drops_the_connection(void)
+{
+    reset();
+    open_doorbell();
+    command("{\"command\":\"th_apply\",\"fields\":{\"th_vendor\":\"reolink\","
+            "\"th_host\":\"192.168.1.9\",\"th_user\":\"admin\",\"th_pass\":\"hunter2\"}}");
+    connect_stream();
+    CHECK(cap_last("\"field\":\"disconnect__hidden\",\"value\":false") != 0,
+          "a connected thing can be disconnected");
+    cap_clear();
+    command("{\"command\":\"disconnect\",\"fields\":{}}");
+    const char *rec = kv_peek("conn.X4DOOR");
+    CHECK(rec && strstr(rec, "host:192.168.1.9"),
+          "what the person typed stays: %s", rec ? rec : "");
+    CHECK(rec && strstr(rec, "pass:seal:"), "password included");
+    CHECK(rec && !strstr(rec, "at:"), "the connection does not: %s", rec ? rec : "");
+    CHECK(cap_last("\"field\":\"connect__hidden\",\"value\":false") != 0,
+          "and Connect is offered again");
+    CHECK(cap_last("\"field\":\"live__hidden\",\"value\":true") != 0,
+          "with nothing on offer until it answers again");
+}
+
+static void test_a_thing_with_nothing_to_fetch_offers_no_connection(void)
+{
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    station_set("X4PL3M", PUMP_HERE);
+    module_init();
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4PL3M\"}}");
+    CHECK(cap_last("\"field\":\"connect__hidden\",\"value\":true") != 0,
+          "a switch is not something to connect to over the network");
+    CHECK(cap_last("\"field\":\"th_conn__hidden\",\"value\":true") != 0,
+          "and the panel is not drawn empty");
+}
+
 int main(void)
 {
     test_no_page_no_subscriptions();
@@ -715,6 +1041,19 @@ int main(void)
     test_a_reolink_logs_in_then_asks_for_the_still();
     test_an_empty_password_box_leaves_the_sealed_one_alone();
     test_a_picture_left_on_screen_says_how_old_it_is();
+    test_nothing_is_fetched_before_connecting();
+    test_a_press_is_told_from_the_row_the_core_really_sends();
+    test_the_picture_box_waits_for_a_picture();
+    test_connect_asks_the_thing_what_it_serves();
+    test_the_wrong_camera_is_refused();
+    test_a_camera_that_never_heard_of_the_question();
+    test_watching_opens_a_socket_and_cuts_frames_out_of_it();
+    test_a_frame_too_big_is_dropped_not_shown_in_halves();
+    test_a_live_view_stops_itself();
+    test_nobody_looking_is_nothing_held_open();
+    test_leaving_the_screen_stops_the_live_view();
+    test_disconnect_keeps_the_address_and_drops_the_connection();
+    test_a_thing_with_nothing_to_fetch_offers_no_connection();
     printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

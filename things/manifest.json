@@ -1,10 +1,10 @@
 {
   "id": "tools.xprs.things",
-  "version": "0.3.0",
+  "version": "0.4.8",
   "kind": "app",
   "title": "Things",
   "description": "Things - the devices around you: doorbells, cameras, sensors, meters, switches and locks (X4 callsigns), what each one can do, and the ones you ask to be told about.",
-  "summary": "A device with no radio of its own is spoken for by a controller that airs its readings under an X4 callsign. The format has no way for a device to say what it is, so Things works it out from what it says: the state it reports, the readings it sends, whether it offers a picture. A doorbell gets a doorbell's screen, a meter a meter's, and anything unrecognised still shows everything it aired. Ask to be told and a ring or movement reaches you with the screen off.",
+  "summary": "A device with no radio of its own is spoken for by a controller that airs its readings under an X4 callsign. The format has no way for a device to say what it is, so Things works it out from what it says: the state it reports, the readings it sends, whether it offers a picture. A doorbell gets a doorbell's screen, a meter a meter's. Nothing is fetched from a thing until you connect to it on the local network, by hand; then it offers what that thing's kind can do, which for a doorbell camera is a picture, a live view and being told when somebody rings.",
   "icon": "media/icons/things.svg",
   "color": "#2E7D32",
   "tags": [
@@ -17,9 +17,10 @@
     "x4"
   ],
   "entry_ui": "screens/home.ui.json",
-  "tick_interval_ms": 2000,
+  "tick_interval_ms": 400,
   "permissions": [
-    "archive.read"
+    "archive.read",
+    "transport.socket"
   ],
   "platforms": [
     "android",
@@ -40,14 +41,15 @@
   },
   "requires": {
     "hal": [
+      "archive",
+      "crypto",
+      "event",
+      "http",
+      "kv",
       "log",
       "msg",
-      "kv",
-      "xprs",
-      "event",
-      "archive",
-      "http",
-      "crypto"
+      "socket",
+      "xprs"
     ],
     "events": [],
     "libraries": [],
