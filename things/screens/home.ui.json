@@ -96,6 +96,18 @@
         "icon": "campaign"
       },
       {
+        "$": "action",
+        "name": "watch_move",
+        "label": "Warn when it sees movement",
+        "icon": "radar"
+      },
+      {
+        "$": "action",
+        "name": "unwatch_move",
+        "label": "Stop warning about movement",
+        "icon": "radar"
+      },
+      {
         "$": "field",
         "name": "th_events",
         "$type": "details",
@@ -160,6 +172,13 @@
         "$": "group",
         "name": "Settings",
         "children": [
+          {
+            "$": "field",
+            "name": "th_name",
+            "$type": "string",
+            "label": "Name on this device",
+            "hint": "front door, garage, shed - what you call it"
+          },
           {
             "$": "field",
             "name": "th_class",

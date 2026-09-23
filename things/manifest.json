@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.things",
-  "version": "0.6.1",
+  "version": "0.7.1",
   "kind": "app",
   "title": "Things",
   "description": "Follow the doorbells and sensors and other devices around you.",

@@ -72,6 +72,9 @@ static void deliver_obs(const char *id, const char *from, const char *ts, const 
 static void command(const char *json) { inbox_set(json); module_handle_event(); }
 /* Connect to the doorbell the way a person does, and let it answer. */
 static void connect_stream(void);
+static void open_doorbell(void);
+static void deliver_full_obs(const char *id, const char *from, const char *ts,
+                             const char *state, const char *url);
 
 static const char *NEARBY =
     "[{\"title\":\"Heard over the air (3)\",\"items\":["
@@ -434,9 +437,78 @@ static void test_one_press_is_told_once(void)
     CHECK(cap_count("\"type\":\"notify\"") == 0, "`clear` ends an event, it is not news");
     cap_clear();
     deliver_obs("p3", "X4DOOR", "2026-09-10_14:32:00", "state:motion");
-    CHECK(cap_count("\"type\":\"notify\"") == 1, "movement is told");
+    CHECK(cap_count("\"type\":\"notify\"") == 0,
+          "movement is not a ring: asked about rings, told about rings");
+    command("{\"command\":\"watch_move\",\"fields\":{}}");
+    cap_clear();
+    deliver_obs("p4", "X4DOOR", "2026-09-10_14:33:00", "state:motion");
+    CHECK(cap_count("\"type\":\"notify\"") == 1, "asked about movement, told about it");
     n = cap_last("\"type\":\"notify\"");
-    CHECK(n && strstr(n, "\"level\":\"info\""), "movement is quieter than a ring: %s", n ? n : "");
+    CHECK(n && strstr(n, "Movement seen"), "in its own words: %s", n ? n : "");
+    CHECK(n && strstr(n, "\"level\":\"info\""), "and quieter than a ring: %s", n ? n : "");
+}
+
+/* A doorbell that also watches the street is two different kinds of news:
+ * somebody at the door, and the postman walking past. */
+static void test_the_two_warnings_are_chosen_apart(void)
+{
+    reset();
+    open_doorbell();
+    CHECK(cap_last("\"field\":\"watch__label\",\"value\":\"Warn when it rings\"") != 0,
+          "a doorbell offers one warning for the ring");
+    CHECK(cap_last("\"field\":\"watch_move__label\",\"value\":\"Warn when it sees movement\"") != 0,
+          "and another for movement");
+    CHECK(cap_last("\"field\":\"unwatch__label\",\"value\":\"Stop warning about rings\"") != 0,
+          "and switching one off says which one");
+
+    command("{\"command\":\"watch_move\",\"fields\":{}}");
+    cap_clear();
+    deliver_full_obs("m1", "X4DOOR", "2026-09-23_12:00:00", "motion",
+                     "http://192.168.1.9/door/snapshot.jpg");
+    CHECK(cap_count("\"type\":\"notify\"") == 1, "movement warns");
+    cap_clear();
+    deliver_full_obs("r1", "X4DOOR", "2026-09-23_12:01:00", "pressed",
+                     "http://192.168.1.9/door/snapshot.jpg");
+    CHECK(cap_count("\"type\":\"notify\"") == 0,
+          "a ring does not, because nobody asked about rings");
+
+    /* and the choice survives the engine that made it */
+    const char *rec = kv_peek("watch.X4DOOR");
+    CHECK(rec && strstr(rec, "on:2"), "the choice is written down: %s", rec ? rec : "");
+}
+
+/* A thing is called what its owner calls it -- on the screen and, which is
+ * where it was worst, in the notification. */
+static void test_a_thing_is_called_what_you_call_it(void)
+{
+    reset();
+    open_doorbell();
+    command("{\"command\":\"th_apply\",\"fields\":{\"th_name\":\"Front door\"}}");
+    const char *rec = kv_peek("name.X4DOOR");
+    CHECK(rec && !strcmp(rec, "Front door"),
+          "the name is kept whole, spaces and all: %s", rec ? rec : "");
+    const char *l = cap_last("ui.people.set");
+    CHECK(l && strstr(l, "\"title\":\"Front door\""), "the list says it: %s",
+          l ? l : "");
+    command("{\"command\":\"watch\",\"fields\":{}}");
+    cap_clear();
+    deliver_full_obs("r2", "X4DOOR", "2026-09-23_12:05:00", "pressed",
+                     "http://192.168.1.9/door/snapshot.jpg");
+    const char *n = cap_last("\"type\":\"notify\"");
+    CHECK(n && strstr(n, "\"title\":\"Front door\""),
+          "and the warning is titled with it, not with a callsign: %s", n ? n : "");
+
+    /* and it survives the engine: a headless one, woken by a packet with no
+     * page anywhere, still knows what the thing is called. */
+    g_nth = 0;
+    g_ui_attached = 0;
+    module_init();
+    cap_clear();
+    deliver_full_obs("r3", "X4DOOR", "2026-09-23_12:06:00", "pressed",
+                     "http://192.168.1.9/door/snapshot.jpg");
+    n = cap_last("\"type\":\"notify\"");
+    CHECK(n && strstr(n, "\"title\":\"Front door\""),
+          "with no page open, still by name: %s", n ? n : "");
 }
 
 static void test_an_unwatched_packet_costs_nothing(void)
@@ -1213,6 +1285,8 @@ int main(void)
     test_the_person_can_correct_it();
     test_telling_is_held_only_while_something_is_watched();
     test_one_press_is_told_once();
+    test_the_two_warnings_are_chosen_apart();
+    test_a_thing_is_called_what_you_call_it();
     test_an_unwatched_packet_costs_nothing();
     test_what_it_is_survives_a_restart();
     test_no_clock_with_no_page();

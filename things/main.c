@@ -71,7 +71,8 @@ typedef struct {
     char state[12];               /* the newest state: word it aired */
     unsigned long long state_ms;  /* epoch of that state */
     char events[400];             /* what it did: "word:<epoch> .." newest first */
-    int  watch;                   /* tell me when it reports */
+    char mine[24];                /* what the person calls it, on this device */
+    unsigned watch;               /* which of its events to warn about */
     char cur_id[28];              /* the newest report already told about */
     char cur_ts[24];
 } th_t;
@@ -103,6 +104,13 @@ static char g_big[65536];         /* hal_xprs_stations, hal_xprs_history */
 static char g_host[2048];         /* one hal_xprs_station answer */
 static char g_row[1200];
 static char g_wire[300];
+
+/* Which of a thing's events are worth interrupting somebody for. A doorbell
+ * rings AND sees movement, and those are not the same news: one is somebody
+ * at the door, the other is the postman walking past. They are chosen apart.
+ */
+#define W_MAIN (1u << 0)     /* the thing's own event: a ring, an unlocking */
+#define W_MOVE (1u << 1)     /* movement in front of it */
 
 /* ── A picture, and what it costs to hold one ─────────────────────────
  *
@@ -243,7 +251,13 @@ typedef struct {
     const char *id, *title, *icon;
     unsigned need, forbid, panels;
     const char *summary;      /* the keys of its one-line subtitle, in order */
-    const char *warn;         /* what "tell me about it" means for this kind */
+    /* What this kind of thing can warn about, in the words its owner would
+     * use, and the state: word each one is. A thing with no second event
+     * leaves the second pair null. */
+    const char *warn;         /* the thing's own event */
+    const char *warn_word;
+    const char *warn2;        /* movement, where a thing also watches for it */
+    const char *warn2_word;
 } class_t;
 
 /* First match wins, so the specific rows come first and the last row matches
@@ -251,31 +265,31 @@ typedef struct {
 static const class_t CLASS[] = {
     {"doorbell", "Doorbell", "campaign", CAP_BUTTON | CAP_PICTURE, 0,
      P_EVENTS | P_PICTURE | P_LIVE | P_READINGS, "state,batt,volt",
-     "Warn when it rings"},
+     "Warn when it rings", "pressed", "Warn when it sees movement", "motion"},
     {"bell", "Doorbell", "campaign", CAP_BUTTON, 0,
-     P_EVENTS | P_READINGS, "state,batt,volt", "Warn when it rings"},
+     P_EVENTS | P_READINGS, "state,batt,volt", "Warn when it rings", "pressed", 0, 0},
     {"camera", "Camera", "video", CAP_PICTURE, CAP_BUTTON,
      P_EVENTS | P_PICTURE | P_LIVE | P_READINGS, "state,batt,volt",
-     "Warn when it sees somebody"},
+     "Warn when it sees movement", "motion", 0, 0},
     {"motion", "Movement sensor", "radar", CAP_OCCUP, CAP_PICTURE,
      P_EVENTS | P_READINGS, "state,batt,volt",
-     "Warn when it sees movement"},
+     "Warn when it sees movement", "motion", 0, 0},
     {"lock", "Lock", "lock", CAP_LOCK, 0, P_EVENTS | P_READINGS,
-     "state,batt,volt", "Warn when it is unlocked"},
+     "state,batt,volt", "Warn when it is unlocked", "unlocked", 0, 0},
     {"cover", "Gate or valve", "update", CAP_OPENING, 0,
      P_EVENTS | P_READINGS, "state,level,batt,volt",
-     "Warn when it opens or closes"},
+     "Warn when it opens or closes", "open", 0, 0},
     {"thermostat", "Thermostat", "tune", CAP_SETPOINT, 0,
-     P_READINGS, "temp,target,batt,volt", 0},
+     P_READINGS, "temp,target,batt,volt", 0, 0, 0, 0},
     {"meter", "Meter", "grid", CAP_ENERGY, 0, P_READINGS,
-     "produces,load,consumes,charged", 0},
+     "produces,load,consumes,charged", 0, 0, 0, 0},
     {"switch", "Switch", "power", CAP_SWITCH, 0, P_READINGS,
-     "state,level,load,volt,batt", 0},
+     "state,level,load,volt,batt", 0, 0, 0, 0},
     {"sensor", "Sensor", "monitor_heart", CAP_MEASURE, CAP_SWITCH, P_READINGS,
-     "temp,hum,volt,batt,dose", 0},
+     "temp,hum,volt,batt,dose", 0, 0, 0, 0},
     {"thing", "Device", "developer_board", 0, 0, P_READINGS,
      "state,level,temp,hum,produces,load,consumes,volt,batt,charged,dose",
-     "Warn when it reports"},
+     "Warn when it reports", 0, 0, 0},
 };
 #define NCLASS ((int)(sizeof CLASS / sizeof CLASS[0]))
 
@@ -416,13 +430,39 @@ static void save_caps(th_t *t)
     index_add(t->call);
 }
 
+/* What a thing is called: what the person calls it, and the last nick heard
+ * on the air. Its own record, written only when one of them changes, because
+ * a name is neither a capability (a union) nor a watch (a cursor) -- and
+ * because a notification raised with no page open has to be able to say
+ * "frontdoor" rather than "X49HRF", which means the name has to outlive the
+ * screen that learned it. */
+static void save_name(th_t *t)
+{
+    /* A record of its own for each, holding nothing but the name. The
+     * "k:v k:v" records everything else uses end a value at the first space,
+     * so "Front door" came back as "Front" -- the same trap as an unquoted
+     * shell assignment, and a name is the one thing here that is written by
+     * a person and will have spaces in it. */
+    char key[32];
+    kv_key(key, sizeof key, "name.", t->call);
+    if (t->mine[0]) kv_put(key, t->mine);
+    else hal_kv_delete(key, th_len(key));
+    kv_key(key, sizeof key, "nick.", t->call);
+    if (t->nick[0]) kv_put(key, t->nick);
+    else hal_kv_delete(key, th_len(key));
+    if (t->mine[0] || t->nick[0]) index_add(t->call);
+}
+
 /* Written where the watch is armed, dropped, or moved on by a report. */
 static void save_watch(th_t *t)
 {
     char key[32], rec[120] = "";
     kv_key(key, sizeof key, "watch.", t->call);
     if (!t->watch) { hal_kv_delete(key, th_len(key)); return; }
-    th_put(rec, "on", "1", sizeof rec);
+    char m[16];
+    m[0] = 0;
+    th_cat_u(m, t->watch, sizeof m);
+    th_put(rec, "on", m, sizeof rec);
     if (t->cur_ts[0]) th_put(rec, "cts", t->cur_ts, sizeof rec);
     if (t->cur_id[0]) th_put(rec, "cid", t->cur_id, sizeof rec);
     kv_put(key, rec);
@@ -447,10 +487,25 @@ static void load_thing(const char *call)
         if (th_field(rec, "class", v, sizeof v)) th_cpy(t->klass, v, sizeof t->klass);
         if (th_field(rec, "url", v, sizeof v)) th_cpy(t->url, v, sizeof t->url);
     }
+    kv_key(key, sizeof key, "name.", call);
+    if (kv_get(key, rec, sizeof rec)) {
+        if (!t) { t = get(call); if (!t) return; }
+        th_cpy(t->mine, rec, sizeof t->mine);
+    }
+    kv_key(key, sizeof key, "nick.", call);
+    if (kv_get(key, rec, sizeof rec)) {
+        if (!t) { t = get(call); if (!t) return; }
+        th_cpy(t->nick, rec, sizeof t->nick);
+        t->nick_tried = 1;
+    }
     kv_key(key, sizeof key, "watch.", call);
     if (!kv_get(key, rec, sizeof rec)) return;
     if (!t) { t = get(call); if (!t) return; }
-    if (th_field(rec, "on", v, sizeof v)) t->watch = th_num(v) ? 1 : 0;
+    /* `on:1` is what the one-flag version wrote, and it meant everything. */
+    if (th_field(rec, "on", v, sizeof v)) {
+        unsigned m = (unsigned)th_num(v);
+        t->watch = (m == 1) ? (W_MAIN | W_MOVE) : m;
+    }
     if (th_field(rec, "cts", v, sizeof v)) th_cpy(t->cur_ts, v, sizeof t->cur_ts);
     if (th_field(rec, "cid", v, sizeof v)) th_cpy(t->cur_id, v, sizeof t->cur_id);
 }
@@ -580,8 +635,19 @@ static void nick_of(th_t *t)
         if (!g_row[0]) break;
         if (!th_json(g_row, "wire", g_wire, sizeof g_wire)) continue;
         learn(t, g_wire);
-        if (th_field(g_wire, "nick", t->nick, sizeof t->nick)) return;
+        if (th_field(g_wire, "nick", t->nick, sizeof t->nick)) { save_name(t); return; }
     }
+}
+
+/* What to call it: what the person called it, else the nick it announces,
+ * else its callsign. One place, because a thing called "frontdoor" on one
+ * screen and "X49HRF" in a notification is two things as far as the person
+ * reading them is concerned. */
+static const char *named(const th_t *t)
+{
+    if (t->mine[0]) return t->mine;
+    if (t->nick[0]) return t->nick;
+    return t->call;
 }
 
 /* Is [key] one this wapp shows? */
@@ -827,7 +893,7 @@ static void item(th_t *t, int *first)
     readings(t, have, rd, sizeof rd);
     const class_t *c = class_of(t);
     summary(c, rd, sum, sizeof sum);
-    if (t->nick[0]) th_cpy(sub, t->call, sizeof sub);
+    if (t->mine[0] || t->nick[0]) th_cpy(sub, t->call, sizeof sub);
     char ev[64];
     state_words(t, ev, sizeof ev);
     if ((c->panels & P_EVENTS) && ev[0]) {
@@ -859,7 +925,7 @@ static void item(th_t *t, int *first)
     th_cat(g_out, "{\"id\":\"", sizeof g_out);
     th_jesc(g_out, t->call, sizeof g_out);
     th_cat(g_out, "\",\"title\":\"", sizeof g_out);
-    th_jesc(g_out, t->nick[0] ? t->nick : t->call, sizeof g_out);
+    th_jesc(g_out, named(t), sizeof g_out);
     th_cat(g_out, "\",\"subtitle\":\"", sizeof g_out);
     th_jesc(g_out, sub, sizeof g_out);
     th_cat(g_out, "\",\"icon\":\"", sizeof g_out);
@@ -935,6 +1001,7 @@ static void load_known(void)
             th_cpy(t->nick, nick, sizeof t->nick);
             t->nick_tried = 1;
             t->nick_ms = hal_time_ms();
+            save_name(t);
         }
     }
 }
@@ -1809,7 +1876,7 @@ static void live_start(th_t *t)
         /* The host needs a surface to put pixels on, and it is a screen of
          * its own: video fills what it is given. */
         say("{\"type\":\"video.live\"}");
-        screen_open("Live", t->nick[0] ? t->nick : t->call);
+        screen_open("Live", named(t));
         if (!th_h264_open()) {
             live_stop("This device could not start a video decoder.");
             return;
@@ -2025,6 +2092,19 @@ static void flag_hidden(const char *name, int hidden)
     say(m);
 }
 
+/* The words for switching a warning off, which have to say WHICH warning:
+ * two buttons both reading "Stop warning" is a screen asking a person to
+ * remember which is which. */
+static const char *stop_words(const char *word)
+{
+    if (!word) return "Stop warning";
+    if (th_eq(word, "pressed")) return "Stop warning about rings";
+    if (th_eq(word, "motion")) return "Stop warning about movement";
+    if (th_eq(word, "open")) return "Stop warning about opening";
+    if (th_eq(word, "unlocked")) return "Stop warning about unlocking";
+    return "Stop warning";
+}
+
 /* What the picture is doing: asking, or why there is none. */
 static void picnote(void)
 {
@@ -2096,7 +2176,7 @@ static void push_detail(void)
 
     details_begin("th_about");
     detail("Callsign", t->call);
-    detail("Name", t->nick);
+    detail("Name", named(t));
     char heard[80] = "", w[48];
     if (have) {
         th_json(g_host, "agoMs", v, sizeof v);
@@ -2254,6 +2334,7 @@ static void push_detail(void)
      * (found on the bench: Save then sent "work it out" every time). */
     if (!th_eq(g_fields_for, t->call)) {
         th_cpy(g_fields_for, t->call, sizeof g_fields_for);
+        say_field("th_name", t->mine);
         say_field("th_class", t->klass[0] ? t->klass : "auto");
         say_field("th_url", t->url);
         conn_t cn;
@@ -2280,10 +2361,23 @@ static void push_detail(void)
     flag_hidden("th_totals", !(caps & CAP_TOTALS));
     /* Telling is offered only for a thing that reports events; a meter has
      * nothing to interrupt anybody with. */
-    int tellable = (c->panels & P_EVENTS) != 0 && c->warn;
-    if (tellable) say_label("watch", c->warn);
-    flag_hidden("watch", !tellable || t->watch);
-    flag_hidden("unwatch", !tellable || !t->watch);
+    /* One toggle per kind of event this thing has, in the words its owner
+     * would use. A ring and a passer-by are not the same news. */
+    int tellable = (c->panels & P_EVENTS) != 0 && c->warn != 0;
+    if (tellable) {
+        say_label("watch", c->warn);
+        say_label("unwatch", stop_words(c->warn_word));
+    }
+    flag_hidden("watch", !tellable || (t->watch & W_MAIN));
+    flag_hidden("unwatch", !tellable || !(t->watch & W_MAIN));
+
+    int movable = (c->panels & P_EVENTS) != 0 && c->warn2 != 0;
+    if (movable) {
+        say_label("watch_move", c->warn2);
+        say_label("unwatch_move", stop_words(c->warn2_word));
+    }
+    flag_hidden("watch_move", !movable || (t->watch & W_MOVE));
+    flag_hidden("unwatch_move", !movable || !(t->watch & W_MOVE));
     flag_hidden("th_events", !(c->panels & P_EVENTS));
 }
 
@@ -2365,15 +2459,36 @@ static int ts_le(const char *a, const char *b)
     }
 }
 
+/* Which of the two warnings [word] belongs to for this kind of thing, or 0
+ * when it is not news at all (`clear` ends an event; it does not start one). */
+static unsigned warn_bit(const class_t *c, const char *word)
+{
+    if (c->warn_word && th_eq(word, c->warn_word)) return W_MAIN;
+    if (c->warn2_word && th_eq(word, c->warn2_word)) return W_MOVE;
+    /* A gate reports both halves of the same event. */
+    if (c->warn_word && th_eq(c->warn_word, "open") && th_eq(word, "closed")) return W_MAIN;
+    return 0;
+}
+
+static const char *what_happened(const char *word)
+{
+    if (th_eq(word, "pressed")) return "Someone at the door";
+    if (th_eq(word, "motion")) return "Movement seen";
+    if (th_eq(word, "open")) return "It opened";
+    if (th_eq(word, "closed")) return "It closed";
+    if (th_eq(word, "unlocked")) return "It was unlocked";
+    if (th_eq(word, "locked")) return "It was locked";
+    return 0;
+}
+
 static void tell(th_t *t, const char *word, const char *id)
 {
-    const char *body = th_eq(word, "pressed") ? "Someone at the door"
-                     : th_eq(word, "motion")  ? "Movement seen" : 0;
+    const char *body = what_happened(word);
     if (!body) return;                   /* `clear` ends an event, it is not news */
-    char m[420] = "{\"type\":\"notify\",\"level\":\"";
+    char m[460] = "{\"type\":\"notify\",\"level\":\"";
     th_cat(m, th_eq(word, "pressed") ? "warning" : "info", sizeof m);
     th_cat(m, "\",\"title\":\"", sizeof m);
-    th_jesc(m, t->nick[0] ? t->nick : t->call, sizeof m);
+    th_jesc(m, named(t), sizeof m);
     th_cat(m, "\",\"body\":\"", sizeof m);
     th_jesc(m, body, sizeof m);
     /* Where the notification came from, so tapping it opens the door it is
@@ -2411,7 +2526,23 @@ static void on_observation(void)
 
     char word[16];
     if (!th_field(wire, "state", word, sizeof word)) return;
-    if (!th_eq(word, "pressed") && !th_eq(word, "motion") && !th_eq(word, "clear")) return;
+    const class_t *cl = class_of(t);
+    unsigned bit = warn_bit(cl, word);
+    /* `clear` is kept (it is what the screen shows as the end of an event)
+     * but it warns nobody; anything else this kind cannot warn about is not
+     * this wapp's business at all. */
+    if (!bit && !th_eq(word, "clear")) return;
+    if (bit && !(t->watch & bit)) {
+        /* Asked about the other kind of event, not this one: still worth
+         * writing down where it got to, so a backlog is not replayed as
+         * news later. */
+        th_cpy(t->cur_id, id, sizeof t->cur_id);
+        th_cpy(t->cur_ts, ts, sizeof t->cur_ts);
+        th_cpy(t->state, word, sizeof t->state);
+        t->state_ms = hal_time_epoch();
+        save_watch(t);
+        return;
+    }
 
     /* Already told about: the same packet, or one older than the last we told
      * about (a backlog replayed at start is not news). */
@@ -2465,7 +2596,7 @@ static void open_thing(const char *call, int with_picture)
     g_fields_for[0] = 0;
     g_more = 0;
     push_detail();
-    screen_open("Thing", t->nick[0] ? t->nick : g_sel);
+    screen_open("Thing", named(t));
     if (!with_picture) return;
     /* Somebody is at the door: the picture is the whole point of coming
      * here, so it is asked for rather than waiting for another tap. It
@@ -2514,12 +2645,17 @@ static void on_command(void)
         note(l);
         g_arch_gen++;      /* what the archive keeps for it just changed */
         draw(1);
-    } else if (th_eq(cmd, "watch") || th_eq(cmd, "unwatch")) {
+    } else if (th_eq(cmd, "watch") || th_eq(cmd, "unwatch") ||
+               th_eq(cmd, "watch_move") || th_eq(cmd, "unwatch_move")) {
         if (!g_sel[0]) return;
         th_t *t = get(g_sel);
         if (!t) return;
-        t->watch = th_eq(cmd, "watch");
-        if (t->watch) {
+        unsigned bit = (th_eq(cmd, "watch_move") || th_eq(cmd, "unwatch_move"))
+                           ? W_MOVE : W_MAIN;
+        int on = th_eq(cmd, "watch") || th_eq(cmd, "watch_move");
+        unsigned was = t->watch;
+        t->watch = on ? (t->watch | bit) : (t->watch & ~bit);
+        if (t->watch && !was) {
             /* Start from the newest report already held: the archive is full
              * of yesterday's presses and nobody wants to be told about those. */
             char q[96];
@@ -2540,6 +2676,10 @@ static void on_command(void)
         th_t *t = get(g_sel);
         if (!t) return;
         char v[128];
+        if (th_json(g_buf, "th_name", v, sizeof v)) {
+            th_cpy(t->mine, v, sizeof t->mine);
+            save_name(t);
+        }
         if (th_json(g_buf, "th_class", v, sizeof v)) {
             if (th_eq(v, "auto") || !v[0]) t->klass[0] = 0;
             else if (class_by_id(v)) th_cpy(t->klass, v, sizeof t->klass);
