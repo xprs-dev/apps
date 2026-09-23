@@ -890,6 +890,13 @@ static void section(const char *title, char list[][CALL_MAX], int n, int *any)
  * per screen opening, not per draw (see push_detail). */
 static char g_fields_for[CALL_MAX];
 
+/* Is the person looking at the long half of the screen? A doorbell's
+ * screen is a picture, three buttons and what it did; everything else --
+ * the callsign, the signature, the running totals, what it can do, the
+ * address and the password -- is read once while something is being set
+ * up and never again, so it is folded away until it is asked for. */
+static int g_more;
+
 static char g_known[TH_MAX][CALL_MAX];
 static int  g_nknown;
 static unsigned g_known_gen;
@@ -1389,8 +1396,10 @@ static void fetch_start_probe(th_t *t)
     if (g_fetch.req >= 0) g_fetch.probing = 1;
 }
 
-/* Write down what it answered, and say it in words. */
-static void connected(th_t *t, const char *svc, const char *how)
+/* Write down what it answered. What it means is said once, by the connection
+ * line on the screen: saying it again under the picture was the same sentence
+ * twice, one above the other. */
+static void connected(th_t *t, const char *svc)
 {
     conn_t c;
     conn_load(t->call, &c);
@@ -1401,9 +1410,8 @@ static void connected(th_t *t, const char *svc, const char *how)
      * have set, set by an answer instead (EV[] reads both the same way). */
     if (svc_has(&c, "snapshot")) learn(t, "s:snapshot");
     if (svc_has(&c, "stream")) learn(t, "s:stream");
-    char l[120] = "";
-    th_cpy(l, how, sizeof l);
-    fetch_done(l);
+    fetch_done(0);
+    g_fetch.note[0] = 0;
     /* Connecting is what unlocks the actions below it. Waiting out the
      * two-second redraw throttle to show them is two seconds of a person
      * wondering whether the button worked. */
@@ -1520,10 +1528,7 @@ static void fetch_pump(void)
                 th_cat(svc, one, sizeof svc);
             }
             if (!svc[0]) th_cpy(svc, "snapshot", sizeof svc);
-            char how[120] = "Connected. It offers ";
-            th_cat(how, svc_has_str(svc, "stream") ? "a picture and a live view."
-                                                   : "a picture.", sizeof how);
-            connected(t, svc, how);
+            connected(t, svc);
             return;
         }
         /* Not ours, or not answering that question: try for a picture, which
@@ -1573,10 +1578,7 @@ static void fetch_pump(void)
         g_fetch.probing = 0;
         if (t) {
             paint_picture(len);           /* the proof, on the screen */
-            connected(t, "snapshot",
-                      "Connected. It answers with a picture, and has no live "
-                      "stream of its own: watching it takes one picture after "
-                      "another.");
+            connected(t, "snapshot");
             return;
         }
     }
@@ -1948,6 +1950,15 @@ static void push_detail(void)
     if (!tiles) tile("none", "Readings", "none yet");
     th_cat(g_out, "]}", sizeof g_out);
     say(g_out);
+    /* A doorbell's only reading is the state word, and "What it did" says it
+     * with a time against it. A tile the size of a card for one word nobody
+     * needed twice is the kind of thing that pushes the buttons off the
+     * screen. */
+    {
+        const class_t *cl = class_of(t);
+        int only_state = tiles <= 1 && (!tiles || th_field(rd, "state", v, sizeof v));
+        flag_hidden("th_now", only_state && (cl->panels & P_EVENTS) != 0);
+    }
 
     details_begin("th_about");
     detail("Callsign", t->call);
@@ -1994,7 +2005,8 @@ static void push_detail(void)
         arch_read(t);          /* cached on g_arch_gen: one read per change */
         details_begin_titled("th_events", "What it did");
         int shown = 0;
-        for (const char *f = t->events; *f && shown < 8; ) {
+        const int room = g_more ? 8 : 4;
+        for (const char *f = t->events; *f && shown < room; ) {
             while (*f == ' ') f++;
             if (!*f) break;
             char word[40], at[24];
@@ -2055,39 +2067,39 @@ static void push_detail(void)
     int live_on = g_live.stage != LIVE_OFF && th_eq(g_live.call, t->call);
     int asking = g_fetch.req >= 0 && th_eq(g_fetch.call, t->call);
 
-    details_begin_titled("th_conn", "On the network");
+    /* One line, not four. What a person needs off this panel is whether the
+     * thing is reachable and what that buys them; the address, the age of the
+     * answer and the rest of it are details, and details live under Details. */
+    details_begin("th_conn");
     if (!can_pic && !can_live) {
-        detail("Nothing to fetch",
-               "This kind of thing says what it does on the air; there is "
-               "nothing to fetch from it over the network.");
+        detail("On the network",
+               "Nothing to fetch: this kind of thing says what it does on the "
+               "air.");
     } else if (linked) {
-        char when[48];
-        unsigned long long now_s = hal_time_epoch();
-        ago_words(now_s > cn2.at ? (now_s - cn2.at) * 1000ULL : 0, when, sizeof when);
         char l[160] = "";
-        th_cpy(l, cn2.base[0] ? cn2.base : "its address", sizeof l);
-        th_cat(l, ", ", sizeof l);
-        th_cat(l, when, sizeof l);
-        detail("Connected", l);
-        char off[120] = "";
-        if (svc_has(&cn2, "snapshot")) th_cat(off, "a picture", sizeof off);
-        if (svc_has(&cn2, "stream"))
-            th_cat(off, off[0] ? ", a live view" : "a live view", sizeof off);
-        if (!off[0]) th_cpy(off, "nothing it will name", sizeof off);
-        detail("It offers", off);
+        if (svc_has(&cn2, "stream")) th_cpy(l, "a picture and a live view", sizeof l);
+        else if (svc_has(&cn2, "snapshot")) th_cpy(l, "a picture", sizeof l);
+        else th_cpy(l, "nothing it will name", sizeof l);
+        th_cat(l, " from ", sizeof l);
+        th_cat(l, cn2.base[0] ? cn2.base : "its address", sizeof l);
         if (!svc_has(&cn2, "stream") && can_live)
-            detail("Live view", "One picture after another: it serves no stream.");
+            th_cat(l, ". It serves no stream, so watching it is one picture "
+                      "after another", sizeof l);
+        detail("Connected", l);
     } else {
-        char where[160] = "";
+        char where[180] = "";
         conn_t probe;
         conn_load(t->call, &probe);
         origin_of(t, &probe, where, sizeof where);
-        detail("Not connected",
-               "Nothing is fetched from this thing until you connect to it.");
-        if (where[0]) detail("Its address", where);
-        else detail("No address yet",
-                    "It has not published one and none has been typed in "
-                    "Settings, below.");
+        if (where[0]) {
+            char l[200] = "Nothing is fetched until you connect. It is at ";
+            th_cat(l, where, sizeof l);
+            detail("Not connected", l);
+        } else {
+            detail("Not connected",
+                   "It has published no address and none has been typed under "
+                   "Details and settings.");
+        }
     }
     details_end();
 
@@ -2121,6 +2133,11 @@ static void push_detail(void)
          * anybody looking over a shoulder. An empty box means "unchanged". */
         say_field("th_pass", "");
     }
+
+    flag_hidden("th_more", g_more);
+    flag_hidden("th_less", !g_more);
+    flag_hidden("About", !g_more);
+    flag_hidden("Settings", !g_more);
 
     flag_hidden("pin", pinned(t->call));
     flag_hidden("unpin", !pinned(t->call));
@@ -2398,6 +2415,10 @@ static void on_command(void)
         g_fields_for[0] = 0;       /* show what was taken, once */
         note("kept what you said about this thing");
         draw(1);
+    } else if (th_eq(cmd, "th_more") || th_eq(cmd, "th_less")) {
+        g_more = th_eq(cmd, "th_more");
+        g_fields_for[0] = 0;       /* the settings fields are drawn again */
+        draw(1);
     } else if (th_eq(cmd, "connect")) {
         if (!g_sel[0]) return;
         th_t *t = get(g_sel);
@@ -2454,6 +2475,7 @@ static void on_command(void)
         note("worked it out again from what it says");
         draw(1);
     } else if (th_eq(cmd, "back") || th_eq(cmd, "screen_closed")) {
+        g_more = 0;
         /* `back` is this wapp's own button; `screen_closed` is the host
          * saying the person used the arrow on the panel's app bar. Both mean
          * nobody is looking at this thing any more, and a live view nobody is

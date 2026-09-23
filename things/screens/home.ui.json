@@ -33,30 +33,6 @@
     "children": [
       {
         "$": "field",
-        "name": "th_now",
-        "$type": "stats"
-      },
-      {
-        "$": "field",
-        "name": "th_conn",
-        "$type": "details",
-        "empty": ""
-      },
-      {
-        "$": "action",
-        "name": "connect",
-        "label": "Connect",
-        "style": "primary",
-        "icon": "link"
-      },
-      {
-        "$": "action",
-        "name": "disconnect",
-        "label": "Disconnect",
-        "icon": "link_off"
-      },
-      {
-        "$": "field",
         "name": "th_pic",
         "$type": "image",
         "shape": "wide",
@@ -89,17 +65,28 @@
         "empty": ""
       },
       {
-        "$": "action",
-        "name": "pin",
-        "label": "Pin",
-        "style": "primary",
-        "icon": "star"
+        "$": "field",
+        "name": "th_conn",
+        "$type": "details",
+        "empty": ""
       },
       {
         "$": "action",
-        "name": "unpin",
-        "label": "Unpin",
-        "icon": "star"
+        "name": "connect",
+        "label": "Connect",
+        "style": "primary",
+        "icon": "link"
+      },
+      {
+        "$": "action",
+        "name": "disconnect",
+        "label": "Disconnect",
+        "icon": "link_off"
+      },
+      {
+        "$": "field",
+        "name": "th_now",
+        "$type": "stats"
       },
       {
         "$": "action",
@@ -115,10 +102,35 @@
         "icon": "campaign"
       },
       {
+        "$": "action",
+        "name": "pin",
+        "label": "Pin",
+        "style": "primary",
+        "icon": "star"
+      },
+      {
+        "$": "action",
+        "name": "unpin",
+        "label": "Unpin",
+        "icon": "star"
+      },
+      {
         "$": "field",
         "name": "th_events",
         "$type": "details",
         "empty": "Nothing reported yet."
+      },
+      {
+        "$": "action",
+        "name": "th_more",
+        "label": "Details and settings",
+        "icon": "settings"
+      },
+      {
+        "$": "action",
+        "name": "th_less",
+        "label": "Hide details",
+        "icon": "expand_less"
       },
       {
         "$": "group",

@@ -787,6 +787,51 @@ static void test_a_press_is_told_from_the_row_the_core_really_sends(void)
           "tagged with the packet's identifier: %s", n ? n : "");
 }
 
+/* The short screen: a doorbell is a picture, its buttons and what it did.
+ * Everything a person reads once while setting it up is folded away. */
+static void test_the_long_half_of_the_screen_is_folded_away(void)
+{
+    reset();
+    open_doorbell();
+    CHECK(cap_last("\"field\":\"About__hidden\",\"value\":true") != 0,
+          "About is not in the way");
+    CHECK(cap_last("\"field\":\"Settings__hidden\",\"value\":true") != 0,
+          "nor is Settings");
+    CHECK(cap_last("\"field\":\"th_more__hidden\",\"value\":false") != 0,
+          "and there is one button that opens both");
+    CHECK(cap_last("\"field\":\"th_now__hidden\",\"value\":true") != 0,
+          "a doorbell's one state word is not also a card of its own");
+    cap_clear();
+    command("{\"command\":\"th_more\",\"fields\":{}}");
+    CHECK(cap_last("\"field\":\"About__hidden\",\"value\":false") != 0,
+          "asked for, it is there");
+    CHECK(cap_last("\"field\":\"Settings__hidden\",\"value\":false") != 0,
+          "settings included");
+    CHECK(cap_last("\"field\":\"th_class\"") != 0,
+          "and the fields are filled in again, not left blank");
+    cap_clear();
+    command("{\"command\":\"th_less\",\"fields\":{}}");
+    CHECK(cap_last("\"field\":\"About__hidden\",\"value\":true") != 0,
+          "and it folds back up");
+    /* leaving the thing folds it too: the next thing opens short */
+    command("{\"command\":\"back\",\"fields\":{}}");
+    cap_clear();
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4DOOR\"}}");
+    CHECK(cap_last("\"field\":\"About__hidden\",\"value\":true") != 0,
+          "the next thing opens short");
+}
+
+static void test_a_sensor_still_shows_its_readings(void)
+{
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    station_set("X4PL3M", PUMP_HERE);
+    module_init();
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4PL3M\"}}");
+    CHECK(cap_last("\"field\":\"th_now__hidden\",\"value\":false") != 0,
+          "a thing whose readings ARE the point keeps its tiles");
+}
+
 static void test_nothing_is_fetched_before_connecting(void)
 {
     reset();
@@ -819,9 +864,12 @@ static void test_connect_asks_the_thing_what_it_serves(void)
     CHECK(rec && strstr(rec, "base:http://192.168.1.9"),
           "with the address that answered: %s", rec ? rec : "");
     CHECK(rec && strstr(rec, "at:"), "and when");
-    const char *n = cap_last("\"field\":\"th_picnote\"");
+    const char *n = cap_last("\"field\":\"th_conn\"");
     CHECK(n && strstr(n, "a picture and a live view"),
-          "and it says what that thing offers: %s", n ? n : "");
+          "and the one connection line says what that thing offers: %s",
+          n ? n : "");
+    CHECK(cap_last("\"field\":\"th_picnote\",\"value\":[]") != 0,
+          "said once: not again under the picture");
     CHECK(cap_last("\"field\":\"snap__hidden\",\"value\":false") != 0,
           "now a picture can be asked for");
     CHECK(cap_last("\"field\":\"live__hidden\",\"value\":false") != 0,
@@ -861,10 +909,9 @@ static void test_a_camera_that_never_heard_of_the_question(void)
     CHECK(rec && strstr(rec, "svc:snapshot"),
           "a picture coming back is the connection: %s", rec ? rec : "");
     CHECK(cap_count("data:image/jpeg;base64") >= 1, "and it is on the screen");
-    const char *n = cap_last("\"field\":\"th_picnote\"");
-    CHECK(n && strstr(n, "no live stream"),
-          "and the wapp says watching it means one picture after another: %s",
-          n ? n : "");
+    const char *n = cap_last("\"field\":\"th_conn\"");
+    CHECK(n && strstr(n, "one picture after another"),
+          "and the wapp says what watching it will be like: %s", n ? n : "");
 }
 
 static void test_watching_opens_a_socket_and_cuts_frames_out_of_it(void)
@@ -1042,6 +1089,8 @@ int main(void)
     test_an_empty_password_box_leaves_the_sealed_one_alone();
     test_a_picture_left_on_screen_says_how_old_it_is();
     test_nothing_is_fetched_before_connecting();
+    test_the_long_half_of_the_screen_is_folded_away();
+    test_a_sensor_still_shows_its_readings();
     test_a_press_is_told_from_the_row_the_core_really_sends();
     test_the_picture_box_waits_for_a_picture();
     test_connect_asks_the_thing_what_it_serves();
