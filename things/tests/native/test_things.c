@@ -42,6 +42,7 @@ extern char g_last_url[512];
 extern char g_last_body[1024];
 extern int g_last_method, g_http_calls;
 void sock_reset(void);
+extern int g_video_frames, g_video_configs;
 void sock_state(int s);
 void sock_feed(const void *b, unsigned n);
 const char *sock_sent(void);
@@ -878,6 +879,96 @@ static void test_the_rare_actions_are_not_in_the_way(void)
           "Pin included");
 }
 
+/* Being told somebody is at the door and then left to find the thing in a
+ * list is being told half of it. */
+static void test_a_ring_says_where_it_came_from_and_the_tap_lands_there(void)
+{
+    reset();
+    open_doorbell();
+    connect_stream();
+    command("{\"command\":\"watch\",\"fields\":{}}");
+    cap_clear();
+    deliver_full_obs("p9", "X4DOOR", "2026-09-23_12:00:00", "pressed",
+                     "http://192.168.1.9/door/snapshot.jpg");
+    const char *n = cap_last("\"type\":\"notify\"");
+    CHECK(n && strstr(n, "\"view\":\"thing:X4DOOR\""),
+          "the notification carries the thing it is about: %s", n ? n : "");
+
+    /* the person taps it: the host reopens the wapp at that view */
+    reset();
+    open_doorbell();
+    connect_stream();
+    command("{\"command\":\"back\",\"fields\":{}}");
+    http_set("192.168.1.9/door/snapshot.jpg", 200, JPEG, sizeof JPEG, 0);
+    cap_clear();
+    command("{\"type\":\"view.open\",\"view\":\"thing:X4DOOR\"}");
+    CHECK(cap_last("\"name\":\"Thing\"") != 0, "the door's screen opens");
+    g_ms += 500; module_tick();
+    g_ms += 2500; module_tick();
+    CHECK(cap_count("data:image/jpeg;base64") >= 1,
+          "with a picture of who is there, without another tap");
+}
+
+/* A camera with a login is watched as VIDEO: its own sub stream, off a
+ * socket this wapp opens, decoded here. That is 640x480 ten times a second
+ * against one 585 kB picture every two seconds. */
+static void test_a_camera_with_a_login_is_watched_as_video(void)
+{
+    reset();
+    open_doorbell();
+    command("{\"command\":\"th_apply\",\"fields\":{\"th_vendor\":\"reolink\","
+            "\"th_host\":\"192.168.1.9\",\"th_user\":\"admin\","
+            "\"th_pass\":\"hunter2\"}}");
+    connect_stream();
+    cap_clear();
+    command("{\"command\":\"live\",\"fields\":{}}");
+    CHECK(g_sock_opens == 1, "a connection is opened");
+    CHECK(sock_port() == 554, "to the camera's video, not its web server: %d",
+          sock_port());
+    CHECK(cap_last("\"type\":\"video.live\"") != 0,
+          "the host is asked for a surface to put pictures on");
+    CHECK(cap_last("\"name\":\"Live\"") != 0, "and the live screen opens");
+    g_ms += 400; module_tick();
+    CHECK(strstr(sock_sent(), "DESCRIBE rtsp://192.168.1.9:554/h264Preview_01_sub") != 0,
+          "it asks the camera what it serves: %s", sock_sent());
+
+    /* the camera answers with a challenge, as this one does */
+    const char *ch =
+        "RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\n"
+        "WWW-Authenticate: Digest realm=\"BC Streaming Media\", "
+        "nonce=\"96189ad0c2e8798856f3c474abdbbe90\"\r\n\r\n";
+    sock_feed(ch, (unsigned)strlen(ch));
+    g_ms += 400; module_tick();
+    CHECK(strstr(sock_sent(), "Authorization: Digest username=\"admin\"") != 0,
+          "and it answers the challenge: %s", sock_sent());
+    CHECK(strstr(sock_sent(), "response=\"") != 0, "with a digest");
+
+    command("{\"command\":\"unlive\",\"fields\":{}}");
+    CHECK(g_sock_closes == 1, "stopping closes the connection");
+
+    /* leaving the video goes back to the door, not out to the list */
+    cap_clear();
+    command("{\"command\":\"live\",\"fields\":{}}");
+    g_ms += 400; module_tick();
+    cap_clear();
+    command("{\"command\":\"screen_closed\",\"fields\":{}}");
+    CHECK(cap_last("\"name\":\"Thing\"") != 0,
+          "closing the live screen puts the doorbell back up");
+    CHECK(g_live.stage == LIVE_OFF, "and the camera is let go");
+}
+
+static void test_a_camera_with_no_login_is_watched_the_old_way(void)
+{
+    reset();
+    open_doorbell();
+    connect_stream();
+    command("{\"command\":\"live\",\"fields\":{}}");
+    CHECK(sock_port() == 80,
+          "with no password there is no video, so it falls back to the "
+          "pictures our own firmware serves: %d", sock_port());
+    CHECK(cap_last("\"name\":\"Live\"") == 0, "and no video screen is opened");
+}
+
 static void test_nothing_is_fetched_before_connecting(void)
 {
     reset();
@@ -1136,6 +1227,9 @@ int main(void)
     test_an_empty_password_box_leaves_the_sealed_one_alone();
     test_a_picture_left_on_screen_says_how_old_it_is();
     test_nothing_is_fetched_before_connecting();
+    test_a_camera_with_a_login_is_watched_as_video();
+    test_a_camera_with_no_login_is_watched_the_old_way();
+    test_a_ring_says_where_it_came_from_and_the_tap_lands_there();
     test_the_warning_button_says_what_the_thing_does();
     test_the_rare_actions_are_not_in_the_way();
     test_the_long_half_of_the_screen_is_folded_away();

@@ -43,6 +43,8 @@
  */
 #include "../hal/xprs_wasm_hal.h"
 #include "wire.h"
+#include "rtsp.h"
+#include "h264.h"
 
 #define TH_MAX      48
 #define CALL_MAX    16
@@ -1223,6 +1225,7 @@ static struct {
 #define LIVE_DIAL    1      /* the socket is opening */
 #define LIVE_STREAM  2      /* JPEGs are arriving on it */
 #define LIVE_STILLS  3      /* no stream: one picture after another */
+#define LIVE_RTSP    4      /* the camera's own video, decoded here */
 #define LIVE_MAX_MS  180000ULL
 #define LIVE_GAP_MS  350ULL     /* the fastest the screen is asked to change */
 #define LIVE_BIG     250000u    /* over this, a frame is paced, not raced */
@@ -1238,12 +1241,18 @@ static struct {
     unsigned frames, dropped, last_len;
     unsigned long long began_ms, shown_ms, byte_ms, note_ms;
     char note[140];
+    int  video;                 /* the picture is video, not a run of stills */
+    int  vw, vh;                /* what the host was told the size is */
+    unsigned long long said_ms; /* when the note last changed */
 } g_live = { .sock = -1 };
+
+static rtsp_t g_rtsp;
 
 static unsigned char g_rx[8192];
 
 static void picnote(void);          /* defined with the other panels */
 static void draw(int force);        /* defined with the rest of the drawing */
+static void screen_open(const char *name, const char *title);
 
 static void ago_words(unsigned long long ms, char *out, unsigned cap);
 
@@ -1592,11 +1601,89 @@ static void fetch_pump(void)
     show_picture(len);
 }
 
+/* ── Watching it, as video ────────────────────────────────────────────
+ *
+ * A camera keeps two streams: the big one it records with, and a small one
+ * for looking at. This doorbell's small one is 640x480 at about 36 kB/s --
+ * against 585 kB for ONE frame of the still its HTTP interface returns, the
+ * only size it has. So a live view worth the name is the sub stream, which
+ * means RTSP, which means H.264, which means a decoder.
+ *
+ * The decoder is in here, in the wapp (docs/architecture.md: the host holds
+ * no codec and takes decoded pixels), and the socket is the wapp's too: no
+ * XPRS packet crosses it, nothing is relayed, no key is involved. The core
+ * still owns every lane that carries a packet.
+ */
+static void live_note(const char *s);
+
+static void on_rgba(const unsigned char *rgba, int w, int h)
+{
+    if (w != g_live.vw || h != g_live.vh) {
+        hal_video_config(w, h, 0);          /* 0 = RGBA8888 */
+        g_live.vw = w;
+        g_live.vh = h;
+    }
+    unsigned long long now = hal_time_ms();
+    hal_video_frame(rgba, (uint32_t)(w * h * 4), w, h, 0,
+                    (int32_t)(now - g_live.began_ms));
+    g_live.frames++;
+    g_live.shown_ms = now;
+    /* A counter that changes ten times a second is a screen redrawing ten
+     * times a second for a number nobody reads that fast. */
+    if (now - g_live.said_ms > 2000ULL) {
+        char l[140] = "Live: ";
+        th_cat_u(l, (unsigned)w, sizeof l);
+        th_cat(l, "x", sizeof l);
+        th_cat_u(l, (unsigned)h, sizeof l);
+        th_cat(l, ", ", sizeof l);
+        th_cat_u(l, g_live.frames, sizeof l);
+        th_cat(l, " frames from the camera's own stream.", sizeof l);
+        live_note(l);
+        g_live.said_ms = now;
+        g_dirty = 1;
+    }
+}
+
+static void on_au(void *u, const unsigned char *au, unsigned len)
+{
+    (void)u;
+    th_h264_decode(au, len, on_rgba);
+}
+
+static int rio_send(void *u, const char *b, unsigned n)
+{
+    (void)u;
+    if (g_live.sock < 0) return -1;
+    return hal_socket_send(g_live.sock, b, n);
+}
+
+static int rio_recv(void *u, char *b, unsigned cap)
+{
+    (void)u;
+    if (g_live.sock < 0) return -1;
+    if (hal_socket_status(g_live.sock) == 2) return -1;
+    return (int)hal_socket_recv(g_live.sock, b, cap);
+}
+
+static unsigned long long rio_now(void *u) { (void)u; return hal_time_ms(); }
+
 /* ── Watching it ─────────────────────────────────────────────────────── */
+static void live_note(const char *s)
+{
+    th_cpy(g_live.note, s, sizeof g_live.note);
+    g_live.note_ms = hal_time_ms();
+}
+
 static void live_stop(const char *why)
 {
     if (g_live.sock >= 0) hal_socket_close(g_live.sock);
     g_live.sock = -1;
+    if (g_live.video) {
+        th_h264_close();
+        g_live.video = 0;
+        g_live.vw = g_live.vh = 0;
+        say("{\"type\":\"ui.screen.close\"}");
+    }
     g_live.stage = LIVE_OFF;
     g_live.in_frame = 0;
     g_live.len = 0;
@@ -1629,8 +1716,7 @@ static void live_said(void)
         th_cat(l, " too big to show", sizeof l);
     }
     th_cat(l, ".", sizeof l);
-    th_cpy(g_live.note, l, sizeof g_live.note);
-    g_live.note_ms = hal_time_ms();
+    live_note(l);
 }
 
 /* One complete JPEG out of the stream. */
@@ -1694,8 +1780,7 @@ static void live_start(th_t *t)
     conn_t c;
     conn_load(t->call, &c);
     if (!c.at) {
-        th_cpy(g_live.note, "Connect to it first.", sizeof g_live.note);
-    g_live.note_ms = hal_time_ms();
+        live_note("Connect to it first.");
         g_dirty = 1;
         return;
     }
@@ -1706,23 +1791,45 @@ static void live_start(th_t *t)
     g_live.in_frame = 0;
     g_live.shown_ms = 0;
     g_live.began_ms = g_live.byte_ms = hal_time_ms();
-    if (svc_has(&c, "stream") && c.base[0]) {
-        char host[64];
-        int port = 80;
-        if (!split_origin(c.base, host, sizeof host, &port)) {
-            live_stop("That address cannot be reached.");
+    /* The camera's own video, when there is a login for it: RTSP on 554,
+     * the sub stream, decoded here. It is the difference between a picture
+     * every two seconds and a picture ten times a second. */
+    char host[64];
+    int port = 80;
+    int have_origin = c.base[0] && split_origin(c.base, host, sizeof host, &port);
+    if (have_origin && c.user[0] && c.pass[0]) {
+        int s = hal_socket_open(host, th_len(host), 554);
+        if (s < 0) { live_stop("This device would not open a connection."); return; }
+        g_live.sock = s;
+        g_live.stage = LIVE_RTSP;
+        g_live.video = 1;
+        g_live.vw = g_live.vh = 0;
+        g_live.said_ms = 0;
+        live_note("Asking the camera for its video...");
+        /* The host needs a surface to put pixels on, and it is a screen of
+         * its own: video fills what it is given. */
+        say("{\"type\":\"video.live\"}");
+        screen_open("Live", t->nick[0] ? t->nick : t->call);
+        if (!th_h264_open()) {
+            live_stop("This device could not start a video decoder.");
             return;
         }
+        rtsp_io io = { rio_send, rio_recv, rio_now, 0 };
+        const char *path = c.path[0] && th_starts(c.path, "/h264")
+                               ? c.path : "/h264Preview_01_sub";
+        rtsp_begin(&g_rtsp, &io, host, 554, path, c.user, c.pass, on_au, 0);
+        g_dirty = 1;
+        return;
+    }
+    if (svc_has(&c, "stream") && have_origin) {
         int s = hal_socket_open(host, th_len(host), port);
         if (s < 0) { live_stop("This device would not open a connection."); return; }
         g_live.sock = s;
         g_live.stage = LIVE_DIAL;
-        th_cpy(g_live.note, "Opening a connection to it...", sizeof g_live.note);
-    g_live.note_ms = hal_time_ms();
+        live_note("Opening a connection to it...");
     } else {
         g_live.stage = LIVE_STILLS;
-        th_cpy(g_live.note, "Live: one picture after another.", sizeof g_live.note);
-    g_live.note_ms = hal_time_ms();
+        live_note("Live: one picture after another.");
         fetch_start(t);
     }
     g_dirty = 1;
@@ -1761,6 +1868,15 @@ static void live_pump(void)
                                 : "Nothing answered on that address.");
         return;
     }
+    if (g_live.stage == LIVE_RTSP) {
+        if (st == 0) {
+            if (now - g_live.byte_ms > 15000ULL) live_stop("The camera did not answer.");
+            return;
+        }
+        if (rtsp_pump(&g_rtsp) == RTSP_DONE)
+            live_stop(g_rtsp.why[0] ? g_rtsp.why : "The live view ended.");
+        return;
+    }
     if (st == 0) {
         if (now - g_live.byte_ms > 15000ULL) live_stop("It did not answer.");
         return;
@@ -1789,8 +1905,7 @@ static void live_pump(void)
         }
         g_live.stage = LIVE_STREAM;
         g_live.byte_ms = now;
-        th_cpy(g_live.note, "Asked it for a live view...", sizeof g_live.note);
-    g_live.note_ms = hal_time_ms();
+        live_note("Asked it for a live view...");
         return;
     }
 
@@ -2261,6 +2376,11 @@ static void tell(th_t *t, const char *word, const char *id)
     th_jesc(m, t->nick[0] ? t->nick : t->call, sizeof m);
     th_cat(m, "\",\"body\":\"", sizeof m);
     th_jesc(m, body, sizeof m);
+    /* Where the notification came from, so tapping it opens the door it is
+     * about. Being told somebody is at the door and then being left to find
+     * the thing in a list is being told half of it. */
+    th_cat(m, "\",\"view\":\"thing:", sizeof m);
+    th_jesc(m, t->call, sizeof m);
     /* The 5 identifier, so the same press heard twice over two bearers is one
      * notification even if this wapp were restarted between them. */
     th_cat(m, "\",\"tag\":\"thing.", sizeof m);
@@ -2336,10 +2456,41 @@ static void drain_events(void)
 }
 
 /* ── What the person does ─────────────────────────────────────────────── */
+/* Put [call] on the screen: the details, then the screen itself. */
+static void open_thing(const char *call, int with_picture)
+{
+    th_t *t = get(call);
+    if (!t) return;
+    th_cpy(g_sel, call, sizeof g_sel);
+    g_fields_for[0] = 0;
+    g_more = 0;
+    push_detail();
+    screen_open("Thing", t->nick[0] ? t->nick : g_sel);
+    if (!with_picture) return;
+    /* Somebody is at the door: the picture is the whole point of coming
+     * here, so it is asked for rather than waiting for another tap. It
+     * needs a connection -- without one there is no address this wapp is
+     * allowed to have guessed. */
+    conn_t c;
+    conn_load(call, &c);
+    if (c.at && (c.base[0] || t->url[0])) fetch_start(t);
+}
+
 static void on_command(void)
 {
     char cmd[40] = "";
-    if (!th_json(g_buf, "command", cmd, sizeof cmd)) return;
+    if (!th_json(g_buf, "command", cmd, sizeof cmd)) {
+        /* Not a button: the host opening this wapp at a particular thing,
+         * which is what a tap on "Someone at the door" does. */
+        char type[24] = "", view[40] = "";
+        if (!th_json(g_buf, "type", type, sizeof type)) return;
+        if (!th_eq(type, "view.open")) return;
+        if (!th_json(g_buf, "view", view, sizeof view)) return;
+        if (!th_starts(view, "thing:")) return;
+        open_thing(view + 6, 1);
+        draw(1);
+        return;
+    }
     if (th_eq(cmd, "refresh") || th_eq(cmd, "ready")) {
         g_arch_gen++;
         draw(1);
@@ -2349,11 +2500,7 @@ static void on_command(void)
     } else if (th_eq(cmd, "things_tap")) {
         char id[CALL_MAX];
         if (!th_json(g_buf, "things_id", id, sizeof id) || !id[0]) return;
-        th_cpy(g_sel, id, sizeof g_sel);
-        g_fields_for[0] = 0;
-        push_detail();
-        th_t *t = find(g_sel);
-        screen_open("Thing", t && t->nick[0] ? t->nick : g_sel);
+        open_thing(id, 0);
     } else if (th_eq(cmd, "pin") || th_eq(cmd, "unpin")) {
         if (!g_sel[0]) return;
         int on = th_eq(cmd, "pin");
@@ -2495,12 +2642,22 @@ static void on_command(void)
         note("worked it out again from what it says");
         draw(1);
     } else if (th_eq(cmd, "back") || th_eq(cmd, "screen_closed")) {
-        g_more = 0;
         /* `back` is this wapp's own button; `screen_closed` is the host
          * saying the person used the arrow on the panel's app bar. Both mean
-         * nobody is looking at this thing any more, and a live view nobody is
-         * looking at is a camera being read for nothing. */
+         * nobody is looking at what was on it, and a live view nobody is
+         * looking at is a camera being read for nothing.
+         *
+         * Video fills a screen of its own, so leaving THAT screen means
+         * leaving the video, not the doorbell: the person goes back to the
+         * door they were looking at, not to the list of everything. */
+        int from_video = g_live.video && g_sel[0] && th_eq(g_live.call, g_sel);
         live_stop(0);
+        if (from_video) {
+            open_thing(g_sel, 0);
+            draw(1);
+            return;
+        }
+        g_more = 0;
         g_sel[0] = 0;
         g_fetch.note[0] = 0;
         g_fetch.pic_ms = 0;

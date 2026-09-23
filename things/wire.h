@@ -48,5 +48,8 @@ const char *th_json_next_str(const char *p, char *out, unsigned cap);
 /* Standard base64 with padding, null-terminated. Returns the characters
  * written, or 0 when [cap] cannot hold the lot (nothing is written then). */
 unsigned th_b64(const unsigned char *in, unsigned n, char *out, unsigned cap);
+/* The other way: decode [in] until its end or a character that is not
+ * base64. Returns the bytes written, 0 when they would not fit. */
+unsigned th_b64_dec(const char *in, unsigned char *out, unsigned cap);
 
 #endif

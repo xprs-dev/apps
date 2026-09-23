@@ -300,5 +300,20 @@
         "icon": "close"
       }
     ]
+  },
+  {
+    "$": "screen",
+    "name": "Live",
+    "icon": "videocam",
+    "hidden": true,
+    "children": [
+      {
+        "$": "group",
+        "name": "live-surface",
+        "$type": "video",
+        "controls": "none",
+        "fit": "contain"
+      }
+    ]
   }
 ]

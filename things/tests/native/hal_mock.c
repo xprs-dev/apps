@@ -427,3 +427,39 @@ void hal_socket_close(int32_t h)
     g_sock.live = 0;
     g_sock.state = 2;
 }
+
+/* ── the video sink, counted rather than shown ─────────────────────────
+ * The tests hold the wapp to WHAT it pushes and when it stops, not to what
+ * a frame looks like: a decoded picture is openh264's business and it is
+ * not compiled into this build. */
+int g_video_frames;
+int g_video_w, g_video_h;
+int g_video_configs;
+
+void hal_video_config(int32_t w, int32_t h, int32_t pixfmt)
+{
+    (void)pixfmt;
+    g_video_configs++;
+    g_video_w = w;
+    g_video_h = h;
+}
+void hal_video_frame(const uint8_t *d, uint32_t n, int32_t w, int32_t h,
+                     int32_t pixfmt, int32_t pts)
+{
+    (void)d; (void)n; (void)pixfmt; (void)pts;
+    g_video_frames++;
+    g_video_w = w;
+    g_video_h = h;
+}
+void hal_video_end(void) { }
+
+/* The decoder itself is C++ and lives only in the wasm build; here it is a
+ * stand-in that says "no picture yet", so the RTSP half can be tested. */
+int th_h264_open(void) { return 1; }
+void th_h264_close(void) { }
+int th_h264_decode(const unsigned char *au, unsigned len,
+                   void (*emit)(const unsigned char *rgba, int w, int h))
+{
+    (void)au; (void)len; (void)emit;
+    return 0;
+}

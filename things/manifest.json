@@ -1,10 +1,10 @@
 {
   "id": "tools.xprs.things",
-  "version": "0.5.2",
+  "version": "0.6.1",
   "kind": "app",
   "title": "Things",
-  "description": "Things - the devices around you: doorbells, cameras, sensors, meters, switches and locks (X4 callsigns), what each one can do, and the ones you ask to be told about.",
-  "summary": "A device with no radio of its own is spoken for by a controller that airs its readings under an X4 callsign. The format has no way for a device to say what it is, so Things works it out from what it says: the state it reports, the readings it sends, whether it offers a picture. A doorbell gets a doorbell's screen, a meter a meter's. Nothing is fetched from a thing until you connect to it on the local network, by hand; then it offers what that thing's kind can do, which for a doorbell camera is a picture, a live view and being told when somebody rings.",
+  "description": "Follow the doorbells and sensors and other devices around you.",
+  "summary": "Some devices have no radio of their own. A controller speaks for them and airs their readings under an X4 callsign. Things works out what each device is from what it reports. A doorbell gets a doorbell screen and a meter gets a meter screen. Nothing is fetched from a device until you connect to it on the local network yourself. A doorbell camera then offers a picture and a live view. It can also tell you when somebody rings.",
   "icon": "media/icons/things.svg",
   "color": "#2E7D32",
   "tags": [
@@ -49,6 +49,7 @@
       "log",
       "msg",
       "socket",
+      "video",
       "xprs"
     ],
     "events": [],

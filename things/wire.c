@@ -244,3 +244,26 @@ unsigned th_b64(const unsigned char *in, unsigned n, char *out, unsigned cap)
     out[o] = 0;
     return o;
 }
+
+/* Base64 the other way, for what a camera puts in its SDP: the parameter
+ * sets a decoder needs before it can make sense of the first picture. */
+unsigned th_b64_dec(const char *in, unsigned char *out, unsigned cap)
+{
+    static const char A[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    unsigned bits = 0, have = 0, n = 0;
+    for (const char *p = in; *p; p++) {
+        if (*p == '=') break;
+        int v = -1;
+        for (int i = 0; i < 64; i++) if (A[i] == *p) { v = i; break; }
+        if (v < 0) break;                 /* whitespace, a comma, the end */
+        bits = (bits << 6) | (unsigned)v;
+        have += 6;
+        if (have >= 8) {
+            have -= 8;
+            if (n >= cap) return 0;
+            out[n++] = (unsigned char)((bits >> have) & 0xFF);
+        }
+    }
+    return n;
+}
