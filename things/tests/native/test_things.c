@@ -1041,6 +1041,32 @@ static void test_a_camera_with_no_login_is_watched_the_old_way(void)
     CHECK(cap_last("\"name\":\"Live\"") == 0, "and no video screen is opened");
 }
 
+/* Opening a camera shows what it can see. An empty box with a button under
+ * it is a screen asking to be pressed before it will say anything. */
+static void test_opening_a_connected_camera_shows_a_picture(void)
+{
+    reset();
+    open_doorbell();
+    connect_stream();
+    command("{\"command\":\"back\",\"fields\":{}}");
+    http_set("192.168.1.9/door/snapshot.jpg", 200, JPEG, sizeof JPEG, 0);
+    cap_clear();
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4DOOR\"}}");
+    g_ms += 500; module_tick();
+    g_ms += 2500; module_tick();
+    CHECK(cap_count("data:image/jpeg;base64") >= 1,
+          "the picture is there without pressing anything");
+
+    /* and it is not re-fetched for every tap: one that is seconds old stands */
+    cap_clear();
+    command("{\"command\":\"back\",\"fields\":{}}");
+    int before = g_http_calls;
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4DOOR\"}}");
+    CHECK(g_http_calls == before,
+          "a picture seconds old is not asked for again: %d vs %d",
+          g_http_calls, before);
+}
+
 static void test_nothing_is_fetched_before_connecting(void)
 {
     reset();
@@ -1301,6 +1327,7 @@ int main(void)
     test_an_empty_password_box_leaves_the_sealed_one_alone();
     test_a_picture_left_on_screen_says_how_old_it_is();
     test_nothing_is_fetched_before_connecting();
+    test_opening_a_connected_camera_shows_a_picture();
     test_a_camera_with_a_login_is_watched_as_video();
     test_a_camera_with_no_login_is_watched_the_old_way();
     test_a_ring_says_where_it_came_from_and_the_tap_lands_there();

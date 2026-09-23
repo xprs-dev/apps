@@ -2588,7 +2588,7 @@ static void drain_events(void)
 
 /* ── What the person does ─────────────────────────────────────────────── */
 /* Put [call] on the screen: the details, then the screen itself. */
-static void open_thing(const char *call, int with_picture)
+static void open_thing(const char *call, int fresh)
 {
     th_t *t = get(call);
     if (!t) return;
@@ -2597,14 +2597,20 @@ static void open_thing(const char *call, int with_picture)
     g_more = 0;
     push_detail();
     screen_open("Thing", named(t));
-    if (!with_picture) return;
-    /* Somebody is at the door: the picture is the whole point of coming
-     * here, so it is asked for rather than waiting for another tap. It
-     * needs a connection -- without one there is no address this wapp is
-     * allowed to have guessed. */
-    conn_t c;
-    conn_load(call, &c);
-    if (c.at && (c.base[0] || t->url[0])) fetch_start(t);
+
+    /* Opening a camera and being shown an empty box is being told to press
+     * a button to see what the camera can already see. So a connected one is
+     * asked for a picture as the screen opens -- and asked again when the
+     * screen was opened BY something that happened (a ring), where the
+     * picture on it is of a doorstep from before that. */
+    const class_t *c = class_of(t);
+    if (!(c->panels & P_PICTURE)) return;
+    conn_t cn;
+    conn_load(call, &cn);
+    if (!cn.at || (!cn.base[0] && !t->url[0])) return;
+    unsigned long long age = hal_time_ms() - g_fetch.pic_ms;
+    int stale = !g_fetch.pic_ms || !th_eq(g_fetch.call, call) || age > 30000ULL;
+    if (fresh || stale) fetch_start(t);
 }
 
 static void on_command(void)
@@ -2800,8 +2806,10 @@ static void on_command(void)
         g_more = 0;
         g_sel[0] = 0;
         g_fetch.note[0] = 0;
-        g_fetch.pic_ms = 0;
-        say("{\"type\":\"ui.field.set\",\"field\":\"th_pic\",\"value\":\"\"}");
+        /* The picture is NOT thrown away here. It belongs to the thing it was
+         * taken of (the panel is drawn only for that one), and coming back to
+         * the same door inside half a minute should show what was already
+         * fetched rather than fetch it again. */
         say("{\"type\":\"ui.screen.close\"}");
     }
 }
