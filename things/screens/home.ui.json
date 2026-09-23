@@ -78,12 +78,6 @@
         "icon": "link"
       },
       {
-        "$": "action",
-        "name": "disconnect",
-        "label": "Disconnect",
-        "icon": "link_off"
-      },
-      {
         "$": "field",
         "name": "th_now",
         "$type": "stats"
@@ -91,28 +85,15 @@
       {
         "$": "action",
         "name": "watch",
-        "label": "Tell me",
+        "label": "Warn when it rings",
         "style": "primary",
         "icon": "campaign"
       },
       {
         "$": "action",
         "name": "unwatch",
-        "label": "Stop telling me",
+        "label": "Stop warning",
         "icon": "campaign"
-      },
-      {
-        "$": "action",
-        "name": "pin",
-        "label": "Pin",
-        "style": "primary",
-        "icon": "star"
-      },
-      {
-        "$": "action",
-        "name": "unpin",
-        "label": "Unpin",
-        "icon": "star"
       },
       {
         "$": "field",
@@ -131,6 +112,25 @@
         "name": "th_less",
         "label": "Hide details",
         "icon": "expand_less"
+      },
+      {
+        "$": "action",
+        "name": "disconnect",
+        "label": "Disconnect",
+        "icon": "link_off"
+      },
+      {
+        "$": "action",
+        "name": "pin",
+        "label": "Pin",
+        "style": "primary",
+        "icon": "star"
+      },
+      {
+        "$": "action",
+        "name": "unpin",
+        "label": "Unpin",
+        "icon": "star"
       },
       {
         "$": "group",

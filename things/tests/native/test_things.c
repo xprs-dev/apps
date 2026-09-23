@@ -143,6 +143,7 @@ static void reset(void)
     g_live.in_frame = 0;
     g_live.note[0] = 0;
     g_live.call[0] = 0;
+    g_more = 0;
     sock_reset();
     while (hal_event_available()) { char t[64], d[64]; hal_event_recv(t, sizeof t, d, sizeof d); }
 }
@@ -180,7 +181,9 @@ static void test_pin_is_the_cores_follow(void)
     module_init();
     command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4PL3M\"}}");
     CHECK(cap_count("\"name\":\"Thing\"") == 1, "the Thing screen opened");
-    CHECK(cap_last("\"field\":\"pin__hidden\",\"value\":false") != 0, "Pin offered");
+    command("{\"command\":\"th_more\",\"fields\":{}}");
+    CHECK(cap_last("\"field\":\"pin__hidden\",\"value\":false") != 0,
+          "Pin offered under Details");
     cap_clear();
     command("{\"command\":\"pin\",\"fields\":{}}");
     CHECK(g_follow_calls == 1 && g_followed_n == 1 && !strcmp(g_followed[0], "X4PL3M"),
@@ -188,7 +191,9 @@ static void test_pin_is_the_cores_follow(void)
     const char *l = cap_last("ui.people.set");
     CHECK(l && strstr(l, "\"title\":\"Pinned\",\"items\":[{\"id\":\"X4PL3M\""), "moved to Pinned: %s", l ? l : "");
     CHECK(l && !strstr(l, "\"title\":\"Nearby\",\"items\":[{\"id\":\"X4PL3M\""), "and not also Nearby");
-    CHECK(cap_last("\"field\":\"unpin__hidden\",\"value\":false") != 0, "Unpin offered now");
+    command("{\"command\":\"th_more\",\"fields\":{}}");
+    CHECK(cap_last("\"field\":\"unpin__hidden\",\"value\":false") != 0,
+          "Unpin offered now, under Details where it belongs");
     command("{\"command\":\"unpin\",\"fields\":{}}");
     CHECK(g_followed_n == 0, "unpinned");
 }
@@ -832,6 +837,47 @@ static void test_a_sensor_still_shows_its_readings(void)
           "a thing whose readings ARE the point keeps its tiles");
 }
 
+/* A button says what the thing in front of the person does. "Tell me" told
+ * nobody anything; a doorbell warns when it rings, a gate when it opens. */
+static void test_the_warning_button_says_what_the_thing_does(void)
+{
+    reset();
+    open_doorbell();
+    CHECK(cap_last("\"field\":\"watch__label\",\"value\":\"Warn when it rings\"") != 0,
+          "a doorbell's button says what a ring is");
+    CHECK(cap_last("\"field\":\"watch__hidden\",\"value\":false") != 0,
+          "and it is offered");
+
+    /* a thing that only ever reports readings has nothing to warn about */
+    reset();
+    strcpy(g_stations_json, NEARBY);
+    station_set("X4PL3M", PUMP_HERE);
+    module_init();
+    command("{\"command\":\"things_tap\",\"fields\":{\"things_id\":\"X4PL3M\"}}");
+    CHECK(cap_last("\"field\":\"watch__hidden\",\"value\":true") != 0,
+          "a switch is not something that interrupts anybody");
+}
+
+/* What a person does once is not what sits above what they came for. */
+static void test_the_rare_actions_are_not_in_the_way(void)
+{
+    reset();
+    open_doorbell();
+    connect_stream();
+    CHECK(cap_last("\"field\":\"disconnect__hidden\",\"value\":true") != 0,
+          "Disconnect is not on the short screen");
+    CHECK(cap_last("\"field\":\"pin__hidden\",\"value\":true") != 0,
+          "nor is Pin");
+    CHECK(cap_last("\"field\":\"connect__hidden\",\"value\":true") != 0,
+          "and Connect is done with");
+    cap_clear();
+    command("{\"command\":\"th_more\",\"fields\":{}}");
+    CHECK(cap_last("\"field\":\"disconnect__hidden\",\"value\":false") != 0,
+          "they are under Details and settings, where they are looked for");
+    CHECK(cap_last("\"field\":\"pin__hidden\",\"value\":false") != 0,
+          "Pin included");
+}
+
 static void test_nothing_is_fetched_before_connecting(void)
 {
     reset();
@@ -1031,8 +1077,9 @@ static void test_disconnect_keeps_the_address_and_drops_the_connection(void)
     command("{\"command\":\"th_apply\",\"fields\":{\"th_vendor\":\"reolink\","
             "\"th_host\":\"192.168.1.9\",\"th_user\":\"admin\",\"th_pass\":\"hunter2\"}}");
     connect_stream();
+    command("{\"command\":\"th_more\",\"fields\":{}}");
     CHECK(cap_last("\"field\":\"disconnect__hidden\",\"value\":false") != 0,
-          "a connected thing can be disconnected");
+          "a connected thing can be disconnected, under Details");
     cap_clear();
     command("{\"command\":\"disconnect\",\"fields\":{}}");
     const char *rec = kv_peek("conn.X4DOOR");
@@ -1089,6 +1136,8 @@ int main(void)
     test_an_empty_password_box_leaves_the_sealed_one_alone();
     test_a_picture_left_on_screen_says_how_old_it_is();
     test_nothing_is_fetched_before_connecting();
+    test_the_warning_button_says_what_the_thing_does();
+    test_the_rare_actions_are_not_in_the_way();
     test_the_long_half_of_the_screen_is_folded_away();
     test_a_sensor_still_shows_its_readings();
     test_a_press_is_told_from_the_row_the_core_really_sends();

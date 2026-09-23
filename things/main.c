@@ -241,32 +241,39 @@ typedef struct {
     const char *id, *title, *icon;
     unsigned need, forbid, panels;
     const char *summary;      /* the keys of its one-line subtitle, in order */
+    const char *warn;         /* what "tell me about it" means for this kind */
 } class_t;
 
 /* First match wins, so the specific rows come first and the last row matches
  * everything. Adding a kind of thing is one row here. */
 static const class_t CLASS[] = {
     {"doorbell", "Doorbell", "campaign", CAP_BUTTON | CAP_PICTURE, 0,
-     P_EVENTS | P_PICTURE | P_LIVE | P_READINGS, "state,batt,volt"},
+     P_EVENTS | P_PICTURE | P_LIVE | P_READINGS, "state,batt,volt",
+     "Warn when it rings"},
     {"bell", "Doorbell", "campaign", CAP_BUTTON, 0,
-     P_EVENTS | P_READINGS, "state,batt,volt"},
+     P_EVENTS | P_READINGS, "state,batt,volt", "Warn when it rings"},
     {"camera", "Camera", "video", CAP_PICTURE, CAP_BUTTON,
-     P_EVENTS | P_PICTURE | P_LIVE | P_READINGS, "state,batt,volt"},
+     P_EVENTS | P_PICTURE | P_LIVE | P_READINGS, "state,batt,volt",
+     "Warn when it sees somebody"},
     {"motion", "Movement sensor", "radar", CAP_OCCUP, CAP_PICTURE,
-     P_EVENTS | P_READINGS, "state,batt,volt"},
-    {"lock", "Lock", "lock", CAP_LOCK, 0, P_EVENTS | P_READINGS, "state,batt,volt"},
+     P_EVENTS | P_READINGS, "state,batt,volt",
+     "Warn when it sees movement"},
+    {"lock", "Lock", "lock", CAP_LOCK, 0, P_EVENTS | P_READINGS,
+     "state,batt,volt", "Warn when it is unlocked"},
     {"cover", "Gate or valve", "update", CAP_OPENING, 0,
-     P_EVENTS | P_READINGS, "state,level,batt,volt"},
+     P_EVENTS | P_READINGS, "state,level,batt,volt",
+     "Warn when it opens or closes"},
     {"thermostat", "Thermostat", "tune", CAP_SETPOINT, 0,
-     P_READINGS, "temp,target,batt,volt"},
+     P_READINGS, "temp,target,batt,volt", 0},
     {"meter", "Meter", "grid", CAP_ENERGY, 0, P_READINGS,
-     "produces,load,consumes,charged"},
+     "produces,load,consumes,charged", 0},
     {"switch", "Switch", "power", CAP_SWITCH, 0, P_READINGS,
-     "state,level,load,volt,batt"},
+     "state,level,load,volt,batt", 0},
     {"sensor", "Sensor", "monitor_heart", CAP_MEASURE, CAP_SWITCH, P_READINGS,
-     "temp,hum,volt,batt,dose"},
+     "temp,hum,volt,batt,dose", 0},
     {"thing", "Device", "developer_board", 0, 0, P_READINGS,
-     "state,level,temp,hum,produces,load,consumes,volt,batt,charged,dose"},
+     "state,level,temp,hum,produces,load,consumes,volt,batt,charged,dose",
+     "Warn when it reports"},
 };
 #define NCLASS ((int)(sizeof CLASS / sizeof CLASS[0]))
 
@@ -1883,6 +1890,18 @@ static void say_field(const char *name, const char *value)
     say(m);
 }
 
+/* What a button says, when only the wapp knows. The screen file cannot: it
+ * is written once for a doorbell, a gate and a radiation meter alike. */
+static void say_label(const char *name, const char *label)
+{
+    char m[200] = "{\"type\":\"ui.field.set\",\"field\":\"";
+    th_cat(m, name, sizeof m);
+    th_cat(m, "__label\",\"value\":\"", sizeof m);
+    th_jesc(m, label, sizeof m);
+    th_cat(m, "\"}", sizeof m);
+    say(m);
+}
+
 static void flag_hidden(const char *name, int hidden)
 {
     char m[120] = "{\"type\":\"ui.field.set\",\"field\":\"";
@@ -2105,7 +2124,7 @@ static void push_detail(void)
 
     flag_hidden("th_conn", !can_pic && !can_live && !linked);
     flag_hidden("connect", linked || (!can_pic && !can_live) || asking);
-    flag_hidden("disconnect", !linked);
+    flag_hidden("disconnect", !linked || !g_more);
     int haspic = g_fetch.pic_ms != 0 && th_eq(g_fetch.call, t->call);
     flag_hidden("th_pic", !can_pic || !linked || !haspic);
     flag_hidden("snap", !linked || !can_pic || g_fetch.req >= 0 || live_on);
@@ -2139,14 +2158,15 @@ static void push_detail(void)
     flag_hidden("About", !g_more);
     flag_hidden("Settings", !g_more);
 
-    flag_hidden("pin", pinned(t->call));
-    flag_hidden("unpin", !pinned(t->call));
+    flag_hidden("pin", !g_more || pinned(t->call));
+    flag_hidden("unpin", !g_more || !pinned(t->call));
     /* A thing with no running totals has no Totals list: an empty panel
      * saying "nothing to show" is a row that says nothing. */
     flag_hidden("th_totals", !(caps & CAP_TOTALS));
     /* Telling is offered only for a thing that reports events; a meter has
      * nothing to interrupt anybody with. */
-    int tellable = (c->panels & P_EVENTS) != 0;
+    int tellable = (c->panels & P_EVENTS) != 0 && c->warn;
+    if (tellable) say_label("watch", c->warn);
     flag_hidden("watch", !tellable || t->watch);
     flag_hidden("unwatch", !tellable || !t->watch);
     flag_hidden("th_events", !(c->panels & P_EVENTS));
