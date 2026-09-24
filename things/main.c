@@ -134,6 +134,60 @@ static char g_msg[PIC_MAX * 4 / 3 + 256];
 
 static void say(const char *json) { hal_msg_send(json, th_len(json)); }
 
+/* ── The time on a picture ────────────────────────────────────────────
+ *
+ * A still and a live view that has frozen look exactly the same. What tells
+ * them apart is a clock on the picture, which is why the camera puts one in
+ * its own overlay -- and why a picture this wapp fetched gets one too, in
+ * the wall-clock time of whoever is looking at it (hal_time_utc_offset is
+ * what turns the epoch into that).
+ *
+ * The calendar arithmetic is the civil-from-days one: no libc here, and a
+ * month table is the whole of what a person needs to read. */
+static void stamp_now(char *out, unsigned cap)
+{
+    static const char *const MON[12] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+    /* MINUTES east of UTC, which is what the HAL says and what this read as
+     * seconds until a doorbell's picture came up two minutes behind the
+     * clock on the wall. */
+    long long t = (long long)hal_time_epoch() +
+                  (long long)hal_time_utc_offset() * 60;
+    if (t < 0) t = 0;
+    long long days = t / 86400;
+    long long secs = t % 86400;
+    long long z = days + 719468;
+    long long era = (z >= 0 ? z : z - 146096) / 146097;
+    long long doe = z - era * 146097;
+    long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long long y = yoe + era * 400;
+    long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    long long mp = (5 * doy + 2) / 153;
+    long long d = doy - (153 * mp + 2) / 5 + 1;
+    long long m = mp + (mp < 10 ? 3 : -9);
+    if (m <= 2) y++;
+
+    out[0] = 0;
+    if (d < 10) th_cat(out, "0", cap);
+    th_cat_u(out, (unsigned long long)d, cap);
+    th_cat(out, " ", cap);
+    th_cat(out, MON[(m >= 1 && m <= 12) ? (unsigned)(m - 1) : 0], cap);
+    th_cat(out, " ", cap);
+    th_cat_u(out, (unsigned long long)y, cap);
+    th_cat(out, ", ", cap);
+    long long hh = secs / 3600, mm = (secs % 3600) / 60, ss = secs % 60;
+    if (hh < 10) th_cat(out, "0", cap);
+    th_cat_u(out, (unsigned long long)hh, cap);
+    th_cat(out, ":", cap);
+    if (mm < 10) th_cat(out, "0", cap);
+    th_cat_u(out, (unsigned long long)mm, cap);
+    th_cat(out, ":", cap);
+    if (ss < 10) th_cat(out, "0", cap);
+    th_cat_u(out, (unsigned long long)ss, cap);
+}
+
 static void note(const char *text)
 {
     char l[160] = "things: ";
@@ -1309,8 +1363,10 @@ static struct {
     unsigned long long began_ms, shown_ms, byte_ms, note_ms;
     char note[140];
     int  video;                 /* the picture is video, not a run of stills */
+    int  we_closed;             /* the live screen was closed by us, not them */
     int  vw, vh;                /* what the host was told the size is */
     unsigned long long said_ms; /* when the note last changed */
+    unsigned long long clock_ms;/* when the clock on the picture last ticked */
 } g_live = { .sock = -1 };
 
 static rtsp_t g_rtsp;
@@ -1320,6 +1376,7 @@ static unsigned char g_rx[8192];
 static void picnote(void);          /* defined with the other panels */
 static void draw(int force);        /* defined with the rest of the drawing */
 static void screen_open(const char *name, const char *title);
+static void say_caption(const char *name, const char *text);
 
 static void ago_words(unsigned long long ms, char *out, unsigned cap);
 
@@ -1534,6 +1591,9 @@ static int paint_picture(unsigned len)
     th_cat(g_msg, "\"}", sizeof g_msg);
     say(g_msg);
     g_fetch.pic_ms = hal_time_ms();
+    char when[48];
+    stamp_now(when, sizeof when);
+    say_caption("th_pic", when);
     return 1;
 }
 
@@ -1695,6 +1755,14 @@ static void on_rgba(const unsigned char *rgba, int w, int h)
                     (int32_t)(now - g_live.began_ms));
     g_live.frames++;
     g_live.shown_ms = now;
+    /* The clock on the picture, once a second: it is what says the view is
+     * live rather than a frame that stopped arriving. */
+    if (now - g_live.clock_ms >= 1000ULL) {
+        g_live.clock_ms = now;
+        char when[48];
+        stamp_now(when, sizeof when);
+        say_caption("live-surface", when);
+    }
     /* A counter that changes ten times a second is a screen redrawing ten
      * times a second for a number nobody reads that fast. */
     if (now - g_live.said_ms > 2000ULL) {
@@ -1749,6 +1817,12 @@ static void live_stop(const char *why)
         th_h264_close();
         g_live.video = 0;
         g_live.vw = g_live.vh = 0;
+        /* The live view fills a screen of its own, so ending it closes that
+         * screen -- and the host answers a close with `screen_closed`, which
+         * otherwise reads as "the person left this thing" and drops them out
+         * to the list. They were watching a door; a stream that ends on its
+         * own should hand them back that door. */
+        g_live.we_closed = 1;
         say("{\"type\":\"ui.screen.close\"}");
     }
     g_live.stage = LIVE_OFF;
@@ -2080,6 +2154,17 @@ static void say_label(const char *name, const char *label)
     th_cat(m, name, sizeof m);
     th_cat(m, "__label\",\"value\":\"", sizeof m);
     th_jesc(m, label, sizeof m);
+    th_cat(m, "\"}", sizeof m);
+    say(m);
+}
+
+/* A line drawn ON a picture: `<field>__caption`. */
+static void say_caption(const char *name, const char *text)
+{
+    char m[200] = "{\"type\":\"ui.field.set\",\"field\":\"";
+    th_cat(m, name, sizeof m);
+    th_cat(m, "__caption\",\"value\":\"", sizeof m);
+    th_jesc(m, text, sizeof m);
     th_cat(m, "\"}", sizeof m);
     say(m);
 }
@@ -2796,7 +2881,9 @@ static void on_command(void)
          * Video fills a screen of its own, so leaving THAT screen means
          * leaving the video, not the doorbell: the person goes back to the
          * door they were looking at, not to the list of everything. */
-        int from_video = g_live.video && g_sel[0] && th_eq(g_live.call, g_sel);
+        int from_video = (g_live.video || g_live.we_closed) && g_sel[0] &&
+                         th_eq(g_live.call, g_sel);
+        g_live.we_closed = 0;
         live_stop(0);
         if (from_video) {
             open_thing(g_sel, 0);

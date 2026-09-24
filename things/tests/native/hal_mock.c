@@ -232,6 +232,13 @@ uint64_t g_ms = 1000000;
 uint64_t g_epoch = 1789000000;   /* 2026-09-10 */
 uint64_t hal_time_ms(void) { return g_ms; }
 uint64_t hal_time_epoch(void) { return g_epoch; }
+/* A fixed offset, so a test that reads the clock on a picture reads the
+ * same clock on every machine. */
+/* MINUTES east of UTC, the unit the HAL states. It was seconds here while
+ * the wapp read it as seconds too, so the pair agreed with each other and
+ * with nothing else: the test passed and the picture was two minutes off. */
+int32_t g_utc_offset = 120;
+int32_t hal_time_utc_offset(void) { return g_utc_offset; }
 void hal_log(int32_t l, const char *m, uint32_t n) { (void)l; (void)m; (void)n; }
 int g_ui_attached = 1;
 int32_t hal_ui_attached(void) { return g_ui_attached; }

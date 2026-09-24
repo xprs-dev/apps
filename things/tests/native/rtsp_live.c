@@ -54,7 +54,7 @@ static void on_au(void *u, const unsigned char *au, unsigned len)
 
 int main(int argc, char **argv)
 {
-    if (argc < 6) { fprintf(stderr, "usage: %s host port path user pass [out.h264]\n", argv[0]); return 2; }
+    if (argc < 6) { fprintf(stderr, "usage: %s host port path user pass [out.h264] [seconds]\n", argv[0]); return 2; }
     struct sockaddr_in a;
     memset(&a, 0, sizeof a);
     a.sin_family = AF_INET;
@@ -69,8 +69,16 @@ int main(int argc, char **argv)
     rtsp_t r;
     rtsp_begin(&r, &io, argv[1], atoi(argv[2]), argv[3], argv[4], argv[5], on_au, 0);
     unsigned long long t0 = io_now(0);
-    while (io_now(0) - t0 < 8000ULL) {
+    unsigned long long run_ms = argc > 7 ? (unsigned long long)atoi(argv[7]) * 1000ULL : 8000ULL;
+    unsigned long long last = t0;
+    while (io_now(0) - t0 < run_ms) {
         if (rtsp_pump(&r) == RTSP_DONE) break;
+        if (io_now(0) - last > 5000ULL) {
+            last = io_now(0);
+            printf("  %llus: %u frames, %u bytes\n",
+                   (unsigned long long)((io_now(0) - t0) / 1000), g_frames, g_bytes);
+            fflush(stdout);
+        }
         usleep(20000);
     }
     printf("state=%d frames=%u bytes=%u why=%s\n", r.state, g_frames, g_bytes,

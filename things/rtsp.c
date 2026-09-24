@@ -161,7 +161,7 @@ void rtsp_begin(rtsp_t *r, const rtsp_io *io, const char *host, int port,
     r->on_au = on_au;
     r->au_user = au_user;
     r->state = RTSP_IDLE;
-    r->began_ms = r->byte_ms = io->now_ms(io->user);
+    r->began_ms = r->byte_ms = r->kept_ms = io->now_ms(io->user);
 }
 
 /* ── what the SDP says: the control track, and the parameter sets ─────── */
@@ -304,6 +304,7 @@ static void reply(rtsp_t *r, const char *head, const char *body)
         rtsp_stop(r, l);
         return;
     }
+    if (r->state == RTSP_STREAM) return;   /* a keepalive's answer, nothing more */
     switch (r->state) {
     case RTSP_DESCRIBE:
     case RTSP_DESCRIBE_AUTH:
@@ -415,9 +416,22 @@ int rtsp_pump(rtsp_t *r)
         }
     }
 
-    if (r->state != RTSP_STREAM && now - r->began_ms > 12000ULL)
+    if (r->state != RTSP_STREAM && now - r->began_ms > 12000ULL) {
         rtsp_stop(r, "The camera did not start the live view.");
-    else if (r->state == RTSP_STREAM && now - r->byte_ms > 8000ULL)
-        rtsp_stop(r, "The live view stopped arriving.");
+        return r->state;
+    }
+    if (r->state == RTSP_STREAM) {
+        /* The camera says how long it will carry a session nobody speaks on:
+         * this one answers SETUP with `timeout=30`, and at thirty seconds the
+         * pictures simply stop -- measured, twice, before this line existed.
+         * OPTIONS is the cheapest thing to say, and saying it twice inside
+         * that window is what keeps them coming. */
+        if (now - r->kept_ms > 10000ULL) {
+            r->kept_ms = now;
+            ask(r, "OPTIONS", r->url, 0);
+        }
+        if (now - r->byte_ms > 15000ULL)
+            rtsp_stop(r, "The live view stopped arriving.");
+    }
     return r->state;
 }

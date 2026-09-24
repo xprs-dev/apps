@@ -56,7 +56,7 @@ typedef struct {
     char realm[80], nonce[80];
     char session[80];
     char why[120];          /* why it stopped, in words for a person */
-    unsigned long long began_ms, byte_ms;
+    unsigned long long began_ms, byte_ms, kept_ms;
 
     char  rx[4096];         /* an RTSP reply's head, until the blank line */
     unsigned rxn;

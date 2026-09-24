@@ -1027,6 +1027,21 @@ static void test_a_camera_with_a_login_is_watched_as_video(void)
     CHECK(cap_last("\"name\":\"Thing\"") != 0,
           "closing the live screen puts the doorbell back up");
     CHECK(g_live.stage == LIVE_OFF, "and the camera is let go");
+
+    /* and when the STREAM ends by itself, the same: the wapp closes its own
+     * live screen, and the close that comes back must not read as the person
+     * walking out of the thing altogether. */
+    cap_clear();
+    command("{\"command\":\"live\",\"fields\":{}}");
+    g_ms += 400; module_tick();
+    sock_state(2);                       /* the camera hangs up */
+    g_ms += 400; module_tick();
+    CHECK(g_live.stage == LIVE_OFF, "the stream ended");
+    cap_clear();
+    command("{\"command\":\"screen_closed\",\"fields\":{}}");
+    CHECK(cap_last("\"name\":\"Thing\"") != 0,
+          "and the doorbell is what is on the screen, not the list");
+    CHECK(g_sel[0] != 0, "with that thing still the one selected");
 }
 
 static void test_a_camera_with_no_login_is_watched_the_old_way(void)
@@ -1065,6 +1080,27 @@ static void test_opening_a_connected_camera_shows_a_picture(void)
     CHECK(g_http_calls == before,
           "a picture seconds old is not asked for again: %d vs %d",
           g_http_calls, before);
+}
+
+/* A still and a live view that has stopped arriving look identical. The
+ * clock on the picture is what tells them apart. */
+static void test_a_picture_carries_the_time_it_was_taken(void)
+{
+    reset();
+    /* 2026-09-24 19:30:00 UTC, +2h on this mock = 21:30:00 local */
+    g_epoch = 1790278200ULL;
+    open_doorbell();
+    connect_stream();
+    http_set("192.168.1.9/door/snapshot.jpg", 200, JPEG, sizeof JPEG, 0);
+    cap_clear();
+    command("{\"command\":\"snap\",\"fields\":{}}");
+    g_ms += 500; module_tick();
+    g_ms += 2500; module_tick();
+    const char *c = cap_last("\"field\":\"th_pic__caption\"");
+    CHECK(c != 0, "the picture carries a caption");
+    CHECK(c && strstr(c, "24 Sep 2026"), "with the date on it: %s", c ? c : "");
+    CHECK(c && strstr(c, "21:30:00"),
+          "and the local time, not the epoch: %s", c ? c : "");
 }
 
 static void test_nothing_is_fetched_before_connecting(void)
@@ -1327,6 +1363,7 @@ int main(void)
     test_an_empty_password_box_leaves_the_sealed_one_alone();
     test_a_picture_left_on_screen_says_how_old_it_is();
     test_nothing_is_fetched_before_connecting();
+    test_a_picture_carries_the_time_it_was_taken();
     test_opening_a_connected_camera_shows_a_picture();
     test_a_camera_with_a_login_is_watched_as_video();
     test_a_camera_with_no_login_is_watched_the_old_way();
