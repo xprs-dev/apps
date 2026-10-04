@@ -17,6 +17,7 @@ void inbox_set(const char*); void event_push(const char*, const char*);
 int log_count(const char*); void log_clear(void);
 void mock_set_time(uint64_t); void mock_kv_set(const char*, const char*); int mock_kv_exists(const char*);
 const char* mock_last_wire(void); void mock_set_history(const char*); void mock_query_cap(uint32_t);
+const char* mock_bcast_scope(void); void mock_bcast_scope_clear(void);
 const char* mock_reads(void); int mock_reads_count(void); void mock_reads_clear(void);
 void mock_set_groups(const char*);
 void mock_set_roster(const char*);
@@ -49,14 +50,16 @@ static void local_packet(const char *from, const char *id, const char *text, con
   module_handle_event();
 }
 
-TEST(only_local_exists_by_default) {
+TEST(the_two_broadcast_rooms_exist_by_default_and_nothing_else) {
   fresh();
   room_hydrate();
   const char *rail = cap_find("ui.rooms.set");
   CHECK(rail && strstr(rail, "\"id\":\"#LOCAL\""));
+  CHECK(rail && strstr(rail, "\"id\":\"#GLOBAL\""));
   CHECK(rail && !strstr(rail, "X5"));
   CHECK(cap_count("\"id\":\"") >= 1);
   CHECK(room_known("#LOCAL"));
+  CHECK(room_known("#GLOBAL"));
   CHECK(!room_known("#NEWS"));
 }
 
@@ -75,16 +78,94 @@ TEST(a_local_message_is_stored_and_shown_once) {
   CHECK(cap_count("\"type\":\"notify\"") == 0);
 }
 
-TEST(unscoped_and_addressed_traffic_stays_out_of_local) {
+/* XPRS.md 13.11 wants the two scopes shown as two conversations, so an
+ * unscoped message is not a stray: it is the global room's. This used to
+ * assert the opposite -- that it was dropped with a log line -- which is why
+ * nothing a phone posted could reach Meshtastic or MeshCore, a gateway being
+ * forbidden to publish the only scope chat could send (9.11.3). */
+TEST(unscoped_traffic_is_the_global_rooms_and_addressed_is_neither) {
   fresh();
   local_packet("X1PEER", "bbb222", "global words", "global");
-  CHECK(cap_count("ui.convo.msg") == 0);
-  CHECK(log_count("local dropped: not scope:local") == 1);
+  CHECK(cap_count("ui.convo.msg") == 1);
+  CHECK(cap_contains("\"id\":\"#GLOBAL\""));
+  CHECK(cap_contains("\"text\":\"global words\""));
+  CHECK(!cap_contains("\"id\":\"#LOCAL\""));
+  cap_clear();
+  /* And a local one still goes to the other room, from the same door. */
+  local_packet("X1PEER", "bbb333", "local words", "local");
+  CHECK(cap_count("ui.convo.msg") == 1);
+  CHECK(cap_contains("\"id\":\"#LOCAL\""));
+  cap_clear();
+  /* A country scope is not local either (9.11.2), and a receiver that cannot
+   * place itself reads it as global. */
+  local_packet("X1PEER", "bbb444", "country words", "PT");
+  CHECK(cap_contains("\"id\":\"#GLOBAL\""));
+  cap_clear();
   /* Addressed to a station: correspondence, not the room. */
   event_push("xprs.message",
     "{\"id\":\"ccc333\",\"type\":\"message\",\"from\":\"X1PEER\",\"to\":\"X1TEST\",\"fields\":[[\"t\",\"message\"],[\"f\",\"X1PEER\"],[\"d\",\"X1TEST\"],[\"m\",\"private words\"]],\"scope\":\"local\",\"sealed\":false}");
   module_handle_event();
   CHECK(cap_count("ui.convo.msg") == 0);
+}
+
+/* A broadcast to everybody is not addressed to anybody, and this phone's
+ * archive holds over 200,000 of them. So the global room bumps the rail and
+ * counts as unread in its own row, and does NOT buzz the phone or reach the
+ * launcher badge. The local room, which is earshot traffic, still does both. */
+TEST(the_global_room_does_not_buzz_the_phone_or_the_badge) {
+  fresh();
+  local_packet("X1PEER", "ggg111", "everybody hears this", "global");
+  CHECK(cap_count("ui.convo.msg") == 1);          /* it is stored and shown */
+  CHECK(cap_contains("\"id\":\"#GLOBAL\""));
+  CHECK(cap_count("\"type\":\"notify\"") == 0);   /* and it is quiet */
+  CHECK(!cap_contains("\"count\":1"));             /* badge untouched */
+  cap_clear();
+  /* The local room is the comparison: same door, same shape, both fire. */
+  local_packet("X1PEER", "ggg222", "only in here", "local");
+  CHECK(cap_count("\"type\":\"notify\"") == 1);
+  CHECK(cap_contains("\"count\":1"));
+}
+
+/* The one thing that makes the global room worth having: the core is asked
+ * for a different reach. "global" is the absent field on the wire (13.11), so
+ * stations relay it and a gateway MAY carry it onto Meshtastic or MeshCore,
+ * which 9.11.3 forbids for the local room. */
+TEST(each_broadcast_room_sends_with_its_own_scope) {
+  fresh();
+  mock_bcast_scope_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#LOCAL\",\"rooms_input\":\"in earshot\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_bcast_scope(), "local") == 0);
+  CHECK(cap_contains("\"id\":\"#LOCAL\""));
+  cap_clear();
+  mock_bcast_scope_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#GLOBAL\",\"rooms_input\":\"everywhere\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_bcast_scope(), "global") == 0);
+  CHECK(cap_contains("\"id\":\"#GLOBAL\""));
+  CHECK(cap_contains("\"text\":\"everywhere\""));
+  CHECK(cap_contains("\"dir\":\"out\""));
+}
+
+/* A vote is hand-built here rather than composed by the core, so it has to
+ * honour the same rule itself: writing scope:global would be twelve bytes
+ * saying the default. */
+TEST(a_global_room_vote_carries_no_scope_field) {
+  fresh();
+  local_packet("X1PEER", "vvv111", "worth a heart", "global");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#GLOBAL\",\"rooms_input\":\"+like:vvv111\"}");
+  module_handle_event();
+  const char *w = mock_last_wire();
+  CHECK(w && strstr(w, "t:reaction"));
+  CHECK(w && strstr(w, "add:like"));
+  CHECK(w && !strstr(w, "scope:"));
+  /* The local room still says it. */
+  local_packet("X1PEER", "vvv222", "also worth one", "local");
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#LOCAL\",\"rooms_input\":\"+like:vvv222\"}");
+  module_handle_event();
+  w = mock_last_wire();
+  CHECK(w && strstr(w, "scope:local"));
 }
 
 TEST(own_broadcast_and_its_echo_are_one_bubble) {
@@ -162,10 +243,17 @@ TEST(replay_from_the_archive_is_silent) {
   /* A restart reads it in. */
   module_destroy(); cap_clear(); log_clear();
   module_init();
-  CHECK(cap_count("ui.convo.msg") == 2);
+  /* Three rows, three bubbles: the two scope:local ones in #LOCAL and the
+   * unscoped one in #GLOBAL. The same archive query fills both rooms and the
+   * scope decides which rows each keeps, so each pass reads 3 and keeps its
+   * own share. */
+  CHECK(cap_count("ui.convo.msg") == 3);
   CHECK(cap_count("\"type\":\"notify\"") == 0);
   CHECK(!cap_contains("\"count\":1"));
-  CHECK(log_count("local backfill: read=3 kept=2") == 1);
+  /* ONE pass, one line: the archive is asked once and the scope on each row
+   * sorts it, so there is no second query and no second parse. */
+  CHECK(log_count("backfill: read=3 local=2 global=1") == 1);
+  CHECK(log_count("backfill: read=") == 1);
   /* Oldest first on screen. */
   { int ia = -1, ib = -1;
     for (int i = 0; i < cap_n(); i++) {
@@ -178,7 +266,7 @@ TEST(replay_from_the_archive_is_silent) {
   mock_set_time(1700000200);
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
   module_handle_event();
-  CHECK(log_count("kept=0") == 1);
+  CHECK(log_count("backfill: read=3 local=0 global=0") == 1);
   CHECK(cap_count("ui.convo.msg") == 2);
 }
 
@@ -773,9 +861,12 @@ TEST(opening_a_thread_acks_read_for_older_unacked_messages_too) {
 }
 
 int main(void) {
-  run_only_local_exists_by_default();
+  run_the_two_broadcast_rooms_exist_by_default_and_nothing_else();
   run_a_local_message_is_stored_and_shown_once();
-  run_unscoped_and_addressed_traffic_stays_out_of_local();
+  run_unscoped_traffic_is_the_global_rooms_and_addressed_is_neither();
+  run_the_global_room_does_not_buzz_the_phone_or_the_badge();
+  run_each_broadcast_room_sends_with_its_own_scope();
+  run_a_global_room_vote_carries_no_scope_field();
   run_own_broadcast_and_its_echo_are_one_bubble();
   run_open_repaints_from_the_database_newest_fifty();
   run_a_message_for_the_open_room_does_not_count();

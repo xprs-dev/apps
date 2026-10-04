@@ -2,7 +2,8 @@
  * room.h — every conversation this wapp holds, and the ONE door a message
  * comes in through.
  *
- * A room is a conversation: the Local room ("#LOCAL", always there), an open
+ * A room is a conversation: the Local room ("#LOCAL", always there), the
+ * global room ("#GLOBAL", also always there), an open
  * group ("#NAME"), a closed group ("#X5ABCD", XPRS section 26) or a station
  * ("X16JK8"). Each room is its own sqlite database under rooms/, listed in
  * index.sqlite3. Nothing else remembers a message: not a ring in RAM, not a
@@ -68,8 +69,11 @@ void room_start(const char *id, const char *title);
 void room_hydrate(void);
 /* Redraw the rail alone (the set or its order changed). */
 void room_rail(void);
-/* The Local room's switch in Settings. Off = off the rail, not counted. */
+/* The two broadcast rooms' switches in Settings. Off = off the rail, not
+ * counted. They are separate because the rooms are separate (XPRS.md 13.11):
+ * one is everybody in earshot, the other is everybody. */
 void room_set_local_enabled(int on);
+void room_set_global_enabled(int on);
 
 void room_react(const char *id, const char *mid, const char *who, int remove, int mine);
 /* Remember which room a 1:1 we sent belongs to, so a later tick finds it. */

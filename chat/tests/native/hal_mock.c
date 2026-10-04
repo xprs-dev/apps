@@ -141,7 +141,12 @@ int32_t hal_xprs_kind(const char* a,uint32_t l,char* o,uint32_t cap){
  * eight hex): never sealed (-3), plain through a gateway (3). */
 static int mock_is_foreign(const char* to,uint32_t tl){ if(tl!=10||to[0]!='M'||(to[1]!='T'&&to[1]!='C')) return 0; for(uint32_t i=2;i<tl;i++){ char c=to[i]; if(!((c>='0'&&c<='9')||(c>='A'&&c<='F'))) return 0; } return 1; }
 int32_t hal_xprs_message(const char* to,uint32_t tl,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){ if(g_hk_message) return g_hk_message(to,tl,t,l,priv,id,cap); (void)t;(void)l; int fx=mock_is_foreign(to,tl); if(fx&&priv) return -3; snprintf(id,cap,"m%05d",++g_bcast_n); return fx?3:(priv?1:2); }
-int32_t hal_xprs_broadcast(const char* t,uint32_t l,const char* s,uint32_t sl,const char* r,uint32_t rl,char* id,uint32_t cap){ if(g_hk_broadcast) return g_hk_broadcast(t,l,s,sl,r,rl,id,cap); (void)t;(void)l;(void)s;(void)sl;(void)r;(void)rl; snprintf(id,cap,"b%05d",++g_bcast_n); return 2; }
+static char g_bcast_scope[16];
+/* The scope the wapp asked for on the last broadcast. 13.11 makes this the
+ * only difference between the two broadcast rooms, so a test has to see it. */
+const char* mock_bcast_scope(void){ return g_bcast_scope; }
+void mock_bcast_scope_clear(void){ g_bcast_scope[0]=0; }
+int32_t hal_xprs_broadcast(const char* t,uint32_t l,const char* s,uint32_t sl,const char* r,uint32_t rl,char* id,uint32_t cap){ if(g_hk_broadcast) return g_hk_broadcast(t,l,s,sl,r,rl,id,cap); (void)t;(void)l;(void)r;(void)rl; { uint32_t n=sl<sizeof(g_bcast_scope)-1?sl:sizeof(g_bcast_scope)-1; memcpy(g_bcast_scope,s,n); g_bcast_scope[n]=0; } snprintf(id,cap,"b%05d",++g_bcast_n); return 2; }
 static char g_reads[2048]; static int g_reads_n=0;
 const char* mock_reads(void){ return g_reads; }
 int mock_reads_count(void){ return g_reads_n; }
@@ -168,7 +173,12 @@ int32_t hal_sqlite_open(const char* path,uint32_t len){
   char rel[512]; if(len>=sizeof(rel))return -1; memcpy(rel,path,len); rel[len]=0;
   char full[700]; snprintf(full,sizeof(full),"%s/%s",g_root,rel); mkparents(full);
   sqlite3* db; if(sqlite3_open(full,&db)!=SOK) return -1;
-  if(g_dbn>=MAXH) return -1; int h=g_dbn++; g_db[h]=db; return h;
+  /* Reuse a closed slot. hal_sqlite_close() frees g_db[h] but g_dbn only ever
+   * went up, so a run was capped at MAXH opens TOTAL rather than at MAXH open
+   * at once: adding one more always-present room made the later tests get -1
+   * from here and fail with no captures and no explanation. */
+  for(int i=1;i<MAXH;i++) if(!g_db[i]){ g_db[i]=db; if(i>=g_dbn) g_dbn=i+1; return i; }
+  sqlite3_close(db); return -1;
 }
 static void bind_params(sqlite3_stmt* st,const char* params,uint32_t plen){
   if(!params||plen==0) return; const char* p=params; while(*p&&*p!='[')p++; if(*p)p++; int idx=1;

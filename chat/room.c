@@ -3,7 +3,13 @@
 #include "xprs.h"
 #include "xprs_wasm_hal.h"
 
-#define LOCAL "#LOCAL"
+#define LOCAL  "#LOCAL"
+/* XPRS.md 9.11.1: "Applications show the two scopes as two conversations."
+ * scope:local is the room of whoever is in earshot; the unmarked default is
+ * the conversation that travels. Mixing them, which this wapp did by having
+ * only the first and dropping the rest, "flattens exactly the distinction the
+ * field exists to draw". */
+#define GLOBAL "#GLOBAL"
 #define BODY_MAX 900
 #define TAIL 50
 #define ROOM_H_MAX 8
@@ -12,6 +18,7 @@ static char g_self[16] = "";
 static char g_open[48] = "";     /* the conversation on screen, or "" */
 static char g_top[48] = "";      /* first row of the rail as last drawn */
 static int  g_local_on = 1;
+static int  g_global_on = 1;
 static int  g_idx = -1;
 static int  g_said_nodb = 0;
 static struct { char id[48]; int h; unsigned long long used; } g_rh[ROOM_H_MAX];
@@ -37,6 +44,7 @@ int room_renderable(const char *id) {
 }
 static const char *room_icon(const char *id) {
   if (s_eq(id, LOCAL)) return "campaign";
+  if (s_eq(id, GLOBAL)) return "public";
   if (is_xgroup(id)) return "group";
   if (id[0] == '#') return "tag";
   return "person";
@@ -253,10 +261,17 @@ static void emit_remove(const char *id, const char *key) {
 
 /* The launcher badge: one number, asked of the database as a number. */
 static void unread_publish(void) {
-  long long n = db_int(g_idx,
-      g_local_on ? "SELECT COALESCE(SUM(unread),0) AS n FROM rooms WHERE closed=0"
-                 : "SELECT COALESCE(SUM(unread),0) AS n FROM rooms WHERE closed=0 AND id<>'#LOCAL'",
-      0, 0);
+  /* Two switches are four combinations, so the exclusions are appended rather
+   * than written out: the pair of literals this replaced could only ever say
+   * something about the Local room. */
+  char q[200] = "SELECT COALESCE(SUM(unread),0) AS n FROM rooms WHERE closed=0";
+  if (!g_local_on) s_cat(q, " AND id<>'" LOCAL "'", sizeof(q));
+  /* The global room never reaches the launcher badge. The badge answers "is
+   * there something for me", and a broadcast to everybody is not; counting it
+   * would peg the badge permanently on any busy mesh and say nothing. Its own
+   * row on the rail still carries its unread count. */
+  s_cat(q, " AND id<>'" GLOBAL "'", sizeof(q));
+  long long n = db_int(g_idx, q, 0, 0);
   char m[96] = "{\"type\":\"unread\",\"intent\":\"chat\",\"count\":";
   char nb[24]; u_lltoa((unsigned long long)n, nb);
   s_cat(m, nb, sizeof(m)); s_cat(m, "}", sizeof(m));
@@ -293,7 +308,8 @@ void room_rail(void) {
       char id[48], title[80];
       jstr(row, "id", id, sizeof(id));
       jstr(row, "title", title, sizeof(title));
-      if (!g_local_on && s_eq(id, LOCAL)) continue;
+      if (!g_local_on  && s_eq(id, LOCAL))  continue;
+      if (!g_global_on && s_eq(id, GLOBAL)) continue;
       if (!first) s_cat(rail, ",", sizeof(rail));
       if (first) s_cpy(g_top, id, sizeof(g_top));
       first = 0;
@@ -345,6 +361,13 @@ void room_hydrate(void) {
 
 void room_set_local_enabled(int on) {
   g_local_on = on ? 1 : 0;
+  if (g_idx < 0) return;
+  room_rail();
+  unread_publish();
+}
+
+void room_set_global_enabled(int on) {
+  g_global_on = on ? 1 : 0;
   if (g_idx < 0) return;
   room_rail();
   unread_publish();
@@ -465,7 +488,15 @@ int room_admit(const room_msg_t *m) {
            m->enc, rid, status, m->sys, priv, m->obf);
   if (!m->replay) {
     if (created > 0 || !s_eq(g_top, m->room)) room_rail();
-    if (in && !m->sys) notify_msg(m->room, sender, body, m->mid);
+    /* NOT the global room. A push per message is a bet that the message is
+     * rare (performance.md 8.10, about log lines, and the arithmetic is the
+     * same for notifications): scope:local is earshot traffic and that bet
+     * holds, while the global room is everything the mesh can reach -- this
+     * phone's archive holds over 200,000 of those. It still bumps the rail
+     * and still counts as unread IN the room, so the traffic is visible
+     * without the phone buzzing for a broadcast nobody addressed. */
+    if (in && !m->sys && !s_eq(m->room, GLOBAL))
+      notify_msg(m->room, sender, body, m->mid);
     unread_publish();
     /* A live 1:1 we just heard owes its sender an s:read once a person opens
      * this room (XPRS.md 13.7). Recorded here, in the room's own database, so
@@ -733,6 +764,7 @@ void room_init(const char *self) {
     db_exec(g_idx, "INSERT OR REPLACE INTO meta(k,v) VALUES('kv_cleaned','1')", 0);
   }
   room_ensure(LOCAL, "Local chat");
+  room_ensure(GLOBAL, "Global chat");
 }
 
 void room_destroy(void) {
