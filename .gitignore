@@ -15,3 +15,14 @@
 # Editor / OS noise.
 .vscode/
 .idea/
+
+# mp4player's vendored decoders compile to per-source objects next to their
+# sources. They are build output: the Makefile regenerates them, and the
+# repo has never tracked them (vendor/aac_dec.o is a committed artefact and
+# stays one). Without this they show up as 150 untracked files after every
+# mp4player build.
+mp4player/vendor/pvaac/*.o
+mp4player/vendor/openh264/**/*.o
+mp4player/vendor/vpx/**/*.o
+mp4player/vendor/de265/**/*.o
+mp4player/vendor/nestegg/**/*.o

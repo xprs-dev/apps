@@ -1,10 +1,10 @@
 {
   "id":              "tools.xprs.functionalities",
-  "version":         "1.0.2",
+  "version":         "1.0.3",
   "kind":            "system",
   "title":           "Functionalities",
-  "description":     "Browse registered functionalities and pick default providers.",
-  "summary":         "Browse all registered functionalities, see which wapps provide each one, and choose the default provider when multiple wapps offer the same functionality.",
+  "description":     "See what each wapp provides and pick the default.",
+  "summary":         "Browse every registered functionality and the wapps that provide it. When several wapps offer the same one you choose which is the default.",
   "icon":            "media/icons/functionalities.svg",
   "tags":            ["system", "tools"],
   "entry_ui":        "screens/home.ui.json",

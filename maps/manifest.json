@@ -1,10 +1,10 @@
 {
   "id":              "tools.xprs.maps",
-  "version":         "1.0.2",
+  "version":         "1.0.3",
   "kind":            "app",
   "title":           "Maps",
-  "description":     "Satellite maps with offline tile cache.",
-  "summary":         "Browse satellite imagery with pan/zoom. Tiles are cached locally for offline use, so previously visited areas remain available without a network connection.",
+  "description":     "Satellite maps that also work offline.",
+  "summary":         "Browse satellite images and zoom in anywhere. Tiles are saved on the device. Places you already visited stay available without a network.",
   "icon":            "media/icons/map.svg",
   "tags":            ["maps", "satellite", "gps", "tools"],
   "entry_ui":        "screens/home.ui.json",

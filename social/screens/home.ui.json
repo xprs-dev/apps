@@ -3,7 +3,7 @@
     "$": "screen",
     "name": "Activity",
     "icon": "home",
-    "tip": "Statuses heard over the air. Share one below -- it goes out on every radio this device has.",
+    "tip": "Posts heard from nearby stations. Write one below and it goes out on every radio this device has.",
     "children": [
       {
         "$": "field",
@@ -112,7 +112,7 @@
         "label": "Follow a callsign",
         "icon": "person_add",
         "style": "primary",
-        "tip": "Type a callsign to follow -- their statuses appear under Following."
+        "tip": "Type a callsign to follow. Their posts will show under Following."
       },
       {
         "$": "field",

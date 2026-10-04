@@ -1,10 +1,10 @@
 {
   "id":              "tools.xprs.movies",
-  "version":         "0.1.3",
+  "version":         "0.1.4",
   "kind":            "app",
   "title":           "Movies",
-  "description":     "Local video player with optional subtitle support.",
-  "summary":         "Play local video files (mp4, mkv, webm, mov, avi…) with optional SRT subtitle support. Hands playback to the host's media_kit engine.",
+  "description":     "Play the videos stored on this device.",
+  "summary":         "Play local video files in formats like mp4 and mkv and webm. Subtitles in SRT format are supported. Playback uses the device's own media engine.",
   "icon":            "media/icons/movies.svg",
   "tags":            ["video", "movie", "media", "player"],
   "entry_ui":        "screens/home.ui.json",

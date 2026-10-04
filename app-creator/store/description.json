@@ -3,8 +3,8 @@
   "descriptions": {
     "en": {
       "title": "App Creator",
-      "summary": "Write, compile, and install wapps from inside XPRS",
-      "body": "Full development environment for XPRS wapps. Write C code against the HAL API, compile to WebAssembly with the bundled wasm-clang compiler, design UI screens with the visual editor, manage translations, and install directly to the launcher. No external tools needed."
+      "summary": "Write and build wapps inside XPRS",
+      "body": "A full workshop for XPRS wapps. Write C code against the HAL API. Compile it to WebAssembly with the compiler that ships inside this wapp. Design screens in the visual editor and manage translations. Install the result straight to the launcher. No outside tools are needed."
     },
     "pt": {
       "title": "Criador de Apps",

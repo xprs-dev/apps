@@ -1,10 +1,10 @@
 {
   "id": "tools.xprs.mail",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "kind": "app",
   "title": "Mail",
-  "description": "Mail — one inbox. Encrypted NOSTR direct messages over the internet and the Reticulum mesh.",
-  "summary": "The unified messenger: every private message is a NOSTR encrypted note (kind-4, NIP-04) addressed to a person's key, not to a network. The same message rides internet relays and the Reticulum mesh at once — whichever arrives first wins, and the duplicates are folded away — so a conversation keeps working when one of them is down. Conversations are keyed by identity, so a callsign is only a nickname for a key.",
+  "description": "One inbox for private messages over the internet and the mesh.",
+  "summary": "Every private message is an encrypted NOSTR note sent to a person's key. Each message goes out over internet relays and the Reticulum mesh at the same time. The first copy to arrive is shown and the others are dropped. A conversation keeps working when one of the two is down. A callsign is only a nickname for a key.",
   "icon": "media/icons/mail.svg",
   "color": "#0B7C63",
   "tags": [

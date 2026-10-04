@@ -1,10 +1,10 @@
 {
   "id": "tools.xprs.archiver",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "kind": "app",
   "title": "Archiver",
-  "description": "Archiver - hold other people's posts and files so they survive their device going offline, and answer 'where can I find npub X'.",
-  "summary": "What this device keeps: XPRS packets (yours, the callsigns you follow, and strangers if you choose), files hosted for others, the who-has-what directory, and the archivers you lean on.",
+  "description": "Keep posts and files for people whose devices are offline.",
+  "summary": "This device keeps XPRS packets for you and for the callsigns you follow. It can keep packets from strangers too if you allow it. It also hosts files for other people and remembers who has which file. You choose which archivers you rely on.",
   "icon": "media/icons/archiver.svg",
   "color": "#6A1B9A",
   "tags": [

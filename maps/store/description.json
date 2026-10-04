@@ -3,8 +3,8 @@
   "descriptions": {
     "en": {
       "title": "Satellite Maps",
-      "summary": "Browse satellite imagery with pan and zoom",
-      "body": "Full offline tile cache with support for multiple tile providers. Pan, zoom, and search for locations by name. Tiles are cached locally so you can browse previously-visited areas without a network connection. Ideal for field work, hiking, and off-grid navigation."
+      "summary": "Browse satellite images with pan and zoom",
+      "body": "Tiles are saved on the device and several tile providers are supported. Pan and zoom or search for a place by name. Places you already visited stay available without a network. It is useful for field work and hiking and travel off the grid."
     },
     "pt": {
       "title": "Mapas por Satelite",

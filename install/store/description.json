@@ -3,8 +3,8 @@
   "descriptions": {
     "en": {
       "title": "Wapp Store",
-      "summary": "Install, search and remove apps from xprs.dev/apps",
-      "body": "The app store for XPRS. It reads the catalog published at https://xprs.dev/apps, shows what each app does, and installs, updates or removes it with one tap. Other repositories, a URL or a Reticulum folder, can be added on its Repositories screen."
+      "summary": "Find and install apps from xprs.dev",
+      "body": "The app store for XPRS. It reads the catalog at https://xprs.dev/apps and shows what each app does. Install and update apps with one tap. You can remove them here too. Other sources can be added on the Repositories screen. A source can be a URL or a Reticulum folder."
     },
     "pt": {
       "title": "Loja de Apps",

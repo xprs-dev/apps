@@ -1,10 +1,10 @@
 {
   "id": "tools.xprs.install",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "kind": "system",
   "title": "Wapp Store",
-  "description": "Browse, install and remove apps from xprs.dev/apps.",
-  "summary": "The app store for XPRS. Reads the catalog published at https://xprs.dev/apps, shows what each app does, and installs, updates or removes it. Other repositories (a URL or a Reticulum folder) can be added on its Repositories screen.",
+  "description": "Find and install apps from xprs.dev.",
+  "summary": "The app store for XPRS. It reads the catalog at https://xprs.dev/apps and shows what each app does. Install and update apps from here. You can remove them here too. Other sources can be added on the Repositories screen. A source can be a URL or a Reticulum folder.",
   "icon": "media/icons/install.svg",
   "tags": [
     "tools",

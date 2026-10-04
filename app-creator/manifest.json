@@ -1,10 +1,10 @@
 {
   "id":              "tools.xprs.app-creator",
-  "version":         "0.3.5",
+  "version":         "0.3.6",
   "kind":            "system",
   "title":           "App Creator",
-  "description":     "Write, compile and install C wapps without leaving XPRS.",
-  "summary":         "Write an XPRS wapp in C, compile it, and install it — all without leaving XPRS. The compiler ships inside this wapp's package so end users never download anything.",
+  "description":     "Write and build C wapps inside XPRS.",
+  "summary":         "Write an XPRS wapp in C. Compile it and install it without leaving XPRS. The compiler ships inside this wapp so you never download anything else.",
   "icon":            "media/icons/app-creator.svg",
   "tags":            ["system", "tools", "dev"],
   "entry_ui":        "screens/home.ui.json",

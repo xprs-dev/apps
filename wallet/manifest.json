@@ -1,10 +1,10 @@
 {
   "id":              "tools.xprs.wallet",
-  "version":         "0.2.1",
+  "version":         "0.2.2",
   "kind":            "app",
   "title":           "Wallet",
-  "description":     "Hold and transfer participation coins from different providers.",
-  "summary":         "A wallet for participation coins. Each coin is issued by its own provider (administrator); add a coin by pasting the provider's descriptor, see your balances, receive a coin token someone sent you, and send value to another npub as a shareable token. Bearer tokens are verified offline against the provider's published keys, so checks work without a server.",
+  "description":     "Hold and send participation coins.",
+  "summary":         "A wallet for participation coins. Each coin comes from its own provider. Add a coin by pasting the provider's descriptor. See your balances and receive the coin tokens others send you. Send value to another npub as a token you can share. Tokens are checked offline against the provider's keys so no server is needed.",
   "icon":            "media/icons/wallet.svg",
   "tags":            ["wallet", "coin", "payments", "ecash"],
   "entry_ui":        "screens/home.ui.json",

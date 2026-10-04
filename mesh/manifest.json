@@ -1,10 +1,10 @@
 {
   "id": "tools.xprs.mesh",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "kind": "app",
   "title": "Mesh",
-  "description": "Visualize and manage the mesh: XPRS stations on the air, and the Reticulum gateways that carry them.",
-  "summary": "An interactive map of the mesh as this node has observed it: Reticulum nodes, hubs and the links between them, and the XPRS stations heard over the air (Bluetooth, LAN, LoRa) with their signal, uptime and carried mail. Filters for the services a node provides and a highlight for peers running XPRS software. Manage the bootstrap hubs on the public internet and toggle relay (passive) mode. The view is observed-only \u2014 a sampled subset of the announces and beacons this node heard, never a hub's full client roster.",
+  "description": "See the mesh around you and manage the hubs you connect to.",
+  "summary": "A live map of the mesh as this device sees it. It shows Reticulum nodes and hubs and the links between them. It also shows the XPRS stations heard over Bluetooth and LAN and LoRa. Tap a station to see its signal and uptime. You also see the mail it carries. Filter by service and highlight the peers that run XPRS. Manage the hubs you use on the internet and turn relay mode on or off. The map only shows what this device heard. It is never a full list of a hub's clients.",
   "icon": "media/icons/mesh.svg",
   "tags": [
     "mesh",

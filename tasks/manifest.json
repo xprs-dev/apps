@@ -1,10 +1,10 @@
 {
   "id":              "tools.xprs.tasks",
-  "version":         "1.0.2",
+  "version":         "1.0.3",
   "kind":            "system",
   "title":           "Task Monitor",
-  "description":     "Live view of background tasks; pause, resume, stop.",
-  "summary":         "Live view of every running task in XPRS. Pause, resume, or stop background tasks. Critical-priority tasks cannot be paused.",
+  "description":     "See background tasks and pause or stop them.",
+  "summary":         "A live view of every task running in XPRS. Pause or stop background tasks and resume them later. Critical tasks cannot be paused.",
   "icon":            "media/icons/tasks.svg",
   "tags":            ["system", "tools", "debug"],
   "entry_ui":        "screens/home.ui.json",
