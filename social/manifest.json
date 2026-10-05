@@ -1,10 +1,10 @@
 {
   "id": "tools.xprs.social",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "kind": "app",
-  "title": "Social",
-  "description": "Short posts sent by radio between people nearby.",
-  "summary": "Read and write short posts that travel over the air between nearby stations. No internet is needed. Follow people by their callsign. Search the posts this device has kept.",
+  "title": "Status",
+  "description": "Post a status and see what people around you are saying.",
+  "summary": "Post a status and read the ones from people around you. Statuses travel over the air between nearby stations. No internet is needed. Follow people by their callsign. Search the posts this device has kept.",
   "icon": "media/icons/social.svg",
   "color": "#16A34A",
   "tags": [

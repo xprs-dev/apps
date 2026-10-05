@@ -503,7 +503,7 @@ static void notify_about(const char *tag, const char *who, const char *what,
         str_cat(l, what, sizeof(l));
         hal_log(6, l, str_len(l));
     }
-    str_copy(g_msg, "{\"type\":\"notify\",\"level\":\"info\",\"title\":\"Social\",\"body\":\"",
+    str_copy(g_msg, "{\"type\":\"notify\",\"level\":\"info\",\"title\":\"Status\",\"body\":\"",
              sizeof(g_msg));
     str_cat(g_msg, who, sizeof(g_msg));
     str_cat(g_msg, what, sizeof(g_msg));
