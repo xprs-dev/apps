@@ -114,6 +114,15 @@ int32_t hal_kv_delete(const char* k,uint32_t kl){ int i=kv_find(k,kl); if(i<0) r
 /* ---- xprs doors ---- */
 static int g_bcast_n=0; static char g_last_wire[1024]; static char g_history[65536]="[]";
 const char* mock_last_wire(void){ return g_last_wire; }
+/* Statuses (XPRS.md 27): the core names the post and the test reads the text. */
+static int g_ui_attached=1; static char g_last_status[1024]; static int g_status_n=0;
+void mock_ui_attached(int on){ g_ui_attached=on; }
+int32_t hal_ui_attached(void){ return g_ui_attached; }
+const char* mock_last_status(void){ return g_last_status; }
+int32_t hal_xprs_status(const char* t,uint32_t tl,const char* mo,uint32_t ml,const char* r,uint32_t rl,char* id,uint32_t cap){
+  (void)mo;(void)ml;(void)r;(void)rl; if(!tl) return -1;
+  snprintf(g_last_status,sizeof(g_last_status),"%.*s",(int)tl,t);
+  snprintf(id,cap,"st%04d",++g_status_n); return 0; }
 void mock_clear_wire(void){ g_last_wire[0]=0; }
 void mock_set_history(const char* json){ snprintf(g_history,sizeof(g_history),"%s",json); }
 /* The core's answer to a send: 0 aired, -2 "not a member of that group". */

@@ -248,6 +248,20 @@ void db_init_index(int h) {
           "private INTEGER NOT NULL DEFAULT 0)",
           0);
   db_exec(h, "CREATE INDEX IF NOT EXISTS rooms_act ON rooms(activity_ts DESC)", 0);
+  /* Archived by the person: off the rail, out of the badge, no notification,
+   * but still stored and still receiving, the way a messenger archives.
+   * Unlike `closed`, a new message does not bring it back. ALTER for older
+   * tables; the duplicate-column error is ignored (db_exec never throws). */
+  db_exec(h, "ALTER TABLE rooms ADD COLUMN archived INTEGER NOT NULL DEFAULT 0", 0);
+  /* The people this station talks with: whoever wrote in one of its rooms,
+   * and every 1:1. Their statuses (XPRS.md 27) head the conversation list. */
+  db_exec(h, "CREATE TABLE IF NOT EXISTS people(call TEXT PRIMARY KEY)", 0);
+  /* Those statuses: one row per packet, keyed on its section 5 id. */
+  db_exec(h, "CREATE TABLE IF NOT EXISTS statuses("
+             "id TEXT PRIMARY KEY, call TEXT NOT NULL, ts INTEGER NOT NULL,"
+             "body TEXT NOT NULL, mine INTEGER NOT NULL DEFAULT 0,"
+             "seen INTEGER NOT NULL DEFAULT 0)", 0);
+  db_exec(h, "CREATE INDEX IF NOT EXISTS statuses_ts ON statuses(ts DESC)", 0);
   db_exec(h, "CREATE TABLE IF NOT EXISTS blocked(call TEXT PRIMARY KEY)", 0);
   db_exec(h, "CREATE TABLE IF NOT EXISTS hidden(mid TEXT PRIMARY KEY)", 0);
   /* Which room a 1:1 we sent lives in, keyed by the receipt id the core

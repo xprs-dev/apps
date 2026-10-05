@@ -2,8 +2,7 @@
  * room.h — every conversation this wapp holds, and the ONE door a message
  * comes in through.
  *
- * A room is a conversation: the Local room ("#LOCAL", always there), the
- * global room ("#GLOBAL", also always there), an open
+ * A room is a conversation: the Local room ("#LOCAL", always there), an open
  * group ("#NAME"), a closed group ("#X5ABCD", XPRS section 26) or a station
  * ("X16JK8"). Each room is its own sqlite database under rooms/, listed in
  * index.sqlite3. Nothing else remembers a message: not a ring in RAM, not a
@@ -61,7 +60,7 @@ void room_open(const char *id);
 /* The user left the open conversation (nav_back). */
 void room_left(void);
 const char *room_open_id(void);
-/* User action: make [id] exist and focus it on screen. */
+/* User action: make [id] exist, focus it on screen and paint it. */
 void room_start(const char *id, const char *title);
 
 /* Paint the whole view: the rail, one row per room, the blocked set, the
@@ -69,17 +68,35 @@ void room_start(const char *id, const char *title);
 void room_hydrate(void);
 /* Redraw the rail alone (the set or its order changed). */
 void room_rail(void);
-/* The two broadcast rooms' switches in Settings. Off = off the rail, not
- * counted. They are separate because the rooms are separate (XPRS.md 13.11):
- * one is everybody in earshot, the other is everybody. */
+/* The Local room's switch in Settings. Off = off the rail, not counted. */
 void room_set_local_enabled(int on);
-void room_set_global_enabled(int on);
 
 void room_react(const char *id, const char *mid, const char *who, int remove, int mine);
 /* Remember which room a 1:1 we sent belongs to, so a later tick finds it. */
 void room_tx_note(const char *rid, const char *room);
 void room_status(const char *rid, const char *state);
 void room_close(const char *id);
+/* The person archived [id] (on=1) or brought it back (on=0). */
+void room_archive(const char *id, int on);
+/* The person deleted [id]: its messages go, and nothing older than this
+ * moment comes back from an archive refill. The Local room stays on the
+ * rail, empty; any other conversation leaves the index until it is used
+ * again. */
+void room_delete(const char *id);
+/* The Archived screen's list (people field "archived"). */
+void room_archived_publish(void);
+
+/* ── Statuses (XPRS.md 27) at the head of the list ──────────────────
+ * Chat shows the newest status of each person it talks with, and lets the
+ * person post their own; the full feed is the Status wapp's. */
+/* Is [call] somebody this station talks with? */
+int  status_person(const char *call);
+/* Store one status. 1 stored now, 0 already held or not shown here. */
+int  status_admit(const char *id, const char *call, unsigned long long ts,
+                  const char *body, int mine);
+void status_seen(const char *id);
+/* Paint the strip: ui.rooms.status, the last day, newest per person. */
+void status_publish(void);
 int  room_set_private(const char *id, int on);
 int  room_is_private(const char *id);
 void room_hide(const char *id, const char *mid);

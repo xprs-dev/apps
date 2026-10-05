@@ -3,13 +3,11 @@
 #include "xprs.h"
 #include "xprs_wasm_hal.h"
 
-#define LOCAL  "#LOCAL"
-/* XPRS.md 9.11.1: "Applications show the two scopes as two conversations."
- * scope:local is the room of whoever is in earshot; the unmarked default is
- * the conversation that travels. Mixing them, which this wapp did by having
- * only the first and dropping the rest, "flattens exactly the distinction the
- * field exists to draw". */
-#define GLOBAL "#GLOBAL"
+#define LOCAL "#LOCAL"
+/* The global room some builds had. Chat holds no room for "everybody the mesh
+ * can reach": that is a status, and the Social wapp's. Named only so room_init
+ * can take it out of an index that still holds it. */
+#define GLOBAL_GONE "#GLOBAL"
 #define BODY_MAX 900
 #define TAIL 50
 #define ROOM_H_MAX 8
@@ -18,9 +16,9 @@ static char g_self[16] = "";
 static char g_open[48] = "";     /* the conversation on screen, or "" */
 static char g_top[48] = "";      /* first row of the rail as last drawn */
 static int  g_local_on = 1;
-static int  g_global_on = 1;
 static int  g_idx = -1;
 static int  g_said_nodb = 0;
+static int  g_global_dropped = 0;   /* room_init took #GLOBAL out just now */
 static struct { char id[48]; int h; unsigned long long used; } g_rh[ROOM_H_MAX];
 static unsigned long long g_tick;
 
@@ -44,7 +42,6 @@ int room_renderable(const char *id) {
 }
 static const char *room_icon(const char *id) {
   if (s_eq(id, LOCAL)) return "campaign";
-  if (s_eq(id, GLOBAL)) return "public";
   if (is_xgroup(id)) return "group";
   if (id[0] == '#') return "tag";
   return "person";
@@ -91,6 +88,31 @@ static int room_handle(const char *id) {
   g_rh[slot].h = h;
   g_rh[slot].used = ++g_tick;
   return h;
+}
+
+/* Remember [call] as somebody this station talks with. A short ring of the
+ * last few spares the database a write per message in a busy room. */
+static char g_pring[16][16];
+static int  g_pring_at;
+static void people_note(const char *call) {
+  char (*ring)[16] = g_pring;
+  if (!call[0] || s_eq(call, g_self) || g_idx < 0) return;
+  for (int i = 0; i < 16; i++) if (s_eq(ring[i], call)) return;
+  s_cpy(ring[g_pring_at], call, sizeof(ring[0])); g_pring_at = (g_pring_at + 1) % 16;
+  pj_t p; pj_init(&p); pj_str(&p, call);
+  db_exec(g_idx, "INSERT OR IGNORE INTO people(call) VALUES(?)", pj_done(&p));
+}
+
+/* When the person last deleted this conversation (epoch seconds), else 0.
+ * Nothing stamped at or before it is admitted again from a replay. */
+static unsigned long long room_cleared(int h) {
+  return (unsigned long long)db_int(
+      h, "SELECT CAST(v AS INTEGER) AS n FROM meta WHERE k='cleared' LIMIT 1", 0, 0);
+}
+
+static int room_is_archived(const char *id) {
+  pj_t p; pj_init(&p); pj_str(&p, id);
+  return db_int(g_idx, "SELECT archived AS n FROM rooms WHERE id=? LIMIT 1", pj_done(&p), 0) == 1;
 }
 
 /* ── time ─────────────────────────────────────────────────────────── */
@@ -264,14 +286,10 @@ static void unread_publish(void) {
   /* Two switches are four combinations, so the exclusions are appended rather
    * than written out: the pair of literals this replaced could only ever say
    * something about the Local room. */
-  char q[200] = "SELECT COALESCE(SUM(unread),0) AS n FROM rooms WHERE closed=0";
-  if (!g_local_on) s_cat(q, " AND id<>'" LOCAL "'", sizeof(q));
-  /* The global room never reaches the launcher badge. The badge answers "is
-   * there something for me", and a broadcast to everybody is not; counting it
-   * would peg the badge permanently on any busy mesh and say nothing. Its own
-   * row on the rail still carries its unread count. */
-  s_cat(q, " AND id<>'" GLOBAL "'", sizeof(q));
-  long long n = db_int(g_idx, q, 0, 0);
+  long long n = db_int(g_idx, g_local_on
+      ? "SELECT COALESCE(SUM(unread),0) AS n FROM rooms WHERE closed=0 AND archived=0"
+      : "SELECT COALESCE(SUM(unread),0) AS n FROM rooms WHERE closed=0 AND archived=0 "
+        "AND id<>'" LOCAL "'", 0, 0);
   char m[96] = "{\"type\":\"unread\",\"intent\":\"chat\",\"count\":";
   char nb[24]; u_lltoa((unsigned long long)n, nb);
   s_cat(m, nb, sizeof(m)); s_cat(m, "}", sizeof(m));
@@ -297,7 +315,7 @@ static void notify_msg(const char *room, const char *from, const char *body, con
 void room_rail(void) {
   static char rail[8192];
   s_cpy(rail, "{\"type\":\"ui.rooms.set\",\"field\":\"rooms\",\"rooms\":[", sizeof(rail));
-  int n = db_query(g_idx, "SELECT id,title,activity_ts FROM rooms WHERE closed=0 "
+  int n = db_query(g_idx, "SELECT id,title,activity_ts FROM rooms WHERE closed=0 AND archived=0 "
                           "ORDER BY activity_ts DESC, id LIMIT 64", 0, g_q, sizeof(g_q));
   char lg[900] = "[chat] rail:";
   int first = 1;
@@ -308,8 +326,7 @@ void room_rail(void) {
       char id[48], title[80];
       jstr(row, "id", id, sizeof(id));
       jstr(row, "title", title, sizeof(title));
-      if (!g_local_on  && s_eq(id, LOCAL))  continue;
-      if (!g_global_on && s_eq(id, GLOBAL)) continue;
+      if (!g_local_on && s_eq(id, LOCAL)) continue;
       if (!first) s_cat(rail, ",", sizeof(rail));
       if (first) s_cpy(g_top, id, sizeof(g_top));
       first = 0;
@@ -321,7 +338,20 @@ void room_rail(void) {
       s_cat(lg, " ", sizeof(lg)); s_cat(lg, id, sizeof(lg));
     }
   }
-  s_cat(rail, "]}", sizeof(rail));
+  /* The archived conversations are one row at the top of the host's list,
+   * so it needs how many there are and how many of them hold unread. */
+  /* One query for both figures: the rail is redrawn on arrivals. */
+  { char row[96]; long long a = 0, u = 0;
+    if (db_query(g_idx, "SELECT count(*) AS a, COALESCE(SUM(unread>0),0) AS u "
+                        "FROM rooms WHERE closed=0 AND archived=1", 0, row, sizeof(row)) > 0) {
+      a = jint(row, "a"); u = jint(row, "u");
+    }
+    char nb[24];
+    s_cat(rail, "],\"archived\":", sizeof(rail));
+    u_lltoa((unsigned long long)a, nb); s_cat(rail, nb, sizeof(rail));
+    s_cat(rail, ",\"archived_unread\":", sizeof(rail));
+    u_lltoa((unsigned long long)u, nb); s_cat(rail, nb, sizeof(rail)); }
+  s_cat(rail, "}", sizeof(rail));
   hal_msg_send(rail, s_len(rail));
   /* Once per redraw, and a redraw is a set change, not a message. */
   log1(lg);
@@ -345,8 +375,12 @@ void blocked_publish(void) {
 }
 
 void room_hydrate(void) {
+  /* The host keeps a render cache of every conversation; tell it the global
+   * room is gone, once, on the start that removed it. */
+  if (g_global_dropped) { g_global_dropped = 0; emit_remove(GLOBAL_GONE, 0); }
   room_rail();
-  int n = db_query(g_idx, "SELECT id FROM rooms WHERE closed=0 ORDER BY activity_ts DESC LIMIT 64",
+  int n = db_query(g_idx, "SELECT id FROM rooms WHERE closed=0 AND archived=0 "
+                          "ORDER BY activity_ts DESC LIMIT 64",
                    0, g_q, sizeof(g_q));
   if (n > 0) {
     /* emit_upsert queries the index too, so walk a copy of the id list. */
@@ -361,13 +395,6 @@ void room_hydrate(void) {
 
 void room_set_local_enabled(int on) {
   g_local_on = on ? 1 : 0;
-  if (g_idx < 0) return;
-  room_rail();
-  unread_publish();
-}
-
-void room_set_global_enabled(int on) {
-  g_global_on = on ? 1 : 0;
   if (g_idx < 0) return;
   room_rail();
   unread_publish();
@@ -415,6 +442,8 @@ int room_admit(const room_msg_t *m) {
     if (!g_said_nodb) { g_said_nodb = 1; log1("[chat] a room database would not open -- message dropped"); }
     return -1;
   }
+  /* Deleted by the person: a refill must not bring back what they removed. */
+  if (m->replay && m->ts && m->ts <= room_cleared(h)) return 0;
   /* "Have I seen this" is the primary key. A second copy off another bearer,
    * our own post echoed off the air, a refill re-reading last week: one row. */
   { pj_t p; pj_init(&p); pj_str(&p, m->mid);
@@ -459,6 +488,11 @@ int room_admit(const room_msg_t *m) {
                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", pj_done(&p)) != 0) return -1; }
 
   int created = room_ensure(m->room, m->title);
+  /* Who this station talks with, for the statuses at the head of the list. */
+  if (!m->sys) {
+    if (in && sender[0]) people_note(sender);
+    if (xprs_is_station(m->room)) people_note(m->room);
+  }
   int count = (!m->replay && in && !m->sys && !s_eq(m->room, g_open)) ? 1 : 0;
   if (m->replay) {
     pj_t p; pj_init(&p); pj_str(&p, m->room);
@@ -488,14 +522,9 @@ int room_admit(const room_msg_t *m) {
            m->enc, rid, status, m->sys, priv, m->obf);
   if (!m->replay) {
     if (created > 0 || !s_eq(g_top, m->room)) room_rail();
-    /* NOT the global room. A push per message is a bet that the message is
-     * rare (performance.md 8.10, about log lines, and the arithmetic is the
-     * same for notifications): scope:local is earshot traffic and that bet
-     * holds, while the global room is everything the mesh can reach -- this
-     * phone's archive holds over 200,000 of those. It still bumps the rail
-     * and still counts as unread IN the room, so the traffic is visible
-     * without the phone buzzing for a broadcast nobody addressed. */
-    if (in && !m->sys && !s_eq(m->room, GLOBAL))
+    /* Not for an archived conversation: archiving is how a person says "do
+     * not bother me with this one". */
+    if (in && !m->sys && !room_is_archived(m->room))
       notify_msg(m->room, sender, body, m->mid);
     unread_publish();
     /* A live 1:1 we just heard owes its sender an s:read once a person opens
@@ -625,9 +654,11 @@ const char *room_open_id(void) { return g_open; }
 
 void room_start(const char *id, const char *title) {
   if (room_ensure(id, title) < 0) return;
-  { pj_t p; pj_init(&p); pj_str(&p, id);
-    db_exec(g_idx, "UPDATE rooms SET closed=0 WHERE id=?", pj_done(&p)); }
   emit_upsert(id, 1, 1);
+  /* Focused is on screen, so paint it now. The host only moves its focus on
+   * select:true; a room it is told to show and is never sent the history of
+   * sat highlighted beside an empty pane. */
+  room_open(id);
   room_rail();
 }
 
@@ -710,7 +741,144 @@ void room_hide(const char *id, const char *mid) {
 unsigned long long room_max_ts(const char *id) {
   int h = room_handle(id);
   if (h < 0) return 0;
-  return (unsigned long long)db_int(h, "SELECT max(ts) AS n FROM messages", 0, 0);
+  unsigned long long t =
+      (unsigned long long)db_int(h, "SELECT max(ts) AS n FROM messages", 0, 0);
+  /* An emptied room refills from the moment it was emptied, not from zero. */
+  unsigned long long c = room_cleared(h);
+  return c > t ? c : t;
+}
+
+void room_archive(const char *id, int on) {
+  if (!room_known(id)) return;
+  pj_t p; pj_init(&p); pj_int(&p, on ? 1 : 0); pj_str(&p, id);
+  db_exec(g_idx, "UPDATE rooms SET archived=? WHERE id=?", pj_done(&p));
+  if (on && s_eq(g_open, id)) room_left();
+  if (!on) emit_upsert(id, 0, 0);
+  room_rail();
+  unread_publish();
+  room_archived_publish();
+}
+
+void room_delete(const char *id) {
+  if (!room_known(id)) return;
+  int h = room_handle(id);
+  if (h >= 0) {
+    db_exec(h, "DELETE FROM messages", 0);
+    db_exec(h, "DELETE FROM reactions", 0);
+    pj_t p; pj_init(&p); pj_int(&p, (long long)hal_time_epoch());
+    db_exec(h, "INSERT OR REPLACE INTO meta(k,v) VALUES('cleared',?)", pj_done(&p));
+  }
+  { pj_t p; pj_init(&p); pj_str(&p, id);
+    db_exec(g_idx, "DELETE FROM tx WHERE room=?", pj_done(&p)); }
+  int broadcast = s_eq(id, LOCAL);
+  { pj_t p; pj_init(&p); pj_str(&p, id);
+    db_exec(g_idx, broadcast
+        ? "UPDATE rooms SET unread=0, last_line='', archived=0 WHERE id=?"
+        : "DELETE FROM rooms WHERE id=?", pj_done(&p)); }
+  if (s_eq(g_open, id)) room_left();
+  emit_remove(id, 0);
+  if (broadcast) emit_upsert(id, 0, 0);
+  room_rail();
+  unread_publish();
+  room_archived_publish();
+}
+
+/* ── statuses ─────────────────────────────────────────────────────── */
+#define STATUS_DAY 86400ULL
+
+int status_person(const char *call) {
+  if (!call || !call[0] || g_idx < 0) return 0;
+  pj_t p; pj_init(&p); pj_str(&p, call);
+  return db_int(g_idx, "SELECT 1 AS n FROM people WHERE call=? LIMIT 1", pj_done(&p), 0) == 1;
+}
+
+int status_admit(const char *id, const char *call, unsigned long long ts,
+                 const char *body, int mine) {
+  if (g_idx < 0 || !id[0] || !call[0] || !body[0]) return 0;
+  if (!mine && (is_blocked(call) || !status_person(call))) return 0;
+  /* A day old is no longer news; the Status wapp keeps the rest. */
+  if (ts + STATUS_DAY < hal_time_epoch()) return 0;
+  char b[BODY_MAX + 1]; s_cpy(b, body, sizeof(b));
+  pj_t p; pj_init(&p);
+  pj_str(&p, id); pj_str(&p, call); pj_int(&p, (long long)ts); pj_str(&p, b);
+  pj_int(&p, mine ? 1 : 0); pj_int(&p, mine ? 1 : 0);
+  if (db_exec(g_idx, "INSERT OR IGNORE INTO statuses(id,call,ts,body,mine,seen) "
+                     "VALUES(?,?,?,?,?,?)", pj_done(&p)) != 0) return 0;
+  return db_int(g_idx, "SELECT changes() AS n", 0, 0) > 0;
+}
+
+void status_seen(const char *id) {
+  if (g_idx < 0 || !id[0]) return;
+  pj_t p; pj_init(&p); pj_str(&p, id);
+  db_exec(g_idx, "UPDATE statuses SET seen=1 WHERE id=?", pj_done(&p));
+}
+
+void status_publish(void) {
+  /* Read by nobody when no page is attached, and built on the UI isolate. */
+  if (g_idx < 0 || !hal_ui_attached()) return;
+  static char o[16384];
+  s_cpy(o, "{\"type\":\"ui.rooms.status\",\"field\":\"rooms\",\"me\":\"", sizeof(o));
+  jesc(o, sizeof(o), g_self);
+  s_cat(o, "\",\"items\":[", sizeof(o));
+  unsigned long long now = hal_time_epoch();
+  pj_t p; pj_init(&p);
+  pj_int(&p, (long long)(now > STATUS_DAY ? now - STATUS_DAY : 0));
+  /* The newest status of each person, unseen first, then the newest. */
+  int n = db_query(g_idx,
+      "SELECT id,call,ts,body,mine,seen FROM statuses s WHERE ts>? AND "
+      "ts=(SELECT max(ts) FROM statuses WHERE call=s.call) "
+      "ORDER BY mine DESC, seen ASC, ts DESC LIMIT 30", pj_done(&p), g_q, sizeof(g_q));
+  if (n > 0) {
+    const char *cur = g_q; char row[1400]; int first = 1;
+    while (next_object(&cur, row, sizeof(row))) {
+      char id[24], call[16], body[BODY_MAX + 1];
+      jstr(row, "id", id, sizeof(id));
+      jstr(row, "call", call, sizeof(call));
+      jstr(row, "body", body, sizeof(body));
+      if (is_blocked(call)) continue;
+      if (s_len(o) + s_len(body) * 2 + 160 >= sizeof(o)) break;
+      if (!first) s_cat(o, ",", sizeof(o));
+      first = 0;
+      s_cat(o, "{\"id\":\"", sizeof(o)); jesc(o, sizeof(o), id);
+      s_cat(o, "\",\"call\":\"", sizeof(o)); jesc(o, sizeof(o), call);
+      s_cat(o, "\",\"text\":\"", sizeof(o)); jesc(o, sizeof(o), body);
+      s_cat(o, "\",\"ts\":", sizeof(o));
+      { char nb[24]; u_lltoa((unsigned long long)jint(row, "ts"), nb); s_cat(o, nb, sizeof(o)); }
+      s_cat(o, ",\"mine\":", sizeof(o)); s_cat(o, jint(row, "mine") ? "true" : "false", sizeof(o));
+      s_cat(o, ",\"seen\":", sizeof(o)); s_cat(o, jint(row, "seen") ? "true" : "false", sizeof(o));
+      s_cat(o, "}", sizeof(o));
+    }
+  }
+  s_cat(o, "]}", sizeof(o));
+  hal_msg_send(o, s_len(o));
+}
+
+void room_archived_publish(void) {
+  static char o[8192];
+  s_cpy(o, "{\"type\":\"ui.people.set\",\"field\":\"archived\",\"sections\":[", sizeof(o));
+  int n = db_query(g_idx, "SELECT id,title,last_line,unread FROM rooms "
+                          "WHERE closed=0 AND archived=1 ORDER BY activity_ts DESC LIMIT 64",
+                   0, g_q, sizeof(g_q));
+  if (n > 0) {
+    s_cat(o, "{\"title\":\"Archived\",\"items\":[", sizeof(o));
+    const char *cur = g_q; char row[400]; int first = 1;
+    while (next_object(&cur, row, sizeof(row))) {
+      char id[48], title[80], last[140];
+      jstr(row, "id", id, sizeof(id));
+      jstr(row, "title", title, sizeof(title));
+      jstr(row, "last_line", last, sizeof(last));
+      if (!first) s_cat(o, ",", sizeof(o));
+      first = 0;
+      s_cat(o, "{\"id\":\"arc:", sizeof(o)); jesc(o, sizeof(o), id);
+      s_cat(o, "\",\"title\":\"", sizeof(o)); jesc(o, sizeof(o), title[0] ? title : id);
+      s_cat(o, "\",\"subtitle\":\"", sizeof(o)); jesc(o, sizeof(o), last);
+      s_cat(o, "\",\"icon\":\"", sizeof(o)); s_cat(o, room_icon(id), sizeof(o));
+      s_cat(o, "\"}", sizeof(o));
+    }
+    s_cat(o, "]}", sizeof(o));
+  }
+  s_cat(o, "]}", sizeof(o));
+  hal_msg_send(o, s_len(o));
 }
 
 /* ── blocking ─────────────────────────────────────────────────────── */
@@ -745,6 +913,7 @@ int block_remove(const char *call) {
 /* ── lifecycle ────────────────────────────────────────────────────── */
 void room_init(const char *self) {
   s_cpy(g_self, self ? self : "", sizeof(g_self));
+  for (int i = 0; i < 16; i++) g_pring[i][0] = 0;
   /* A fresh module has no conversation on screen. Reset it explicitly: g_open
    * is a static that outlives a module_destroy/init, and a stale value makes an
    * arriving message look "read on screen" when nothing is open. */
@@ -763,8 +932,45 @@ void room_init(const char *self) {
       hal_kv_delete(old[i], s_len(old[i]));
     db_exec(g_idx, "INSERT OR REPLACE INTO meta(k,v) VALUES('kv_cleaned','1')", 0);
   }
+  /* Once: the global room leaves an index that still holds it, with its
+   * receipts and the Settings switch it had. Its database file stays on disk,
+   * unread and unlisted; the HAL has no verb to remove one. */
+  if (db_int(g_idx, "SELECT 1 AS n FROM meta WHERE k='global_gone' LIMIT 1", 0, 0) != 1) {
+    db_exec(g_idx, "DELETE FROM rooms WHERE id='" GLOBAL_GONE "'", 0);
+    g_global_dropped = db_int(g_idx, "SELECT changes() AS n", 0, 0) > 0;
+    db_exec(g_idx, "DELETE FROM tx WHERE room='" GLOBAL_GONE "'", 0);
+    hal_kv_delete("gchan", 5);
+    db_exec(g_idx, "INSERT OR REPLACE INTO meta(k,v) VALUES('global_gone','1')", 0);
+  }
+  /* Once: learn who this station talks with from the rooms it already has,
+   * so the statuses at the head of the list are not empty until somebody
+   * writes again. Up to 200 senders per room, 64 rooms. */
+  if (db_int(g_idx, "SELECT 1 AS n FROM meta WHERE k='people_v1' LIMIT 1", 0, 0) != 1) {
+    static char ids[64][48]; int k = 0;
+    if (db_query(g_idx, "SELECT id FROM rooms LIMIT 64", 0, g_q, sizeof(g_q)) > 0) {
+      const char *cur = g_q; char row[120];
+      while (k < 64 && next_object(&cur, row, sizeof(row))) jstr(row, "id", ids[k++], 48);
+    }
+    for (int i = 0; i < k; i++) {
+      if (xprs_is_station(ids[i])) people_note(ids[i]);
+      int h = room_handle(ids[i]);
+      if (h < 0) continue;
+      if (db_query(h, "SELECT DISTINCT sender AS s FROM messages WHERE dir='in' AND sys=0 "
+                      "AND sender<>'' LIMIT 200", 0, g_q, sizeof(g_q)) <= 0) continue;
+      const char *cur = g_q; char row[64];
+      while (next_object(&cur, row, sizeof(row))) {
+        char c[16]; jstr(row, "s", c, sizeof(c));
+        people_note(c);
+      }
+    }
+    db_exec(g_idx, "INSERT OR REPLACE INTO meta(k,v) VALUES('people_v1','1')", 0);
+  }
+  /* A status older than a week is the Status wapp's alone. */
+  { pj_t p; pj_init(&p);
+    unsigned long long now = hal_time_epoch();
+    pj_int(&p, (long long)(now > 7 * STATUS_DAY ? now - 7 * STATUS_DAY : 0));
+    db_exec(g_idx, "DELETE FROM statuses WHERE ts<?", pj_done(&p)); }
   room_ensure(LOCAL, "Local chat");
-  room_ensure(GLOBAL, "Global chat");
 }
 
 void room_destroy(void) {

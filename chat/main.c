@@ -45,21 +45,14 @@
 #include "xprs.h"
 #include "people_finder.h"
 
-#define XROOM_LOCAL  "#LOCAL"
-/* XPRS.md 9.11.1: "Applications show the two scopes as two conversations."
- * The local room is whoever is in earshot (scope:local); the global room is
- * the unmarked default, "the conversation that travels". This wapp had only
- * the first and DROPPED every undirected message that was not scope:local,
- * which is the mix the spec warns against, from the other side: the traffic
- * that travels had nowhere to land. It is also why nothing a phone posted
- * could ever reach Meshtastic or MeshCore, since a gateway must never publish
- * a local packet (9.11.3) and local was the only thing chat could send. */
-#define XROOM_GLOBAL "#GLOBAL"
+/* The one broadcast room: whoever is in earshot (scope:local, XPRS.md 9.11).
+ * Chat has no room for "everybody the mesh can reach". Saying something to
+ * everybody is a status (section 27), and that is the Social wapp's. */
+#define XROOM_LOCAL "#LOCAL"
 
 /* ── state ──────────────────────────────────────────────────────────── */
 static char g_call[16] = "N0CALL";   /* replaced at init by hal_identity() */
 static int  g_chan_local = 1;        /* Settings: the Local room switch (KV "chan") */
-static int  g_chan_global = 1;       /* Settings: the global room switch (KV "gchan") */
 static char g_redact_text[900];      /* marked ((..)) text awaiting a compose passphrase (9.2.1) */
 static const char *s_find(const char *hay, const char *needle);
 static uint64_t g_xroom_fill_at;     /* epoch of the last archive refill */
@@ -71,17 +64,6 @@ static int is_self_call(const char *c) {
   return 1;
 }
 static int xroom_is(const char *id) { return s_eq(id, XROOM_LOCAL); }
-static int xroom_is_global(const char *id) { return s_eq(id, XROOM_GLOBAL); }
-/* Either broadcast room: undirected, no custody, no ack, and the only
- * difference between them is the scope the core puts on the wire. */
-static int xroom_any(const char *id) { return xroom_is(id) || xroom_is_global(id); }
-/* The reach 9.11 gives each room, as the core's broadcast door wants it.
- * "global" here is a REQUEST, not a wire field: the core maps it to the
- * absent field, because "writing scope:global would be twelve bytes saying
- * the default on a bearer that charges by the byte". */
-static const char *xroom_scope(const char *id) {
-  return xroom_is(id) ? "local" : "global";
-}
 
 static void notify(const char *level, const char *body) {
   char m[300] = "{\"type\":\"notify\",\"level\":\"";
@@ -109,17 +91,13 @@ static void host_block_state(const char *call, int on) {
   hal_msg_send(m, s_len(m));
 }
 
-/* The only keys left in KV: the two broadcast rooms' switches, which the
- * host's settings form drives through chan_apply. Everything else this wapp
- * remembers is in its databases. */
-static void chan_save(void) {
-  hal_kv_set("chan", 4, g_chan_local ? "1" : "0", 1);
-  hal_kv_set("gchan", 5, g_chan_global ? "1" : "0", 1);
-}
+/* The one key left in KV: the Local room switch, which the host's settings
+ * form drives through chan_apply. Everything else this wapp remembers is in
+ * its databases. */
+static void chan_save(void) { hal_kv_set("chan", 4, g_chan_local ? "1" : "0", 1); }
 static void chan_load(void) {
   char b[4];
   if (hal_kv_get("chan", 4, b, 3) >= 1) g_chan_local = b[0] == '1';
-  if (hal_kv_get("gchan", 5, b, 3) >= 1) g_chan_global = b[0] == '1';
 }
 
 /* ── Closed groups (26): the roster is the core's ─────────────────────
@@ -150,7 +128,6 @@ static int xgroup_may_post(const char *call) {
 /* What a room is called on the rail. */
 static void room_title(const char *id, char *out, unsigned osz) {
   if (xroom_is(id)) { s_cpy(out, "Local chat", osz); return; }
-  if (xroom_is_global(id)) { s_cpy(out, "Global chat", osz); return; }
   if (xgroup_is(id)) {
     /* Name AND callsign: the name is a label anybody can choose; the X5
      * callsign is derived from the key and is what identifies the group. */
@@ -274,8 +251,7 @@ static int wire_body(const char *wire, char *out, unsigned cap) {
 
 static void xroom_backfill(void) {
   char q[160] = "{\"limit\":60,\"types\":[\"message\"],\"to\":[\"\"]";
-  uint64_t lt = room_max_ts(XROOM_LOCAL), gt = room_max_ts(XROOM_GLOBAL);
-  uint64_t since = lt < gt ? lt : gt;
+  uint64_t since = room_max_ts(XROOM_LOCAL);
   if (since > 300) {
     char st[24]; xprs_stamp(st, sizeof(st), since - 300);
     s_cat(q, ",\"since\":\"", sizeof(q)); s_cat(q, st, sizeof(q)); s_cat(q, "\"", sizeof(q));
@@ -304,7 +280,7 @@ static void xroom_backfill(void) {
       if (!next_object(&c2, skip, sizeof(skip))) break;
       cur = c2;
     } }
-  int kept_l = 0, kept_g = 0;
+  int kept = 0;
   for (int k = rows - 1; k >= 0; k--) {
     static char slice[1400];
     const char *c2 = at[k];
@@ -321,11 +297,8 @@ static void xroom_backfill(void) {
     if (wire_key(wire, "n", tmp, sizeof(tmp))) continue;   /* a part (6.6) */
     if (wire_key(wire, "x", tmp, sizeof(tmp))) continue;   /* sealed (9.2) */
     if (wire_key(wire, "d", tmp, sizeof(tmp))) continue;   /* addressed */
-    /* Which room this row belongs to. A country scope (9.11.2) is not local,
-     * and a receiver that cannot place itself "treats a country scope as
-     * global for reading", so it reads in the global room. */
-    int is_local = wire_key(wire, "scope", tmp, sizeof(tmp)) && s_eq(tmp, "local");
-    const char *room = is_local ? XROOM_LOCAL : XROOM_GLOBAL;
+    /* Earshot traffic only. Anything else undirected is not a chat. */
+    if (!wire_key(wire, "scope", tmp, sizeof(tmp)) || !s_eq(tmp, "local")) continue;
     int mine = jbool_def(slice, "own", 0) || is_self_call(from);
     char body[400];
     if (!wire_body(wire, body, sizeof(body))) continue;
@@ -335,19 +308,17 @@ static void xroom_backfill(void) {
      * wire, so read it from there or the bars stop being tappable after a
      * restart. wire_key truncates into a small buffer and still answers 1. */
     char xrv[8]; int obf = wire_key(wire, "xr", xrv, sizeof(xrv)) ? 1 : 0;
-    if (admit(room, id, mine ? "out" : "in", mine ? g_call : from, body, parent,
+    if (admit(XROOM_LOCAL, id, mine ? "out" : "in", mine ? g_call : from, body, parent,
               bearer, s_eq(sig, "verified") ? "verified" : "", 0,
-              (uint64_t)jint(slice, "ts"), "", "", 1, obf) == 1) {
-      if (is_local) kept_l++; else kept_g++;
-    }
+              (uint64_t)jint(slice, "ts"), "", "", 1, obf) == 1)
+      kept++;
   }
   /* One line for the pass, not one per row: performance.md 8.10, "any
    * per-event log line is a bet that the event is rare", and this one reads
    * sixty. The drop line this replaced was exactly that bet, lost. */
   char lg[96] = "[chat] backfill: read=";
   char nb[16]; u_itoa((unsigned)rows, nb); s_cat(lg, nb, sizeof(lg));
-  s_cat(lg, " local=", sizeof(lg)); u_itoa((unsigned)kept_l, nb); s_cat(lg, nb, sizeof(lg));
-  s_cat(lg, " global=", sizeof(lg)); u_itoa((unsigned)kept_g, nb); s_cat(lg, nb, sizeof(lg));
+  s_cat(lg, " local=", sizeof(lg)); u_itoa((unsigned)kept, nb); s_cat(lg, nb, sizeof(lg));
   log1(lg);
 }
 
@@ -360,10 +331,10 @@ static void send_message(const char *id, const char *text_in) {
   /* 9.2.1: a message with ((...)) spans is aired obfuscated. The core builds
    * the bars and the `xr:` blob (it needs a passphrase); the wapp only asks for
    * one and hands over the marked text. Every room it can be said in: a 1:1, a
-   * closed group, and the two broadcast rooms -- where the core airs it
-   * undirected (no d:) instead of addressed. Local used to fall through to
+   * closed group, and the Local room -- where the core airs it undirected
+   * (scope:local, no d:) instead of addressed. Local used to fall through to
    * the plain broadcast below, which aired the secret in the clear. */
-  if ((xroom_any(id) || xgroup_is(id) || xprs_is_station(id)) &&
+  if ((xroom_is(id) || xgroup_is(id) || xprs_is_station(id)) &&
       s_find(text, "((") && s_find(text, "))")) {
     s_cpy(g_redact_text, text, sizeof(g_redact_text));
     char pm[384] = "{\"type\":\"ui.prompt\",\"id\":\"xrmk:";
@@ -376,23 +347,16 @@ static void send_message(const char *id, const char *text_in) {
     return;
   }
 
-  /* A broadcast room: a t:message the core composes undirected, or a
-   * t:reaction (6.5) naming a bubble's section 5 id. The room decides the
-   * scope and nothing else differs, which is the whole of 9.11 in one
-   * argument: "local" stays with whoever is in earshot, "global" travels and
-   * is the shape a gateway is allowed to carry onto another network. */
-  if (xroom_any(id)) {
+  /* The Local room: a t:message the core composes undirected with
+   * scope:local, or a t:reaction (6.5) naming a bubble's section 5 id. */
+  if (xroom_is(id)) {
     char lmid[70]; int unlike; const char *ck;
     if (votemark_parse(text, lmid, &unlike, &ck)) {
       char ts[24]; xprs_stamp(ts, sizeof(ts), hal_time_epoch());
       char wire[300] = "t:reaction f:";
       s_cat(wire, g_call, sizeof(wire));
       s_cat(wire, " ts:", sizeof(wire)); s_cat(wire, ts, sizeof(wire));
-      /* 9.11: global IS the absent field, and the core says so in as many
-       * words ("writing scope:global would be twelve bytes saying the default
-       * on a bearer that charges by the byte"). This wire is hand-built here,
-       * so it has to honour that itself. */
-      if (xroom_is(id)) s_cat(wire, " scope:local", sizeof(wire));
+      s_cat(wire, " scope:local", sizeof(wire));
       s_cat(wire, unlike ? " remove:like" : " add:like", sizeof(wire));
       s_cat(wire, " r:", sizeof(wire)); s_cat(wire, lmid, sizeof(wire));
       if (hal_xprs_send(wire, s_len(wire)) != 0) { notify("warning", "Could not send"); return; }
@@ -402,9 +366,8 @@ static void send_message(const char *id, const char *text_in) {
     char parent[8]; strip_reply6(text, parent);
     if (!text[0]) return;
     char mid[8] = "";
-    const char *scope = xroom_scope(id);
-    if (hal_xprs_broadcast(text, s_len(text), scope, s_len(scope), parent,
-                           s_len(parent), mid, sizeof(mid)) != 2 || !mid[0]) {
+    if (hal_xprs_broadcast(text, s_len(text), "local", 5, parent, s_len(parent),
+                           mid, sizeof(mid)) != 2 || !mid[0]) {
       notify("warning", "Could not send");
       return;
     }
@@ -608,9 +571,8 @@ static void on_core_packet(const char *topic, const char *row) {
   const char *auth = s_eq(sigv, "verified") ? "verified" : "";
 
   if (s_eq(topic, "xprs.reaction")) {
-    /* Three shapes of the SAME packet (6.5): an undirected vote lands in the
-     * broadcast room its scope names, #LOCAL or #GLOBAL (9.11); a 1:1
-     * reaction addressed to us (d: our callsign)
+    /* Three shapes of the SAME packet (6.5): a Local-room vote (scope:local,
+     * no d:) lands in #LOCAL; a 1:1 reaction addressed to us (d: our callsign)
      * lands in the conversation with the reactor; a reaction addressed to a
      * closed group we have a room for (d: X5...) lands in that group. Each is
      * stored in that room's own reactions table; `r:` names the bubble's
@@ -625,8 +587,7 @@ static void on_core_packet(const char *topic, const char *row) {
     if (!(s_eq(add, "like") || s_eq(rem, "like"))) return;
     if (is_blocked(from)) return;
     if (!to[0]) {
-      room_react(s_eq(scope, "local") ? XROOM_LOCAL : XROOM_GLOBAL, r, from,
-                 rem[0] ? 1 : 0, 0);
+      if (s_eq(scope, "local")) room_react(XROOM_LOCAL, r, from, rem[0] ? 1 : 0, 0);
     } else if (to[0] && is_self_call(to)) {
       room_react(from, r, from, rem[0] ? 1 : 0, 0);
     } else if (to[0]) {
@@ -657,21 +618,17 @@ static void on_core_packet(const char *topic, const char *row) {
   { char t[24]; if (jfield(row, "ts", t, sizeof(t))) ts = xprs_parse_stamp(t); }
 
   if (!to[0]) {
-    /* UNDIRECTED TRAFFIC BELONGS TO ONE OF THE TWO BROADCAST ROOMS, AND THE
-     * SCOPE SAYS WHICH (9.11). With no d: there is neither custody nor ack
-     * nor retry in either of them; what differs is reach, and the spec asks
-     * for them to be shown as two conversations rather than mixed.
-     *
-     * This used to admit scope:local and DROP everything else with a log
-     * line, which threw away every message that travels -- the unmarked
-     * default, and the only shape a gateway may carry onto Meshtastic or
-     * MeshCore. A country scope (9.11.2) is not local either, and a receiver
-     * that cannot place itself "treats a country scope as global for
-     * reading", so it reads here too. */
+    /* UNDIRECTED TRAFFIC IS THE LOCAL ROOM'S, OR NOT CHAT'S (9.11). With no
+     * d: there is no custody, no ack and no retry; `local` is the room where
+     * that is honest, because everyone in it is in earshot. What is said to
+     * everybody the mesh can reach is a status, read in the Social wapp.
+     * Dropped without a log line: on a busy mesh that is most of the air, and
+     * a line per packet is a bet that the event is rare (performance.md
+     * 8.10). */
     char scope[16] = "";
     jstr(row, "scope", scope, sizeof(scope));
-    admit(s_eq(scope, "local") ? XROOM_LOCAL : XROOM_GLOBAL,
-          id, "in", from, m, parent, bearer, auth, 0, ts, "", "", 0, obf);
+    if (!s_eq(scope, "local")) return;
+    admit(XROOM_LOCAL, id, "in", from, m, parent, bearer, auth, 0, ts, "", "", 0, obf);
     return;
   }
 
@@ -802,6 +759,55 @@ static void on_xr_redacted(const char *row) {
   admit(convo, id, "out", g_call, m, "", "", "verified", 0, 0, "", "", 0, 1);
 }
 
+/* ── Statuses at the head of the list (XPRS.md 27) ────────────────────
+ *
+ * The newest status of each person this station talks with, from the last
+ * day, and a box to post one's own. Told by `xprs.status` as packets arrive,
+ * filled once from the spool at start. The full feed, follows and search are
+ * the Status wapp's; this is the glance. A multi-part status (6.6) is the
+ * Status wapp's to assemble, so a part is skipped here. */
+static void on_status_packet(const char *row) {
+  char from[24] = "", id[24] = "", m[900] = "", t[24] = "", n[8] = "";
+  jstr(row, "from", from, sizeof(from));
+  jstr(row, "id", id, sizeof(id));
+  if (!from[0] || !id[0] || jbool(row, "sealed")) return;
+  if (jfield(row, "n", n, sizeof(n))) return;
+  if (!jfield(row, "m", m, sizeof(m)) || !m[0]) return;
+  uint64_t ts = jfield(row, "ts", t, sizeof(t)) ? xprs_parse_stamp(t) : 0;
+  if (!ts) ts = hal_time_epoch();
+  if (status_admit(id, from, ts, m, is_self_call(from))) status_publish();
+}
+
+static void status_backfill(void) {
+  char q[160] = "{\"limit\":40,\"types\":[\"status\"]";
+  uint64_t now = hal_time_epoch();
+  if (now > 86400) {
+    char st[24]; xprs_stamp(st, sizeof(st), now - 86400);
+    s_cat(q, ",\"since\":\"", sizeof(q)); s_cat(q, st, sizeof(q)); s_cat(q, "\"", sizeof(q));
+  }
+  s_cat(q, "}", sizeof(q));
+  int32_t n = hal_xprs_history(q, s_len(q), g_hist, sizeof(g_hist) - 1);
+  if (n <= 0 || n >= (int)sizeof(g_hist)) return;
+  g_hist[n] = 0;
+  const char *cur = g_hist;
+  static char slice[1400];
+  while (next_object(&cur, slice, sizeof(slice))) {
+    char type[16] = "", wire[1100] = "", from[24] = "", id[24] = "", tmp[8];
+    jstr(slice, "type", type, sizeof(type));
+    if (!s_eq(type, "status")) continue;
+    jstr(slice, "wire", wire, sizeof(wire));
+    jstr(slice, "from", from, sizeof(from));
+    jstr(slice, "id", id, sizeof(id));
+    if (!wire[0] || !from[0] || !id[0]) continue;
+    if (wire_key(wire, "n", tmp, sizeof(tmp))) continue;   /* a part (6.6) */
+    if (wire_key(wire, "x", tmp, sizeof(tmp))) continue;   /* sealed (9.2) */
+    char body[900];
+    if (!wire_body(wire, body, sizeof(body))) continue;
+    int mine = jbool_def(slice, "own", 0) || is_self_call(from);
+    status_admit(id, mine ? g_call : from, (uint64_t)jint(slice, "ts"), body, mine);
+  }
+}
+
 static void drain_core_events(void) {
   static char row[3200];
   char topic[64];
@@ -818,6 +824,7 @@ static void drain_core_events(void) {
       continue;
     }
     if (s_eq(topic, "xprs.unlock")) { on_xr_unlock(row); continue; }
+    if (s_eq(topic, "xprs.status")) { on_status_packet(row); continue; }
     if (s_eq(topic, "xprs.redacted")) { on_xr_redacted(row); continue; }
     on_core_event(topic, row);
   }
@@ -961,7 +968,7 @@ static void do_open(const char *buf) {
   room_open(convo);
   /* Opening the room is the one moment somebody is asking to SEE it. The
    * guard is a memory of the last refill, not a schedule. */
-  if (xroom_any(convo)) {
+  if (xroom_is(convo)) {
     uint64_t now = hal_time_epoch();
     if (now - g_xroom_fill_at >= 60) { g_xroom_fill_at = now; xroom_backfill(); }
   }
@@ -973,7 +980,8 @@ static void do_open(const char *buf) {
 /* ── module entry points ──────────────────────────────────────────────── */
 void module_init(void) {
   static const char *topics[] = { "xprs.message", "xprs.reaction", "xprs.status.tx",
-                                  "core.groups", "xprs.unlock", "xprs.redacted" };
+                                  "core.groups", "xprs.unlock", "xprs.redacted",
+                                  "xprs.status" };
   for (unsigned i = 0; i < sizeof(topics) / sizeof(topics[0]); i++)
     hal_event_subscribe(topics[i], s_len(topics[i]));
   char id[16];
@@ -981,14 +989,15 @@ void module_init(void) {
   if (n > 0 && n < sizeof(id)) { id[n] = 0; if (id[0]) s_cpy(g_call, id, sizeof(g_call)); }
   chan_load();
   room_set_local_enabled(g_chan_local);
-  room_set_global_enabled(g_chan_global);
   room_init(g_call);
   xgroups_refresh();
   /* The archive first, so the first frame already holds what was said
    * while we were not listening; then the view. */
   g_xroom_fill_at = hal_time_epoch();
   xroom_backfill();
+  status_backfill();
   room_hydrate();
+  status_publish();
 }
 
 /* NO CLOCK. Everything is a call: the core delivering, or a person typing. */
@@ -1035,6 +1044,53 @@ void module_handle_event(void) {
   else if (s_eq(cmd, "rooms_close") || s_eq(cmd, "conversations_close")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
     if (id[0]) room_close(id);
+  }
+  /* The status box at the head of the list: post one's own, or open one. */
+  else if (s_eq(cmd, "rooms_status_post")) {
+    static char text[900];
+    cmd_field(buf, "status_input", text, sizeof(text));
+    if (text[0]) {
+      char mid[24] = "";
+      if (hal_xprs_status(text, s_len(text), 0, 0, 0, 0, mid, sizeof(mid) - 1) == 0 && mid[0]) {
+        /* Drawn at once, keyed on the id the core named it with; the copy that
+         * comes back collapses onto it (architecture.md 4). */
+        status_admit(mid, g_call, hal_time_epoch(), text, 1);
+        status_publish();
+      } else {
+        notify("warning", "Could not post the status");
+      }
+    }
+  }
+  else if (s_eq(cmd, "rooms_status_seen")) {
+    char id[24] = ""; cmd_field(buf, "status_id", id, sizeof(id));
+    if (id[0]) { status_seen(id); status_publish(); }
+  }
+  /* The three-dots menu on a row of the list. */
+  else if (s_eq(cmd, "rooms_archive")) {
+    char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
+    if (id[0]) { room_archive(id, 1); notify("info", "Chat archived"); }
+  }
+  else if (s_eq(cmd, "rooms_unarchive")) {
+    char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
+    if (id[0]) { room_archive(id, 0); notify("info", "Chat unarchived"); }
+  }
+  else if (s_eq(cmd, "rooms_delete")) {
+    char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
+    if (id[0]) { room_delete(id); notify("info", "Chat deleted"); }
+  }
+  /* The "Archived" row at the top of the list, and a tap on one of them:
+   * it comes back to the list and opens. */
+  else if (s_eq(cmd, "rooms_archived")) {
+    room_archived_publish();
+    screen_open("Archived");
+  }
+  else if (s_eq(cmd, "archived_tap")) {
+    char id[64] = ""; jstr(buf, "archived_id", id, sizeof(id));
+    if (s_pre(id, "arc:") && room_renderable(id + 4)) {
+      room_archive(id + 4, 0);
+      room_start(id + 4, 0);
+      screen_close();
+    }
   }
   else if (s_eq(cmd, "rooms_hide") || s_eq(cmd, "conversations_hide")) {
     char id[48] = "", key[40] = "";
@@ -1123,15 +1179,9 @@ void module_handle_event(void) {
     /* Explicit apply, so an unset checkbox serialised as false on some other
      * command never clobbers the on-by-default switch. */
     g_chan_local = jbool_def(buf, "chan_local", 1);
-    g_chan_global = jbool_def(buf, "chan_global", 1);
     chan_save();
     room_set_local_enabled(g_chan_local);
-    room_set_global_enabled(g_chan_global);
-    notify("info", g_chan_local
-                     ? (g_chan_global ? "Local and global chat are on"
-                                      : "Local chat is on, global is off")
-                     : (g_chan_global ? "Global chat is on, local is off"
-                                      : "Local and global chat are off"));
+    notify("info", g_chan_local ? "Local chat is on" : "Local chat is off");
   }
 }
 

@@ -1,10 +1,10 @@
 {
   "id": "tools.xprs.chat",
-  "version": "0.7.31",
+  "version": "0.7.34",
   "kind": "app",
   "title": "Chat",
   "description": "Group and private chats with the stations around you.",
-  "summary": "A chat for XPRS stations. The Local room holds everyone in radio range. The global room holds everyone the mesh can reach. Open groups are named channels that anyone can join. Closed groups are for members only. A private chat is with one station by its callsign. It is sealed once both keys are known. Messages travel over Bluetooth and the local network. They also use Reticulum and LoRa. Each conversation is stored on this device.",
+  "summary": "A chat for XPRS stations. The Local room holds everyone in radio range. Open groups are named channels that anyone can join. Closed groups are for members only. A private chat is with one station by its callsign. It is sealed once both keys are known. Messages travel over Bluetooth and the local network. They also use Reticulum and LoRa. Each conversation is stored on this device.",
   "icon": "media/icons/chat.svg",
   "color": "#B71C1C",
   "tags": [

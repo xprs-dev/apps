@@ -81,6 +81,22 @@
   },
   {
     "$": "screen",
+    "name": "Archived",
+    "hidden": true,
+    "toolbar": true,
+    "tip": "Chats you archived. They keep receiving, quietly.",
+    "children": [
+      {
+        "$": "field",
+        "name": "archived",
+        "$type": "people",
+        "empty": "No archived chats.",
+        "tip": "Tap a chat to bring it back to the list and open it."
+      }
+    ]
+  },
+  {
+    "$": "screen",
     "name": "Nearby devices",
     "icon": "radar",
     "tip": "Open the Mesh wapp - the live map of every node and station within reach.",
@@ -98,7 +114,7 @@
       {
         "$": "group",
         "name": "channels",
-        "tip": "The Local room is everyone within radio range; the global room is everyone the mesh can reach. Groups and conversations are always on.",
+        "tip": "The Local room is everyone within radio range. Groups and conversations are always on.",
         "children": [
           {
             "$": "field",
@@ -108,15 +124,6 @@
             "default": true,
             "apply": "chan_apply",
             "tip": "Chatter from devices around you, over Bluetooth and the local network. Off = the room leaves the rail and stops counting as unread."
-          },
-          {
-            "$": "field",
-            "name": "chan_global",
-            "$type": "bool",
-            "label": "Global chat (everyone)",
-            "default": true,
-            "apply": "chan_apply",
-            "tip": "The conversation that travels: no scope on the wire, so stations relay it and a gateway may carry it onto Meshtastic or MeshCore. Off = the room leaves the rail and stops counting as unread."
           }
         ]
       }

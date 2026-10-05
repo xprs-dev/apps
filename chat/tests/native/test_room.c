@@ -23,6 +23,7 @@ void mock_set_groups(const char*);
 void mock_set_roster(const char*);
 void mock_set_send_rc(int32_t);
 void mock_clear_wire(void);
+void mock_ui_attached(int); const char* mock_last_status(void);
 const char* room_open_id(void);
 /* main.c */
 void module_init(void); void module_handle_event(void); void module_destroy(void);
@@ -50,16 +51,15 @@ static void local_packet(const char *from, const char *id, const char *text, con
   module_handle_event();
 }
 
-TEST(the_two_broadcast_rooms_exist_by_default_and_nothing_else) {
+TEST(the_local_room_exists_by_default_and_nothing_else) {
   fresh();
   room_hydrate();
   const char *rail = cap_find("ui.rooms.set");
   CHECK(rail && strstr(rail, "\"id\":\"#LOCAL\""));
-  CHECK(rail && strstr(rail, "\"id\":\"#GLOBAL\""));
+  CHECK(rail && !strstr(rail, "#GLOBAL"));
   CHECK(rail && !strstr(rail, "X5"));
-  CHECK(cap_count("\"id\":\"") >= 1);
   CHECK(room_known("#LOCAL"));
-  CHECK(room_known("#GLOBAL"));
+  CHECK(!room_known("#GLOBAL"));
   CHECK(!room_known("#NEWS"));
 }
 
@@ -78,28 +78,23 @@ TEST(a_local_message_is_stored_and_shown_once) {
   CHECK(cap_count("\"type\":\"notify\"") == 0);
 }
 
-/* XPRS.md 13.11 wants the two scopes shown as two conversations, so an
- * unscoped message is not a stray: it is the global room's. This used to
- * assert the opposite -- that it was dropped with a log line -- which is why
- * nothing a phone posted could reach Meshtastic or MeshCore, a gateway being
- * forbidden to publish the only scope chat could send (9.11.3). */
-TEST(unscoped_traffic_is_the_global_rooms_and_addressed_is_neither) {
+/* Undirected traffic is the Local room's when it says scope:local, and not
+ * chat's otherwise: saying something to everybody the mesh can reach is a
+ * status, the Social wapp's (section 27). Nothing is created for it, nothing
+ * buzzes, nothing is logged per packet. */
+TEST(unscoped_traffic_is_not_chat_and_addressed_is_neither) {
   fresh();
   local_packet("X1PEER", "bbb222", "global words", "global");
-  CHECK(cap_count("ui.convo.msg") == 1);
-  CHECK(cap_contains("\"id\":\"#GLOBAL\""));
-  CHECK(cap_contains("\"text\":\"global words\""));
-  CHECK(!cap_contains("\"id\":\"#LOCAL\""));
-  cap_clear();
-  /* And a local one still goes to the other room, from the same door. */
+  CHECK(cap_count("ui.convo.msg") == 0);
+  CHECK(cap_count("\"type\":\"notify\"") == 0);
+  CHECK(!room_known("#GLOBAL"));
+  local_packet("X1PEER", "bbb444", "country words", "PT");
+  CHECK(cap_count("ui.convo.msg") == 0);
+  CHECK(log_count("bbb222") == 0 && log_count("bbb444") == 0);
+  /* A local one goes to the room, from the same door. */
   local_packet("X1PEER", "bbb333", "local words", "local");
   CHECK(cap_count("ui.convo.msg") == 1);
   CHECK(cap_contains("\"id\":\"#LOCAL\""));
-  cap_clear();
-  /* A country scope is not local either (9.11.2), and a receiver that cannot
-   * place itself reads it as global. */
-  local_packet("X1PEER", "bbb444", "country words", "PT");
-  CHECK(cap_contains("\"id\":\"#GLOBAL\""));
   cap_clear();
   /* Addressed to a station: correspondence, not the room. */
   event_push("xprs.message",
@@ -108,64 +103,40 @@ TEST(unscoped_traffic_is_the_global_rooms_and_addressed_is_neither) {
   CHECK(cap_count("ui.convo.msg") == 0);
 }
 
-/* A broadcast to everybody is not addressed to anybody, and this phone's
- * archive holds over 200,000 of them. So the global room bumps the rail and
- * counts as unread in its own row, and does NOT buzz the phone or reach the
- * launcher badge. The local room, which is earshot traffic, still does both. */
-TEST(the_global_room_does_not_buzz_the_phone_or_the_badge) {
-  fresh();
-  local_packet("X1PEER", "ggg111", "everybody hears this", "global");
-  CHECK(cap_count("ui.convo.msg") == 1);          /* it is stored and shown */
-  CHECK(cap_contains("\"id\":\"#GLOBAL\""));
-  CHECK(cap_count("\"type\":\"notify\"") == 0);   /* and it is quiet */
-  CHECK(!cap_contains("\"count\":1"));             /* badge untouched */
-  cap_clear();
-  /* The local room is the comparison: same door, same shape, both fire. */
-  local_packet("X1PEER", "ggg222", "only in here", "local");
-  CHECK(cap_count("\"type\":\"notify\"") == 1);
-  CHECK(cap_contains("\"count\":1"));
-}
-
-/* The one thing that makes the global room worth having: the core is asked
- * for a different reach. "global" is the absent field on the wire (13.11), so
- * stations relay it and a gateway MAY carry it onto Meshtastic or MeshCore,
- * which 9.11.3 forbids for the local room. */
-TEST(each_broadcast_room_sends_with_its_own_scope) {
+/* The Local room sends with scope:local, composed by the core or hand-built
+ * for a vote: a gateway must never carry it onto another network (9.11.3). */
+TEST(the_local_room_sends_and_votes_with_scope_local) {
   fresh();
   mock_bcast_scope_clear();
   inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#LOCAL\",\"rooms_input\":\"in earshot\"}");
   module_handle_event();
   CHECK(strcmp(mock_bcast_scope(), "local") == 0);
   CHECK(cap_contains("\"id\":\"#LOCAL\""));
-  cap_clear();
-  mock_bcast_scope_clear();
-  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#GLOBAL\",\"rooms_input\":\"everywhere\"}");
-  module_handle_event();
-  CHECK(strcmp(mock_bcast_scope(), "global") == 0);
-  CHECK(cap_contains("\"id\":\"#GLOBAL\""));
-  CHECK(cap_contains("\"text\":\"everywhere\""));
-  CHECK(cap_contains("\"dir\":\"out\""));
-}
-
-/* A vote is hand-built here rather than composed by the core, so it has to
- * honour the same rule itself: writing scope:global would be twelve bytes
- * saying the default. */
-TEST(a_global_room_vote_carries_no_scope_field) {
-  fresh();
-  local_packet("X1PEER", "vvv111", "worth a heart", "global");
-  cap_clear();
-  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#GLOBAL\",\"rooms_input\":\"+like:vvv111\"}");
+  local_packet("X1PEER", "vvv222", "worth one", "local");
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#LOCAL\",\"rooms_input\":\"+like:vvv222\"}");
   module_handle_event();
   const char *w = mock_last_wire();
   CHECK(w && strstr(w, "t:reaction"));
-  CHECK(w && strstr(w, "add:like"));
-  CHECK(w && !strstr(w, "scope:"));
-  /* The local room still says it. */
-  local_packet("X1PEER", "vvv222", "also worth one", "local");
-  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#LOCAL\",\"rooms_input\":\"+like:vvv222\"}");
-  module_handle_event();
-  w = mock_last_wire();
   CHECK(w && strstr(w, "scope:local"));
+}
+
+/* An install that had the global room loses it on the first start, once:
+ * the row goes, the host's cache is told, and nothing brings it back. */
+TEST(an_index_that_held_the_global_room_lets_it_go_once) {
+  fresh();
+  module_destroy();
+  { /* the index as an older build left it */
+    int h = db_open("index.sqlite3");
+    db_exec(h, "INSERT OR IGNORE INTO rooms(id,file,title) VALUES('#GLOBAL','rooms/_hGLOBAL.sqlite3','Global chat')", 0);
+    db_exec(h, "DELETE FROM meta WHERE k='global_gone'", 0);
+    db_close(h); }
+  cap_clear();
+  module_init();
+  CHECK(!room_known("#GLOBAL"));
+  CHECK(cap_contains("ui.convo.remove") && cap_contains("\"id\":\"#GLOBAL\""));
+  module_destroy(); cap_clear();
+  module_init();
+  CHECK(!cap_contains("#GLOBAL"));
 }
 
 TEST(own_broadcast_and_its_echo_are_one_bubble) {
@@ -243,16 +214,13 @@ TEST(replay_from_the_archive_is_silent) {
   /* A restart reads it in. */
   module_destroy(); cap_clear(); log_clear();
   module_init();
-  /* Three rows, three bubbles: the two scope:local ones in #LOCAL and the
-   * unscoped one in #GLOBAL. The same archive query fills both rooms and the
-   * scope decides which rows each keeps, so each pass reads 3 and keeps its
-   * own share. */
-  CHECK(cap_count("ui.convo.msg") == 3);
+  /* Two bubbles from three rows: the scope:local ones. The unscoped row is
+   * not chat's. */
+  CHECK(cap_count("ui.convo.msg") == 2);
   CHECK(cap_count("\"type\":\"notify\"") == 0);
   CHECK(!cap_contains("\"count\":1"));
-  /* ONE pass, one line: the archive is asked once and the scope on each row
-   * sorts it, so there is no second query and no second parse. */
-  CHECK(log_count("backfill: read=3 local=2 global=1") == 1);
+  /* ONE pass, one line. */
+  CHECK(log_count("backfill: read=3 local=2") == 1);
   CHECK(log_count("backfill: read=") == 1);
   /* Oldest first on screen. */
   { int ia = -1, ib = -1;
@@ -266,7 +234,7 @@ TEST(replay_from_the_archive_is_silent) {
   mock_set_time(1700000200);
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
   module_handle_event();
-  CHECK(log_count("backfill: read=3 local=0 global=0") == 1);
+  CHECK(log_count("backfill: read=3 local=0") == 1);
   CHECK(cap_count("ui.convo.msg") == 2);
 }
 
@@ -496,6 +464,141 @@ TEST(actions_reach_their_handlers) {
 /* A time with no day is unreadable once you scroll: 09:41 could be this
  * morning or last month. Every message says which calendar day it fell on, in
  * the reader's own time, and the host draws a separator where that changes. */
+/* The three-dots menu: archive takes a conversation off the list, keeps
+ * storing what arrives in it without a buzz, and the Archived screen brings
+ * it back. */
+TEST(archive_takes_a_room_off_the_list_and_keeps_it_quiet) {
+  fresh();
+  local_packet("X1PEER", "arc001", "before", "local");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_archive\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  { const char *rail = cap_find("ui.rooms.set");
+    CHECK(rail && !strstr(rail, "\"id\":\"#LOCAL\""));
+    CHECK(rail && strstr(rail, "\"archived\":1,")); }
+  cap_clear();
+  local_packet("X1PEER", "arc002", "while archived", "local");
+  CHECK(cap_count("ui.convo.msg") == 1);           /* still stored */
+  CHECK(cap_count("\"type\":\"notify\"") == 0);  /* but quiet */
+  { const char *rail = cap_find("ui.rooms.set");
+    CHECK(rail && !strstr(rail, "\"id\":\"#LOCAL\""));
+    CHECK(rail && strstr(rail, "\"archived_unread\":1")); }
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_archived\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"field\":\"archived\""));
+  CHECK(cap_contains("arc:#LOCAL"));
+  CHECK(cap_contains("\"name\":\"Archived\""));
+  cap_clear();
+  inbox_set("{\"command\":\"archived_tap\",\"archived_id\":\"arc:#LOCAL\"}");
+  module_handle_event();
+  /* Brought back and focused means painted: both messages are sent with it,
+   * so the host never shows the room selected beside an empty pane. */
+  CHECK(cap_contains("\"select\":true"));
+  CHECK(cap_contains("\"text\":\"before\""));
+  CHECK(cap_contains("\"text\":\"while archived\""));
+  { const char *rail = cap_find("ui.rooms.set");
+    CHECK(rail && strstr(rail, "\"id\":\"#LOCAL\""));
+    CHECK(rail && strstr(rail, "\"archived\":0,")); }
+}
+
+/* Delete empties a conversation for good: the archive refill that fills the
+ * broadcast rooms must not put back what the person removed, and a 1:1 leaves
+ * the list altogether. */
+TEST(delete_empties_a_room_and_a_refill_does_not_bring_it_back) {
+  fresh();
+  mock_set_history(
+    "[{\"ts\":1700000000,\"bearer\":\"ble\",\"from\":\"X1PEER\",\"to\":\"\",\"type\":\"message\",\"id\":\"d00001\",\"own\":false,\"sig\":\"verified\",\"wire\":\"t:message f:X1PEER ts:2026-09-04_10:00:00 scope:local m:old news\"}]");
+  module_destroy(); cap_clear(); log_clear();
+  module_init();
+  CHECK(cap_count("ui.convo.msg") == 1);
+  mock_set_time(1900000000);
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_delete\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  CHECK(cap_contains("ui.convo.remove"));
+  CHECK(room_known("#LOCAL"));                     /* the room stays, empty */
+  CHECK(room_max_ts("#LOCAL") >= 1900000000ULL);
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  CHECK(cap_count("ui.convo.msg") == 0);
+  mock_set_history("[]");
+
+  CHECK(room_ensure("X1ABCD", "X1ABCD") == 1);
+  inbox_set("{\"command\":\"rooms_delete\",\"rooms_convo\":\"X1ABCD\"}");
+  module_handle_event();
+  CHECK(!room_known("X1ABCD"));
+}
+
+/* A status (XPRS.md 27) as WappDelivery delivers it on xprs.status. */
+static void status_packet(const char *from, const char *id, const char *ts, const char *text) {
+  char row[800];
+  snprintf(row, sizeof(row),
+    "{\"id\":\"%s\",\"type\":\"status\",\"from\":\"%s\",\"to\":\"\",\"fields\":[[\"t\",\"status\"],[\"f\",\"%s\"],[\"ts\",\"%s\"],[\"m\",\"%s\"]],\"sealed\":false,\"bearer\":\"ble\",\"sig\":\"verified\"}",
+    id, from, from, ts, text);
+  event_push("xprs.status", row);
+  module_handle_event();
+}
+
+/* The head of the conversation list: the newest status of each person this
+ * station talks with, a box to post one's own, and nothing from strangers. */
+TEST(statuses_of_people_we_talk_with_head_the_list) {
+  fresh();
+  mock_set_time(1788520000);   /* 2026-09-04 11:06, the day these were said */
+  local_packet("X1PEER", "pp0001", "hi there", "local");   /* now somebody we talk with */
+  cap_clear();
+  status_packet("X1PEER", "s00001", "2026-09-04_10:30:00", "on the hill");
+  { const char *st = cap_find("ui.rooms.status");
+    CHECK(st && strstr(st, "\"call\":\"X1PEER\""));
+    CHECK(st && strstr(st, "\"text\":\"on the hill\""));
+    CHECK(st && strstr(st, "\"seen\":false")); }
+  cap_clear();
+  status_packet("X1STRANGER", "s00002", "2026-09-04_10:31:00", "who am I");
+  CHECK(!cap_contains("ui.rooms.status"));               /* not somebody we talk with */
+  cap_clear();
+  /* The same packet again, off another bearer: nothing to redraw. */
+  status_packet("X1PEER", "s00001", "2026-09-04_10:30:00", "on the hill");
+  CHECK(!cap_contains("ui.rooms.status"));
+  /* Opened: seen. */
+  inbox_set("{\"command\":\"rooms_status_seen\",\"rooms_status_id\":\"s00001\"}");
+  module_handle_event();
+  { const char *st = cap_find("ui.rooms.status");
+    CHECK(st && strstr(st, "\"seen\":true")); }
+  cap_clear();
+  /* Posting one's own: the core composes it, and it is drawn at once. */
+  inbox_set("{\"command\":\"rooms_status_post\",\"rooms_status_input\":\"out walking\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_last_status(), "out walking") == 0);
+  { const char *st = cap_find("ui.rooms.status");
+    CHECK(st && strstr(st, "\"text\":\"out walking\""));
+    CHECK(st && strstr(st, "\"mine\":true")); }
+  cap_clear();
+  /* Headless: stored, but no strip is built for nobody to read. */
+  mock_ui_attached(0);
+  status_packet("X1PEER", "s00003", "2026-09-04_11:00:00", "later");
+  CHECK(!cap_contains("ui.rooms.status"));
+  mock_ui_attached(1);
+  module_destroy(); cap_clear();
+  module_init();
+  CHECK(cap_contains("\"text\":\"later\""));
+}
+
+/* An install that already had conversations knows who it talks with on the
+ * first start, so the strip is not empty until somebody writes again. */
+TEST(people_are_learned_once_from_the_rooms_already_held) {
+  fresh();
+  local_packet("X1OLD", "po0001", "from before", "local");
+  module_destroy();
+  { int h = db_open("index.sqlite3");
+    db_exec(h, "DELETE FROM people", 0);
+    db_exec(h, "DELETE FROM meta WHERE k='people_v1'", 0);
+    db_close(h); }
+  module_init();
+  CHECK(status_person("X1OLD"));
+  CHECK(!status_person("X1NEVER"));
+}
+
 TEST(a_message_says_which_day_it_belongs_to) {
   fresh();
   local_packet("X1PEER", "day001", "what day was this", "local");
@@ -861,12 +964,11 @@ TEST(opening_a_thread_acks_read_for_older_unacked_messages_too) {
 }
 
 int main(void) {
-  run_the_two_broadcast_rooms_exist_by_default_and_nothing_else();
+  run_the_local_room_exists_by_default_and_nothing_else();
   run_a_local_message_is_stored_and_shown_once();
-  run_unscoped_traffic_is_the_global_rooms_and_addressed_is_neither();
-  run_the_global_room_does_not_buzz_the_phone_or_the_badge();
-  run_each_broadcast_room_sends_with_its_own_scope();
-  run_a_global_room_vote_carries_no_scope_field();
+  run_unscoped_traffic_is_not_chat_and_addressed_is_neither();
+  run_the_local_room_sends_and_votes_with_scope_local();
+  run_an_index_that_held_the_global_room_lets_it_go_once();
   run_own_broadcast_and_its_echo_are_one_bubble();
   run_open_repaints_from_the_database_newest_fifty();
   run_a_message_for_the_open_room_does_not_count();
@@ -894,6 +996,10 @@ int main(void) {
   run_actions_reach_their_handlers();
   run_a_reply_buffer_too_small_halves_the_tail();
   run_a_room_file_name_is_safe_and_stable();
+  run_archive_takes_a_room_off_the_list_and_keeps_it_quiet();
+  run_delete_empties_a_room_and_a_refill_does_not_bring_it_back();
+  run_statuses_of_people_we_talk_with_head_the_list();
+  run_people_are_learned_once_from_the_rooms_already_held();
   run_a_message_says_which_day_it_belongs_to();
   run_the_calendar_date_is_exact_at_every_awkward_boundary();
   printf("%d passed, %d failed\n", g_pass, g_fail);
