@@ -157,6 +157,32 @@ static int wire_body(const char *wire, char *out, unsigned cap) {
     return 0;
 }
 
+/* What a status says, for the feed: its words, and the picture it carries.
+ *
+ * A picture is a `file:` FIELD beside `m:` (XPRS.md 7.7.7), not caption text,
+ * and a status may be a picture with no words at all. The host draws an
+ * attachment from a `file:` token in the text, so put the reference back there,
+ * once, after the words. Statuses from before the field carried the token in
+ * the text already, and keep it. The bytes are the core's to fetch; this only
+ * names them. Returns 0 when there is neither words nor picture. */
+static void add_file_ref(const char *wire, char *out, unsigned cap) {
+    char ref[80] = "";
+    if (wire_key(wire, "file", ref, sizeof(ref)) && ref[0]) {
+        char tok[90] = "file:";
+        str_cat(tok, ref, sizeof(tok));
+        if (!contains_ci(out, tok)) {
+            if (out[0]) str_cat(out, " ", cap);
+            str_cat(out, tok, cap);
+        }
+    }
+}
+
+static int status_text(const char *wire, char *out, unsigned cap) {
+    wire_body(wire, out, cap);
+    add_file_ref(wire, out, cap);
+    return out[0] ? 1 : 0;
+}
+
 /* ── State ───────────────────────────────────────────────────────────── */
 #define SEEN_MAX    256
 #define FOLLOW_MAX   64
@@ -634,7 +660,7 @@ static void feed_from_spool(const char *field, const char *query,
         const char *source = followed(person) ? "following" : "xprs";
 
         char body[1100] = "";
-        if (!wire_body(wire, body, sizeof(body))) continue;
+        if (!status_text(wire, body, sizeof(body))) continue;
         if (match[0] && !contains_ci(body, match) && !contains_ci(person, match)) continue;
 
         /* r: names the status this one replies to (section 27). */
@@ -650,11 +676,15 @@ static void feed_from_spool(const char *field, const char *query,
             if (idx >= 1 && idx <= 9 && tot >= 1 && tot <= 9) {
                 char pts[24] = ""; wire_key(wire, "ts", pts, sizeof(pts));
                 group_t *g = group_for(person, pts, tot);
-                if (!g->part[idx - 1][0]) { str_copy(g->part[idx - 1], body, sizeof(g->part[0])); g->have++; }
+                /* Every part repeats `file:` (7.7.7): keep the words of each
+                 * part and name the picture once, on the whole. */
+                char words[1100] = ""; wire_body(wire, words, sizeof(words));
+                if (!g->part[idx - 1][0]) { str_copy(g->part[idx - 1], words, sizeof(g->part[0])); g->have++; }
                 if (g->have < g->total) continue;    /* still incomplete */
                 if (seen(id)) continue;
                 char whole[2200] = "";
                 for (int i = 0; i < g->total; i++) str_cat(whole, g->part[i], sizeof(whole));
+                add_file_ref(wire, whole, sizeof(whole));
                 mark_seen(id);
                 if (str_eq(own, "true")) { mark_mine(id); mark_mine(parent); }
                 feed_append(field, person, whole, id, parent, ts, sig, bearer, str_eq(own, "true"), source);
@@ -727,7 +757,7 @@ static void row_from_event(const char *row, int live, int draw) {
     epoch_from_ts(wts, ts, sizeof(ts));
     json_raw(row, "sig", sig, sizeof(sig));
     json_raw(row, "bearer", bearer, sizeof(bearer));
-    if (!wire_body(wire, body, sizeof(body))) return;
+    if (!status_text(wire, body, sizeof(body))) return;
 
     char parent[20] = "";
     wire_key(wire, "r", parent, sizeof(parent));

@@ -436,6 +436,7 @@
   {"file":"social/social-0.5.0.wapp","id":"tools.xprs.social","version":"0.5.0","size":40828,"title":"Social","description":"Social -- statuses heard over the air. Post to every radio this device has, follow callsigns, search what this station archived."},
   {"file":"social/social-0.5.2.wapp","id":"tools.xprs.social","version":"0.5.2","size":40778,"title":"Social","description":"Short posts sent by radio between people nearby."},
   {"file":"social/social-0.5.3.wapp","id":"tools.xprs.social","version":"0.5.3","size":40794,"title":"Status","description":"Post a status and see what people around you are saying."},
+  {"file":"social/social-0.5.4.wapp","id":"tools.xprs.social","version":"0.5.4","size":42160,"title":"Status","description":"Post a status and see what people around you are saying."},
   {"file":"tasks/tasks-1.0.1.wapp","id":"tools.xprs.tasks","version":"1.0.1","size":6399,"title":"Task Monitor","description":"Live view of background tasks; pause, resume, stop."},
   {"file":"tasks/tasks-1.0.2.wapp","id":"tools.xprs.tasks","version":"1.0.2","size":6400,"title":"Task Monitor","description":"Live view of background tasks; pause, resume, stop."},
   {"file":"tasks/tasks-1.0.3.wapp","id":"tools.xprs.tasks","version":"1.0.3","size":6793,"title":"Task Monitor","description":"See background tasks and pause or stop them."},

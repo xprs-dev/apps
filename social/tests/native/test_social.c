@@ -376,6 +376,37 @@ int main(void) {
     check(cap_contains("\"type\":\"ui.activity.react\""),
           "and the tally moves without waiting for the spool");
 
+    /* ── a picture is a field, and the feed still draws it (XPRS.md 7.7.7) ── */
+    reset();
+    deliver("xprs.status", "pic001", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:05:00 "
+            "file:nYxKzGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg size:19901 "
+            "m:the antenna after the storm");
+    module_handle_event();
+    check(cap_contains("the antenna after the storm "
+                       "file:nYxKzGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg"),
+          "a status carrying file: shows its words and names the picture");
+    check(cap_count_of("file:nYxKzGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg") == 1,
+          "once");
+
+    reset();
+    deliver("xprs.status", "pic002", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:06:00 "
+            "file:AAAAAGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg size:19901");
+    module_handle_event();
+    check(cap_count_of("\"mid\":\"pic002\"") == 1,
+          "a picture with no words is still a status");
+    check(cap_contains("file:AAAAAGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg"),
+          "and it names the picture");
+
+    reset();
+    deliver("xprs.status", "pic003", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:07:00 m:an older client "
+            "file:BBBBBGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg");
+    module_handle_event();
+    check(cap_count_of("file:BBBBBGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg") == 1,
+          "a token an older client left in the text is not doubled");
+
     printf("\n%d checks, %d failed\n", g_pass + g_fail, g_fail);
     return g_fail ? 1 : 0;
 }
