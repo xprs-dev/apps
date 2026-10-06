@@ -9,6 +9,7 @@
         "$": "field",
         "name": "devices",
         "$type": "people",
+        "empty": "No Bluetooth device in reach yet.\nStations appear here as this device hears them. Is Bluetooth on?",
         "tip": "Direct neighbors heard over route beacons, and destinations reachable multi-hop."
       }
     ]

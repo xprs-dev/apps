@@ -218,7 +218,16 @@ static void pf_row(char *o, unsigned sz, const pf_person *e) {
 
 /* Emit the ui.people.set panel for [field], filtered by [query]. When
  * [allow_group] and the query starts "#", a "Group" row opens that group. */
+static void pf_render_ex(const char *field, const char *q, int allow_group, const char *first_sections);
 static __attribute__((unused)) void pf_render(const char *field, const char *q, int allow_group) {
+  pf_render_ex(field, q, allow_group, 0);
+}
+
+/* pf_render with [first_sections] (one or more `{"title":..,"items":[..]}`
+ * objects, comma-separated, or empty) drawn above the heard stations: what the
+ * wapp itself knows matches the query, its own conversations say. */
+static __attribute__((unused)) void pf_render_ex(const char *field, const char *q, int allow_group,
+                                                 const char *first_sections) {
   static char o[16384]; const unsigned sz = sizeof o;
   char want[24] = ""; int j = 0;
   for (int i = 0; q[i] && j < 23; i++) if (q[i] != ' ') want[j++] = pf_up(q[i]);
@@ -229,7 +238,12 @@ static __attribute__((unused)) void pf_render(const char *field, const char *q, 
   pf_cat(o, sz, field);
   pf_cat(o, sz, "\",\"sections\":[");
   int first_section = 1;
+  if (first_sections && first_sections[0]) {
+    pf_cat(o, sz, first_sections);
+    first_section = 0;
+  }
   if (allow_group && want[0] == '#' && want[1]) {
+    if (!first_section) pf_cat(o, sz, ",");
     pf_cat(o, sz, "{\"title\":\"Group\",\"items\":[{\"id\":\"go:"); pf_esc(o, sz, want);
     pf_cat(o, sz, "\",\"title\":\""); pf_esc(o, sz, want);
     pf_cat(o, sz, "\",\"subtitle\":\"Open this group\",\"icon\":\"tag\"}]}");

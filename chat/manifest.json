@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.chat",
-  "version": "0.7.34",
+  "version": "0.7.35",
   "kind": "app",
   "title": "Chat",
   "description": "Group and private chats with the stations around you.",

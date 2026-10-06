@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.bluetooth",
-  "version":         "0.2.2",
+  "version":         "0.2.3",
   "kind":            "app",
   "title":           "Bluetooth",
   "description":     "See the phones and devices in Bluetooth range.",

@@ -80,6 +80,7 @@
   {"file":"bluetooth/bluetooth-0.2.0.wapp","id":"tools.xprs.bluetooth","version":"0.2.0","size":8347,"title":"Bluetooth","description":"Bluetooth - the BLE street mesh: devices within reach and how far messages can travel."},
   {"file":"bluetooth/bluetooth-0.2.1.wapp","id":"tools.xprs.bluetooth","version":"0.2.1","size":8348,"title":"Bluetooth","description":"Bluetooth - the BLE street mesh: devices within reach and how far messages can travel."},
   {"file":"bluetooth/bluetooth-0.2.2.wapp","id":"tools.xprs.bluetooth","version":"0.2.2","size":8769,"title":"Bluetooth","description":"See the phones and devices in Bluetooth range."},
+  {"file":"bluetooth/bluetooth-0.2.3.wapp","id":"tools.xprs.bluetooth","version":"0.2.3","size":8821,"title":"Bluetooth","description":"See the phones and devices in Bluetooth range."},
   {"file":"chat/chat-0.2.100.wapp","id":"tools.geogram.chat","version":"0.2.100","size":179109,"title":"Chat","description":"Chat - messaging, live map and beacons over the APRS network."},
   {"file":"chat/chat-0.2.101.wapp","id":"tools.geogram.chat","version":"0.2.101","size":179343,"title":"Chat","description":"Chat - messaging, live map and beacons over the APRS network."},
   {"file":"chat/chat-0.2.102.wapp","id":"tools.geogram.chat","version":"0.2.102","size":179700,"title":"Chat","description":"Chat - messaging, live map and beacons over the APRS network."},
@@ -218,6 +219,7 @@
   {"file":"chat/chat-0.7.30.wapp","id":"tools.xprs.chat","version":"0.7.30","size":107264,"title":"Chat","description":"Group and private chats with the stations around you."},
   {"file":"chat/chat-0.7.31.wapp","id":"tools.xprs.chat","version":"0.7.31","size":110210,"title":"Chat","description":"Group and private chats with the stations around you."},
   {"file":"chat/chat-0.7.34.wapp","id":"tools.xprs.chat","version":"0.7.34","size":117438,"title":"Chat","description":"Group and private chats with the stations around you."},
+  {"file":"chat/chat-0.7.35.wapp","id":"tools.xprs.chat","version":"0.7.35","size":118575,"title":"Chat","description":"Group and private chats with the stations around you."},
   {"file":"chat/chat-0.7.4.wapp","id":"tools.xprs.chat","version":"0.7.4","size":82279,"title":"Chat","description":"Chat - the Local room, open and closed groups, and 1:1 conversations over XPRS."},
   {"file":"chat/chat-0.7.5.wapp","id":"tools.xprs.chat","version":"0.7.5","size":82284,"title":"Chat","description":"Chat - the Local room, open and closed groups, and 1:1 conversations over XPRS."},
   {"file":"chat/chat-0.7.6.wapp","id":"tools.xprs.chat","version":"0.7.6","size":81620,"title":"Chat","description":"Chat - the Local room, open and closed groups, and 1:1 conversations over XPRS."},
@@ -493,5 +495,8 @@
   {"file":"xprs/xprs-0.3.0.wapp","id":"tools.geogram.xprs","version":"0.3.0","size":21894,"title":"XPRS","description":"XPRS - stations heard over the air, the packets they sent, and the mail this device carries for other people."},
   {"file":"xprs/xprs-0.4.0.wapp","id":"tools.xprs.xprs","version":"0.4.0","size":29226,"title":"XPRS","description":"XPRS - stations heard over the air, the packets they sent, and the mail this device carries for other people."},
   {"file":"xprs/xprs-0.4.1.wapp","id":"tools.xprs.xprs","version":"0.4.1","size":29226,"title":"XPRS","description":"XPRS - stations heard over the air, the packets they sent, and the mail this device carries for other people."},
-  {"file":"xprs/xprs-0.4.2.wapp","id":"tools.xprs.xprs","version":"0.4.2","size":29772,"title":"XPRS","description":"The stations heard over the air and the packets they sent."}
+  {"file":"xprs/xprs-0.4.2.wapp","id":"tools.xprs.xprs","version":"0.4.2","size":29772,"title":"XPRS","description":"The stations heard over the air and the packets they sent."},
+  {"file":"xprs/xprs-0.4.3.wapp","id":"tools.xprs.xprs","version":"0.4.3","size":29872,"title":"XPRS","description":"The stations heard over the air and the packets they sent."},
+  {"file":"xprs/xprs-0.4.4.wapp","id":"tools.xprs.xprs","version":"0.4.4","size":30421,"title":"XPRS","description":"The stations heard over the air and the packets they sent."},
+  {"file":"xprs/xprs-0.4.5.wapp","id":"tools.xprs.xprs","version":"0.4.5","size":31208,"title":"XPRS","description":"The stations heard over the air and the packets they sent."}
 ]

@@ -1129,7 +1129,9 @@ void module_handle_event(void) {
   }
   else if (s_eq(cmd, "searchall_search")) {
     jstr(buf, "searchall_query", g_sa_q, sizeof(g_sa_q));
-    render_people("searchall", g_sa_q, 1);
+    static char chats[4096];
+    room_search_section(g_sa_q, chats, sizeof(chats));
+    pf_render_ex("searchall", g_sa_q, 1, chats);
   }
   else if (s_eq(cmd, "searchall_tap")) go_tap(buf, "searchall_id");
   else if (s_eq(cmd, "rooms_settings")) screen_open("Settings");

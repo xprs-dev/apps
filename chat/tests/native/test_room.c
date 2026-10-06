@@ -467,6 +467,30 @@ TEST(actions_reach_their_handlers) {
 /* The three-dots menu: archive takes a conversation off the list, keeps
  * storing what arrives in it without a buzz, and the Archived screen brings
  * it back. */
+/* Search finds the person's own chats, not only the stations heard this
+ * hour: "x1me" opens the X1MEZA conversation with X1MEZA out of earshot. */
+TEST(search_finds_our_own_chats_first) {
+  fresh();
+  CHECK(room_ensure("X1MEZA", "X1MEZA") >= 0);
+  cap_clear();
+  inbox_set("{\"command\":\"searchall_search\",\"searchall_query\":\"x1me\"}");
+  module_handle_event();
+  { const char *p = cap_find("\"field\":\"searchall\"");
+    CHECK(p && strstr(p, "{\"title\":\"Chats\""));
+    CHECK(p && strstr(p, "\"id\":\"go:X1MEZA\""));
+    CHECK(p && strstr(p, "Chats") < strstr(p, "Not heard yet")); }
+  cap_clear();
+  inbox_set("{\"command\":\"searchall_search\",\"searchall_query\":\"zzzq\"}");
+  module_handle_event();
+  { const char *p = cap_find("\"field\":\"searchall\"");
+    CHECK(p && !strstr(p, "Chats")); }
+  /* A tap on the row opens the chat it names. */
+  cap_clear();
+  inbox_set("{\"command\":\"searchall_tap\",\"searchall_id\":\"go:X1MEZA\"}");
+  module_handle_event();
+  CHECK(cap_contains("X1MEZA"));
+}
+
 TEST(archive_takes_a_room_off_the_list_and_keeps_it_quiet) {
   fresh();
   local_packet("X1PEER", "arc001", "before", "local");
@@ -996,6 +1020,7 @@ int main(void) {
   run_actions_reach_their_handlers();
   run_a_reply_buffer_too_small_halves_the_tail();
   run_a_room_file_name_is_safe_and_stable();
+  run_search_finds_our_own_chats_first();
   run_archive_takes_a_room_off_the_list_and_keeps_it_quiet();
   run_delete_empties_a_room_and_a_refill_does_not_bring_it_back();
   run_statuses_of_people_we_talk_with_head_the_list();

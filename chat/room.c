@@ -357,6 +357,44 @@ void room_rail(void) {
   log1(lg);
 }
 
+/* Search finds the person's own conversations first: the heard-stations
+ * table forgets a station after the hour, and "x1me" has to find the X1MEZA
+ * chat whether or not X1MEZA is in earshot. Archived ones too, as the
+ * archive is still theirs. */
+void room_search_section(const char *q, char *out, unsigned cap) {
+  out[0] = 0;
+  char like[32] = "%"; unsigned j = 1;
+  for (unsigned i = 0; q[i] && j < sizeof(like) - 2; i++) {
+    char c = q[i];
+    if (c == ' ' || c == '%' || c == '_') continue;
+    like[j++] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+  }
+  if (j == 1) return;
+  like[j++] = '%'; like[j] = 0;
+  pj_t p; pj_init(&p); pj_str(&p, like); pj_str(&p, like);
+  int n = db_query(g_idx, "SELECT id,title FROM rooms WHERE closed=0 "
+                          "AND (upper(id) LIKE ? OR upper(title) LIKE ?) "
+                          "ORDER BY activity_ts DESC LIMIT 12", pj_done(&p), g_q, sizeof(g_q));
+  if (n <= 0) return;
+  const char *cur = g_q; char row[200]; int any = 0;
+  s_cpy(out, "{\"title\":\"Chats\",\"items\":[", cap);
+  while (next_object(&cur, row, sizeof(row))) {
+    char id[48], title[80];
+    jstr(row, "id", id, sizeof(id));
+    jstr(row, "title", title, sizeof(title));
+    if (!id[0] || (!g_local_on && s_eq(id, LOCAL))) continue;
+    if (any) s_cat(out, ",", cap);
+    any = 1;
+    s_cat(out, "{\"id\":\"go:", cap); jesc(out, cap, id);
+    s_cat(out, "\",\"title\":\"", cap); jesc(out, cap, title[0] ? title : id);
+    s_cat(out, "\",\"subtitle\":\"Open this chat\"", cap);
+    if (id[0] == '#') s_cat(out, ",\"icon\":\"tag\"", cap);
+    s_cat(out, "}", cap);
+  }
+  if (!any) { out[0] = 0; return; }
+  s_cat(out, "]}", cap);
+}
+
 void blocked_publish(void) {
   char m[1200] = "{\"type\":\"ui.convo.blocked\",\"from\":[";
   int n = db_query(g_idx, "SELECT call FROM blocked LIMIT 64", 0, g_q, sizeof(g_q));

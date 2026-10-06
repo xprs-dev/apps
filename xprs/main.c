@@ -92,7 +92,10 @@ static int obj_copy(const char *p, char *out, unsigned m) {
 
 /* ── Buffers ─────────────────────────────────────────────────────────── */
 static char g_stations[32768];
-static char g_traffic[65536];
+/* The core's ring is 200 sightings, each carrying its wire (up to ~250 B,
+ * JSON-escaped) and a dozen fields: past 64 KiB when full, and a HAL reply
+ * that does not fit returns a negative size, which froze the list. */
+static char g_traffic[196608];
 static char g_held[32768];
 static char g_scf[1024];
 static char g_msg[60000];
@@ -244,6 +247,10 @@ static const char *key_meaning(const char *k) {
     return "";
 }
 
+/* How many times the core heard the packet the next row is (one row per
+ * packet, not per copy: the ring keeps every reception). */
+static int g_heard_n;
+
 /* ── One row in the packet list ──────────────────────────────────────── */
 static void item_json(char *out, unsigned m, const char *obj, int starred) {
     char bearer[16] = "", rssi[12] = "", from[24] = "", to[24] = "";
@@ -258,6 +265,9 @@ static void item_json(char *out, unsigned m, const char *obj, int starred) {
     json_raw(obj, "ts", ts, sizeof(ts));
 
     str_cat(out, "{\"id\":\"", m); json_esc(out, m, id);
+    /* The row is a packet, but its face is the sender's: the same station
+     * looks the same on every row, and wears its announced picture. */
+    if (from[0]) { str_cat(out, "\",\"call\":\"", m); json_esc(out, m, from); }
     /* Title: who is talking to whom, which is what a person scans for. */
     str_cat(out, "\",\"title\":\"", m);
     json_esc(out, m, from[0] ? from : "(unknown)");
@@ -281,6 +291,12 @@ static void item_json(char *out, unsigned m, const char *obj, int starred) {
     else                      str_cat(out, "broadcast", m);
     if (rssi[0] && !str_eq(rssi, "0")) {
         str_cat(out, "\",\"", m); json_esc(out, m, rssi); str_cat(out, " dBm", m);
+    }
+    if (g_heard_n > 1) {
+        char nb[12]; unsigned v = (unsigned)g_heard_n, k = 0; char t[12];
+        while (v) { t[k++] = (char)('0' + v % 10); v /= 10; }
+        unsigned o = 0; while (k) nb[o++] = t[--k]; nb[o] = 0;
+        str_cat(out, "\",\"heard \\u00d7", m); str_cat(out, nb, m);
     }
     str_cat(out, "\"],", m);
 
@@ -321,11 +337,42 @@ static void section_open_icon(const char *title, const char *icon) {
 }
 static void section_close(void) { str_cat(g_msg, "]}", sizeof(g_msg)); }
 
+/* Where each row of the traffic array starts. Found walking FORWARD with the
+ * strings tracked: a signature's alphabet has '{' in it, and a backward walk
+ * that took every '{' for a row read the tail of one message as ten more. */
+static const char *g_rows[256];
+static char g_row_id[256][16];
+static int g_rows_n;
+static void index_rows(const char *s) {
+    g_rows_n = 0;
+    int depth = 0, instr = 0, esc = 0;
+    for (const char *p = s; *p; p++) {
+        char c = *p;
+        if (instr) {
+            if (esc) esc = 0;
+            else if (c == '\\') esc = 1;
+            else if (c == '"') instr = 0;
+            continue;
+        }
+        if (c == '"') instr = 1;
+        else if (c == '[' || c == '{') {
+            if (c == '{' && depth == 1 && g_rows_n < 256) g_rows[g_rows_n++] = p;
+            depth++;
+        } else if (c == ']' || c == '}') depth--;
+    }
+}
+
 /* Newest first: a person looking at a radio wants the last thing said. */
 static void push_packets(void) {
     int n = hal_xprs_traffic(g_traffic, sizeof(g_traffic) - 1);
     if (n < 0) return;
     g_traffic[n > 0 ? n : 0] = '\0';
+    index_rows(g_traffic);
+    for (int k = 0; k < g_rows_n; k++) {
+        g_row_id[k][0] = 0;
+        if (obj_copy(g_rows[k], g_obj, sizeof(g_obj)))
+            json_raw(g_obj, "id", g_row_id[k], sizeof(g_row_id[k]));
+    }
 
     static const char *names[5] = {"All", "For us", "Messages", "Beacons", "Other"};
     static const char *icons[5] = {"list", "mail", "chat", "radar", "more_horiz"};
@@ -342,14 +389,24 @@ static void push_packets(void) {
          * is small (200) and this runs on a 3s tick, so a rescan is cheaper
          * than keeping a parallel index in sync. */
         int emitted = 0;
-        for (const char *p = g_traffic + str_len(g_traffic); p >= g_traffic && emitted < 60; p--) {
-            if (*p != '{') continue;
-            if (!obj_copy(p, g_obj, sizeof(g_obj))) continue;
+        for (int k = g_rows_n - 1; k >= 0 && emitted < 60; k--) {
+            /* The newest copy stands for the packet; older copies are
+             * counted on it, not listed. */
+            int newer = 0, copies = 1;
+            if (g_row_id[k][0]) {
+                for (int j = 0; j < g_rows_n; j++) {
+                    if (j == k || !str_eq(g_row_id[j], g_row_id[k])) continue;
+                    if (j > k) newer = 1;
+                    copies++;
+                }
+            }
+            if (newer) continue;
+            if (!obj_copy(g_rows[k], g_obj, sizeof(g_obj))) continue;
             if (!in_section(g_obj, sec)) continue;
-            char id[16] = "";
-            json_raw(g_obj, "id", id, sizeof(id));
             if (emitted) str_cat(g_msg, ",", sizeof(g_msg));
-            item_json(g_msg, sizeof(g_msg), g_obj, fav_has(id));
+            g_heard_n = copies;
+            item_json(g_msg, sizeof(g_msg), g_obj, fav_has(g_row_id[k]));
+            g_heard_n = 0;
             emitted++;
         }
         section_close();
@@ -691,11 +748,10 @@ static void carry_close(void) {
 /* Find a packet by id, in the ring first and then the favourites. */
 static int find_packet(const char *id, char *out, unsigned m) {
     char got[16];
-    for (const char *p = g_traffic; *p; p++) {
-        if (*p != '{') continue;
-        if (obj_copy(p, out, m) && json_raw(out, "id", got, sizeof(got)) && str_eq(got, id)) return 1;
-        while (*p && *p != '}') p++;
-        if (!*p) break;
+    /* The rows the list was drawn from (index_rows), so a '{' inside a
+     * signature is never taken for the start of a packet. */
+    for (int k = 0; k < g_rows_n; k++) {
+        if (obj_copy(g_rows[k], out, m) && json_raw(out, "id", got, sizeof(got)) && str_eq(got, id)) return 1;
     }
     char rec[1200];
     for (const char *p = g_favs; (p = fav_next(p, rec, sizeof(rec))) || rec[0]; ) {
