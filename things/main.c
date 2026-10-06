@@ -963,7 +963,12 @@ static void item(th_t *t, int *first)
     if (have) {
         char v[24];
         th_json(g_host, "agoMs", v, sizeof v);
-        ago_words(th_num(v), w, sizeof w);
+        /* "heard": the line above may say "Movement, 10 s ago" about the
+         * event, and a bare "10 s ago" chip beside it read as a repeat. */
+        char a[32];
+        ago_words(th_num(v), a, sizeof a);
+        th_cpy(w, "heard ", sizeof w);
+        th_cat(w, a, sizeof w);
         tag(tags, sizeof tags, w);
         bearer_words(w, sizeof w);
         tag(tags, sizeof tags, w);

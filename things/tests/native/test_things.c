@@ -175,6 +175,8 @@ static void test_nearby_is_what_the_core_calls_a_device(void)
     CHECK(l && strstr(l, "X4PL3M") && strstr(l, "X4DOOR"), "both devices listed");
     CHECK(l && !strstr(l, "X1RD89") && !strstr(l, "X3RLY7"), "a person and a station are not things");
     CHECK(l && strstr(l, "on, 12.1V"), "the pump's state from the core: %s", l ? l : "");
+    CHECK(l && strstr(l, "\"heard 5 s ago\""),
+          "the last-heard chip says it is about hearing: %s", l ? l : "");
 }
 
 static void test_pin_is_the_cores_follow(void)
