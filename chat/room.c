@@ -3,11 +3,15 @@
 #include "xprs.h"
 #include "xprs_wasm_hal.h"
 
+/* The three rooms by range (XPRS.md 9.11): what is said undirected, filed
+ * by the scope its author gave it. Local is Bluetooth, ESP-NOW and the LAN;
+ * Regional adds LoRa and radio; Global is everywhere, the internet too. */
 #define LOCAL "#LOCAL"
-/* The global room some builds had. Chat holds no room for "everybody the mesh
- * can reach": that is a status, and the Social wapp's. Named only so room_init
- * can take it out of an index that still holds it. */
-#define GLOBAL_GONE "#GLOBAL"
+#define REGIONAL "#REGIONAL"
+#define GLOBAL "#GLOBAL"
+static int scoped_room(const char *id) {
+  return s_eq(id, LOCAL) || s_eq(id, REGIONAL) || s_eq(id, GLOBAL);
+}
 #define BODY_MAX 900
 #define TAIL 50
 #define ROOM_H_MAX 8
@@ -18,7 +22,6 @@ static char g_top[48] = "";      /* first row of the rail as last drawn */
 static int  g_local_on = 1;
 static int  g_idx = -1;
 static int  g_said_nodb = 0;
-static int  g_global_dropped = 0;   /* room_init took #GLOBAL out just now */
 static struct { char id[48]; int h; unsigned long long used; } g_rh[ROOM_H_MAX];
 static unsigned long long g_tick;
 
@@ -42,6 +45,8 @@ int room_renderable(const char *id) {
 }
 static const char *room_icon(const char *id) {
   if (s_eq(id, LOCAL)) return "campaign";
+  if (s_eq(id, REGIONAL)) return "cell_tower";
+  if (s_eq(id, GLOBAL)) return "public";
   if (is_xgroup(id)) return "group";
   if (id[0] == '#') return "tag";
   return "person";
@@ -413,9 +418,6 @@ void blocked_publish(void) {
 }
 
 void room_hydrate(void) {
-  /* The host keeps a render cache of every conversation; tell it the global
-   * room is gone, once, on the start that removed it. */
-  if (g_global_dropped) { g_global_dropped = 0; emit_remove(GLOBAL_GONE, 0); }
   room_rail();
   int n = db_query(g_idx, "SELECT id FROM rooms WHERE closed=0 AND archived=0 "
                           "ORDER BY activity_ts DESC LIMIT 64",
@@ -811,7 +813,7 @@ void room_delete(const char *id) {
   }
   { pj_t p; pj_init(&p); pj_str(&p, id);
     db_exec(g_idx, "DELETE FROM tx WHERE room=?", pj_done(&p)); }
-  int broadcast = s_eq(id, LOCAL);
+  int broadcast = scoped_room(id);
   { pj_t p; pj_init(&p); pj_str(&p, id);
     db_exec(g_idx, broadcast
         ? "UPDATE rooms SET unread=0, last_line='', archived=0 WHERE id=?"
@@ -973,16 +975,9 @@ void room_init(const char *self) {
       hal_kv_delete(old[i], s_len(old[i]));
     db_exec(g_idx, "INSERT OR REPLACE INTO meta(k,v) VALUES('kv_cleaned','1')", 0);
   }
-  /* Once: the global room leaves an index that still holds it, with its
-   * receipts and the Settings switch it had. Its database file stays on disk,
-   * unread and unlisted; the HAL has no verb to remove one. */
-  if (db_int(g_idx, "SELECT 1 AS n FROM meta WHERE k='global_gone' LIMIT 1", 0, 0) != 1) {
-    db_exec(g_idx, "DELETE FROM rooms WHERE id='" GLOBAL_GONE "'", 0);
-    g_global_dropped = db_int(g_idx, "SELECT changes() AS n", 0, 0) > 0;
-    db_exec(g_idx, "DELETE FROM tx WHERE room='" GLOBAL_GONE "'", 0);
-    hal_kv_delete("gchan", 5);
-    db_exec(g_idx, "INSERT OR REPLACE INTO meta(k,v) VALUES('global_gone','1')", 0);
-  }
+  /* The global room was taken out once (meta global_gone) and is back: a
+   * station that ran that removal still has the room's file, and the room
+   * reopens on it. */
   /* Once: learn who this station talks with from the rooms it already has,
    * so the statuses at the head of the list are not empty until somebody
    * writes again. Up to 200 senders per room, 64 rooms. */
@@ -1012,6 +1007,8 @@ void room_init(const char *self) {
     pj_int(&p, (long long)(now > 7 * STATUS_DAY ? now - 7 * STATUS_DAY : 0));
     db_exec(g_idx, "DELETE FROM statuses WHERE ts<?", pj_done(&p)); }
   room_ensure(LOCAL, "Local chat");
+  room_ensure(REGIONAL, "Regional chat");
+  room_ensure(GLOBAL, "Global chat");
 }
 
 void room_destroy(void) {

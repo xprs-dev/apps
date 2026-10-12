@@ -54,15 +54,16 @@ static void local_packet(const char *from, const char *id, const char *text, con
   module_handle_event();
 }
 
-TEST(the_local_room_exists_by_default_and_nothing_else) {
+/* XPRS.md 9.11: the three rooms by range, and nothing else, by default. */
+TEST(the_rooms_by_range_exist_by_default_and_nothing_else) {
   fresh();
   room_hydrate();
   const char *rail = cap_find("ui.rooms.set");
   CHECK(rail && strstr(rail, "\"id\":\"#LOCAL\""));
-  CHECK(rail && !strstr(rail, "#GLOBAL"));
+  CHECK(rail && strstr(rail, "\"id\":\"#REGIONAL\""));
+  CHECK(rail && strstr(rail, "\"id\":\"#GLOBAL\""));
   CHECK(rail && !strstr(rail, "X5"));
-  CHECK(room_known("#LOCAL"));
-  CHECK(!room_known("#GLOBAL"));
+  CHECK(room_known("#LOCAL") && room_known("#REGIONAL") && room_known("#GLOBAL"));
   CHECK(!room_known("#NEWS"));
 }
 
@@ -81,29 +82,66 @@ TEST(a_local_message_is_stored_and_shown_once) {
   CHECK(cap_count("\"type\":\"notify\"") == 0);
 }
 
-/* Undirected traffic is the Local room's when it says scope:local, and not
- * chat's otherwise: saying something to everybody the mesh can reach is a
- * status, the Social wapp's (section 27). Nothing is created for it, nothing
- * buzzes, nothing is logged per packet. */
-TEST(unscoped_traffic_is_not_chat_and_addressed_is_neither) {
+/* Undirected traffic is filed by the scope its author wrote (9.11): local,
+ * regional, and global for no scope or a country. An unknown scope word, or a
+ * packet the core says was heard out of range, is in no room. */
+static int last_msg_in(const char *room) {
+  const char *m = cap_find("ui.convo.msg");
+  char want[40]; snprintf(want, sizeof(want), "\"id\":\"%s\"", room);
+  return m && strstr(m, want);
+}
+TEST(undirected_traffic_goes_to_the_room_its_scope_names) {
   fresh();
   local_packet("X1PEER", "bbb222", "global words", "global");
-  CHECK(cap_count("ui.convo.msg") == 0);
-  CHECK(cap_count("\"type\":\"notify\"") == 0);
-  CHECK(!room_known("#GLOBAL"));
-  local_packet("X1PEER", "bbb444", "country words", "PT");
-  CHECK(cap_count("ui.convo.msg") == 0);
-  CHECK(log_count("bbb222") == 0 && log_count("bbb444") == 0);
-  /* A local one goes to the room, from the same door. */
+  CHECK(cap_count("ui.convo.msg") == 1 && last_msg_in("#GLOBAL"));
+  cap_clear();
+  local_packet("X1PEER", "bbb444", "country words", "country");
+  CHECK(cap_count("ui.convo.msg") == 1 && last_msg_in("#GLOBAL"));
+  cap_clear();
+  local_packet("X1PEER", "bbb555", "valley words", "regional");
+  CHECK(cap_count("ui.convo.msg") == 1 && last_msg_in("#REGIONAL"));
+  cap_clear();
   local_packet("X1PEER", "bbb333", "local words", "local");
-  CHECK(cap_count("ui.convo.msg") == 1);
-  CHECK(cap_contains("\"id\":\"#LOCAL\""));
+  CHECK(cap_count("ui.convo.msg") == 1 && last_msg_in("#LOCAL"));
+  cap_clear();
+  local_packet("X1PEER", "bbb666", "odd words", "unknown");
+  CHECK(cap_count("ui.convo.msg") == 0);
+  CHECK(log_count("bbb666") == 0);
+  /* Heard out of range: a Local-room packet that came over the internet. */
+  event_push("xprs.message",
+    "{\"id\":\"bbb777\",\"type\":\"message\",\"from\":\"X1PEER\",\"to\":\"\",\"fields\":[[\"t\",\"message\"],[\"f\",\"X1PEER\"],[\"m\",\"from afar\"]],\"scope\":\"local\",\"inRange\":false,\"bearer\":\"rns\",\"sealed\":false}");
+  module_handle_event();
+  CHECK(cap_count("ui.convo.msg") == 0);
   cap_clear();
   /* Addressed to a station: correspondence, not the room. */
   event_push("xprs.message",
     "{\"id\":\"ccc333\",\"type\":\"message\",\"from\":\"X1PEER\",\"to\":\"X1TEST\",\"fields\":[[\"t\",\"message\"],[\"f\",\"X1PEER\"],[\"d\",\"X1TEST\"],[\"m\",\"private words\"]],\"scope\":\"local\",\"sealed\":false}");
   module_handle_event();
   CHECK(cap_count("ui.convo.msg") == 0);
+}
+
+/* Each room says things with its own scope, composed by the core or
+ * hand-built for a vote (9.11): Local and Regional name theirs, Global is the
+ * absent field. */
+TEST(each_room_sends_with_its_own_scope) {
+  fresh();
+  mock_bcast_scope_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#REGIONAL\",\"rooms_input\":\"in the valley\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_bcast_scope(), "regional") == 0);
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#GLOBAL\",\"rooms_input\":\"to everyone\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_bcast_scope(), "global") == 0);
+  local_packet("X1PEER", "vvv333", "worth one", "regional");
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#REGIONAL\",\"rooms_input\":\"+like:vvv333\"}");
+  module_handle_event();
+  const char *w = mock_last_wire();
+  CHECK(w && strstr(w, "scope:regional"));
+  local_packet("X1PEER", "vvv444", "worth two", "global");
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#GLOBAL\",\"rooms_input\":\"+like:vvv444\"}");
+  module_handle_event();
+  w = mock_last_wire();
+  CHECK(w && strstr(w, "t:reaction") && !strstr(w, "scope:"));
 }
 
 /* The Local room sends with scope:local, composed by the core or hand-built
@@ -123,23 +161,18 @@ TEST(the_local_room_sends_and_votes_with_scope_local) {
   CHECK(w && strstr(w, "scope:local"));
 }
 
-/* An install that had the global room loses it on the first start, once:
- * the row goes, the host's cache is told, and nothing brings it back. */
-TEST(an_index_that_held_the_global_room_lets_it_go_once) {
+/* An install whose index once had the global room taken out (meta
+ * global_gone) gets it back: the room is one of the three again. */
+TEST(an_index_that_lost_the_global_room_gets_it_back) {
   fresh();
   module_destroy();
-  { /* the index as an older build left it */
-    int h = db_open("index.sqlite3");
-    db_exec(h, "INSERT OR IGNORE INTO rooms(id,file,title) VALUES('#GLOBAL','rooms/_hGLOBAL.sqlite3','Global chat')", 0);
-    db_exec(h, "DELETE FROM meta WHERE k='global_gone'", 0);
+  { int h = db_open("index.sqlite3");
+    db_exec(h, "DELETE FROM rooms WHERE id='#GLOBAL'", 0);
+    db_exec(h, "INSERT OR REPLACE INTO meta(k,v) VALUES('global_gone','1')", 0);
     db_close(h); }
   cap_clear();
   module_init();
-  CHECK(!room_known("#GLOBAL"));
-  CHECK(cap_contains("ui.convo.remove") && cap_contains("\"id\":\"#GLOBAL\""));
-  module_destroy(); cap_clear();
-  module_init();
-  CHECK(!cap_contains("#GLOBAL"));
+  CHECK(room_known("#GLOBAL"));
 }
 
 TEST(own_broadcast_and_its_echo_are_one_bubble) {
@@ -217,13 +250,13 @@ TEST(replay_from_the_archive_is_silent) {
   /* A restart reads it in. */
   module_destroy(); cap_clear(); log_clear();
   module_init();
-  /* Two bubbles from three rows: the scope:local ones. The unscoped row is
-   * not chat's. */
-  CHECK(cap_count("ui.convo.msg") == 2);
+  /* Three bubbles from three rows: two in Local, the unscoped one in
+   * Global (9.11). */
+  CHECK(cap_count("ui.convo.msg") == 3);
   CHECK(cap_count("\"type\":\"notify\"") == 0);
   CHECK(!cap_contains("\"count\":1"));
   /* ONE pass, one line. */
-  CHECK(log_count("backfill: read=3 local=2") == 1);
+  CHECK(log_count("backfill: read=3 kept=3") == 1);
   CHECK(log_count("backfill: read=") == 1);
   /* Oldest first on screen. */
   { int ia = -1, ib = -1;
@@ -237,8 +270,8 @@ TEST(replay_from_the_archive_is_silent) {
   mock_set_time(1700000200);
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
   module_handle_event();
-  CHECK(log_count("backfill: read=3 local=0") == 1);
-  CHECK(cap_count("ui.convo.msg") == 2);
+  CHECK(log_count("backfill: read=3 kept=0") == 1);
+  CHECK(cap_count("ui.convo.msg") == 2);       /* Local's own two, repainted */
 }
 
 #define BAR3 "\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88"   /* three U+2588 bars */
@@ -1127,11 +1160,12 @@ TEST(opening_a_thread_acks_read_for_older_unacked_messages_too) {
 }
 
 int main(void) {
-  run_the_local_room_exists_by_default_and_nothing_else();
+  run_the_rooms_by_range_exist_by_default_and_nothing_else();
   run_a_local_message_is_stored_and_shown_once();
-  run_unscoped_traffic_is_not_chat_and_addressed_is_neither();
+  run_undirected_traffic_goes_to_the_room_its_scope_names();
+  run_each_room_sends_with_its_own_scope();
   run_the_local_room_sends_and_votes_with_scope_local();
-  run_an_index_that_held_the_global_room_lets_it_go_once();
+  run_an_index_that_lost_the_global_room_gets_it_back();
   run_own_broadcast_and_its_echo_are_one_bubble();
   run_open_repaints_from_the_database_newest_fifty();
   run_a_message_for_the_open_room_does_not_count();

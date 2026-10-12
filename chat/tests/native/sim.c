@@ -83,6 +83,19 @@ typedef struct {
 } grp_t;
 
 static node_t N[MAXNODE]; static int NN;
+/* Where each node is, for XPRS.md 9.11: a site is what the local bearers
+ * reach (a room), a region what LoRa and radio reach (a valley). All zero:
+ * everybody in one room, which is what every older scenario assumes. */
+static int g_site[MAXNODE], g_region[MAXNODE];
+/* Does a packet of [scope] said at node [a] reach node [b], and is it in
+ * range when it does? The stand-in core's half of 9.11: global reaches
+ * everyone; regional the region; local the site. A local packet relayed to
+ * another site anyway (by a careless station) arrives inRange false. */
+static int reaches(const char* scope,int a,int b){
+  if(!strcmp(scope,"local"))    return g_site[a]==g_site[b] && g_region[a]==g_region[b];
+  if(!strcmp(scope,"regional")) return g_region[a]==g_region[b];
+  return 1;
+}
 static grp_t  G[MAXGRP];  static int GN;
 static int cur = -1;                              /* loaded node, or -1 */
 static int g_seq = 0;                             /* id counter for 1:1 / local */
@@ -207,9 +220,12 @@ static int32_t hk_send(const char* w, uint32_t l){
     wfield(w,"remove:",rem,sizeof rem);
     char row[400];
     const char* kindkey = rem[0] ? "remove" : "add";
-    if(scope[0]){                                    /* Local-room vote */
-      react_row(row,sizeof row,from,"","local",id,r,kindkey);
-      for(int i=0;i<NN;i++) if(strcmp(N[i].call,from)) enqueue(i,"xprs.reaction",row);
+    if(!d[0]){                                       /* a vote in a room by range */
+      const char* sc = scope[0] ? scope : "global";
+      react_row(row,sizeof row,from,"",sc,id,r,kindkey);
+      int a=node_by_call(from);
+      for(int i=0;i<NN;i++)
+        if(strcmp(N[i].call,from) && (a<0 || reaches(sc,a,i))) enqueue(i,"xprs.reaction",row);
       return 0;
     }
     grp_t* g = grp_by_call(d);
@@ -278,17 +294,22 @@ static int32_t hk_message(const char* to,uint32_t tl,const char* text,uint32_t l
   return priv?1:2;                                   /* the form actually used */
 }
 
-/* the Local room — an undirected broadcast to all in earshot. */
+/* a room by range -- an undirected broadcast to everyone its scope reaches
+ * (XPRS.md 9.11). */
 static int32_t hk_broadcast(const char* text,uint32_t l,const char* scope,uint32_t sl,
                             const char* reply,uint32_t rl,char* id,uint32_t cap){
-  (void)scope;(void)sl;(void)reply;(void)rl;
+  (void)reply;(void)rl;
+  char sc[16]; snprintf(sc,sizeof sc,"%.*s",(int)sl,scope);
+  if(!sc[0]) snprintf(sc,sizeof sc,"global");
   const char* from = cur>=0 ? N[cur].call : "X1TEST";
   snprintf(g_last_clear,sizeof g_last_clear,"%.*s",(int)l,text);
   char mid[16]; snprintf(mid,sizeof mid,"b%05d",++g_seq);
   snprintf(id,cap,"%s",mid);
   char row[1400];
-  msg_packet(row,sizeof row,from,"","local",mid,text);
-  for(int i=0;i<NN;i++) if(strcmp(N[i].call,from)) enqueue(i,"xprs.message",row);
+  msg_packet(row,sizeof row,from,"",sc,mid,text);
+  int a = cur;
+  for(int i=0;i<NN;i++) if(strcmp(N[i].call,from) && (a<0 || reaches(sc,a,i)))
+    enqueue(i,"xprs.message",row);
   remember_author(mid,from);
   return 2;
 }
@@ -488,6 +509,7 @@ static int g_pass=0, g_fail=0;
 static void reset_world(void){
   if(cur>=0){ module_destroy(); cur=-1; }
   NN=0; GN=0; AUTHN=0; g_seq=0;
+  memset(g_site,0,sizeof g_site); memset(g_region,0,sizeof g_region);
   g_sim_correct[0]=g_sim_stored[0]=g_sim_text[0]=0;
   system("rm -rf /tmp/chat_sim");
 }
@@ -604,6 +626,38 @@ static void t_local(void){
   cap_clear(); pump(B); open_room(B,"#LOCAL"); CHECK(cap_contains("anybody there"));
   cap_clear(); pump(C); open_room(C,"#LOCAL"); CHECK(cap_contains("anybody there"));
   (void)A;
+}
+
+/* XPRS.md 9.11: three rooms, each as far as its scope. A and B share a room,
+ * C is in the same valley, D is far away. And a Local-room packet that some
+ * careless station carried to D over the internet arrives out of range, and
+ * D files it nowhere. */
+static void t_rooms_by_range(void){
+  printf("rooms by range -- local, regional and global reach what they say\n");
+  reset_world();
+  int A=add_node("X1ANNA"), B=add_node("X1BOBB"), C=add_node("X1CATE"), D=add_node("X1DAVE");
+  g_site[C]=1;                                   /* same valley, other room */
+  g_site[D]=2; g_region[D]=1;                    /* far away */
+  send(A,"#LOCAL","in this room");
+  send(A,"#REGIONAL","in this valley");
+  send(A,"#GLOBAL","to the world");
+  cap_clear(); pump(B); open_room(B,"#LOCAL"); CHECK(cap_contains("in this room"));
+  cap_clear(); open_room(B,"#REGIONAL"); CHECK(cap_contains("in this valley"));
+  cap_clear(); open_room(B,"#GLOBAL"); CHECK(cap_contains("to the world"));
+  cap_clear(); pump(C); open_room(C,"#LOCAL"); CHECK(!cap_contains("in this room"));
+  cap_clear(); open_room(C,"#REGIONAL"); CHECK(cap_contains("in this valley"));
+  cap_clear(); pump(D); open_room(D,"#REGIONAL"); CHECK(!cap_contains("in this valley"));
+  cap_clear(); open_room(D,"#GLOBAL"); CHECK(cap_contains("to the world"));
+  /* The leak 9.11 guards against: a local packet that reached D anyway. */
+  { char row[1400];
+    msg_packet(row,sizeof row,"X1ANNA","","local","leak01","carried too far");
+    char* at = strstr(row,"\"sealed\"");
+    char fixed[1500];
+    snprintf(fixed,sizeof fixed,"%.*s\"inRange\":false,%s",(int)(at-row),row,at);
+    enqueue(D,"xprs.message",fixed); }
+  cap_clear(); pump(D);
+  open_room(D,"#LOCAL"); CHECK(!cap_contains("carried too far"));
+  open_room(D,"#GLOBAL"); CHECK(!cap_contains("carried too far"));
 }
 
 /* A like on a closed-group post reaches the other members AND echoes on the
@@ -801,6 +855,7 @@ int main(void){
   t_compose_obf_refused();
   t_group_restart();
   t_local();
+  t_rooms_by_range();
 
   printf("\nsim: %d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;

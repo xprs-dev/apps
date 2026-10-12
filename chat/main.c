@@ -1,7 +1,8 @@
 /*
  * chat — conversations over XPRS, and nothing else.
  *
- * The Local room (XPRS.md 13.11, "#LOCAL"), an open group (6.3, "#NAME"), a
+ * The rooms by range (XPRS.md 9.11: "#LOCAL", "#REGIONAL", "#GLOBAL"), an
+ * open group (6.3, "#NAME"), a
  * closed group (26, "#X5ABCD") and a 1:1 with a station ("X16JK8"). Replies,
  * hearts, blocking, hiding, read receipts, the tick on a bubble.
  *
@@ -16,14 +17,14 @@
  * no key in KV: the database is the only memory this wapp has, and it is
  * the same one whichever engine (the page's or the headless one) is running.
  *
- * Only "#LOCAL" exists by default. Any other room appears when a message
- * arrives for it or the user starts one.
+ * The three rooms by range exist by default. Any other room appears when a
+ * message arrives for it or the user starts one.
  *
  * ── THIS WAPP OWNS NO TRANSPORT ─────────────────────────────────────────
  *
  * It says what it wants said and to whom:
  *
- *     hal_xprs_broadcast(text, "local", reply_to, &id)   the Local room
+ *     hal_xprs_broadcast(text, scope, reply_to, &id)     a room by range
  *     hal_xprs_message(to, text, private, &id)           a 1:1
  *     hal_xprs_send(wire)                                a composed packet
  *     hal_xprs_read(id)                                  a person read it
@@ -45,10 +46,15 @@
 #include "xprs.h"
 #include "people_finder.h"
 
-/* The one broadcast room: whoever is in earshot (scope:local, XPRS.md 9.11).
- * Chat has no room for "everybody the mesh can reach". Saying something to
- * everybody is a status (section 27), and that is the Social wapp's. */
+/* The rooms by range (XPRS.md 9.11): undirected messages, filed by the scope
+ * their author wrote -- never by the bearer that delivered them, which is the
+ * core's business. Local is whoever is in earshot of Bluetooth, ESP-NOW or
+ * the LAN; Regional adds LoRa and radio; Global goes anywhere. A packet the
+ * core marks out of range (inRange false: heard on a bearer wider than its
+ * scope) is in none of them. */
 #define XROOM_LOCAL "#LOCAL"
+#define XROOM_REGIONAL "#REGIONAL"
+#define XROOM_GLOBAL "#GLOBAL"
 
 /* ── state ──────────────────────────────────────────────────────────── */
 static char g_call[16] = "N0CALL";   /* replaced at init by hal_identity() */
@@ -63,7 +69,23 @@ static int is_self_call(const char *c) {
     if (s_up(g_call[i]) != s_up(c[i])) return 0;
   return 1;
 }
-static int xroom_is(const char *id) { return s_eq(id, XROOM_LOCAL); }
+static int xroom_is(const char *id) {
+  return s_eq(id, XROOM_LOCAL) || s_eq(id, XROOM_REGIONAL) || s_eq(id, XROOM_GLOBAL);
+}
+/* The room a scope files into, as the core states it (local, regional,
+ * global, country); an unknown word is in no room. */
+static const char *xroom_of(const char *scope) {
+  if (s_eq(scope, "local")) return XROOM_LOCAL;
+  if (s_eq(scope, "regional")) return XROOM_REGIONAL;
+  if (s_eq(scope, "global") || s_eq(scope, "country") || !scope[0]) return XROOM_GLOBAL;
+  return 0;
+}
+/* And the scope a room says things with. */
+static const char *xroom_scope(const char *id) {
+  if (s_eq(id, XROOM_LOCAL)) return "local";
+  if (s_eq(id, XROOM_REGIONAL)) return "regional";
+  return "global";
+}
 
 static void notify(const char *level, const char *body) {
   char m[300] = "{\"type\":\"notify\",\"level\":\"";
@@ -127,7 +149,9 @@ static int xgroup_may_post(const char *call) {
 }
 /* What a room is called on the rail. */
 static void room_title(const char *id, char *out, unsigned osz) {
-  if (xroom_is(id)) { s_cpy(out, "Local chat", osz); return; }
+  if (s_eq(id, XROOM_LOCAL)) { s_cpy(out, "Local chat", osz); return; }
+  if (s_eq(id, XROOM_REGIONAL)) { s_cpy(out, "Regional chat", osz); return; }
+  if (s_eq(id, XROOM_GLOBAL)) { s_cpy(out, "Global chat", osz); return; }
   if (xgroup_is(id)) {
     /* Name AND callsign: the name is a label anybody can choose; the X5
      * callsign is derived from the key and is what identifies the group. */
@@ -301,7 +325,11 @@ static int wire_body(const char *wire, char *out, unsigned cap) {
 
 static void xroom_backfill(void) {
   char q[160] = "{\"limit\":60,\"types\":[\"message\"],\"to\":[\"\"]";
+  /* From the oldest of the three rooms' newest messages: one ask fills all. */
   uint64_t since = room_max_ts(XROOM_LOCAL);
+  { uint64_t r = room_max_ts(XROOM_REGIONAL), g = room_max_ts(XROOM_GLOBAL);
+    if (r < since) since = r;
+    if (g < since) since = g; }
   if (since > 300) {
     char st[24]; xprs_stamp(st, sizeof(st), since - 300);
     s_cat(q, ",\"since\":\"", sizeof(q)); s_cat(q, st, sizeof(q)); s_cat(q, "\"", sizeof(q));
@@ -347,8 +375,17 @@ static void xroom_backfill(void) {
     if (wire_key(wire, "n", tmp, sizeof(tmp))) continue;   /* a part (6.6) */
     if (wire_key(wire, "x", tmp, sizeof(tmp))) continue;   /* sealed (9.2) */
     if (wire_key(wire, "d", tmp, sizeof(tmp))) continue;   /* addressed */
-    /* Earshot traffic only. Anything else undirected is not a chat. */
-    if (!wire_key(wire, "scope", tmp, sizeof(tmp)) || !s_eq(tmp, "local")) continue;
+    /* The room its scope names, as the core read it; none when it was heard
+     * out of range (9.11). */
+    if (!jbool_def(slice, "inRange", 1)) continue;
+    char scope[16] = ""; jstr(slice, "scope", scope, sizeof(scope));
+    if (!scope[0]) {
+      /* A core older than the field: the wire says it. */
+      if (!wire_key(wire, "scope", scope, sizeof(scope))) s_cpy(scope, "global", sizeof(scope));
+      else if (scope[0] >= 'A' && scope[0] <= 'Z') s_cpy(scope, "country", sizeof(scope));
+    }
+    const char *xroom = xroom_of(scope);
+    if (!xroom) continue;
     int mine = jbool_def(slice, "own", 0) || is_self_call(from);
     char body[400];
     if (!wire_body(wire, body, sizeof(body))) continue;
@@ -358,7 +395,7 @@ static void xroom_backfill(void) {
      * wire, so read it from there or the bars stop being tappable after a
      * restart. wire_key truncates into a small buffer and still answers 1. */
     char xrv[8]; int obf = wire_key(wire, "xr", xrv, sizeof(xrv)) ? 1 : 0;
-    if (admit(XROOM_LOCAL, id, mine ? "out" : "in", mine ? g_call : from, body, parent,
+    if (admit(xroom, id, mine ? "out" : "in", mine ? g_call : from, body, parent,
               bearer, s_eq(sig, "verified") ? "verified" : "", 0,
               (uint64_t)jint(slice, "ts"), "", "", 1, obf) == 1)
       kept++;
@@ -368,7 +405,7 @@ static void xroom_backfill(void) {
    * sixty. The drop line this replaced was exactly that bet, lost. */
   char lg[96] = "[chat] backfill: read=";
   char nb[16]; u_itoa((unsigned)rows, nb); s_cat(lg, nb, sizeof(lg));
-  s_cat(lg, " local=", sizeof(lg)); u_itoa((unsigned)kept, nb); s_cat(lg, nb, sizeof(lg));
+  s_cat(lg, " kept=", sizeof(lg)); u_itoa((unsigned)kept, nb); s_cat(lg, nb, sizeof(lg));
   log1(lg);
 }
 
@@ -397,16 +434,19 @@ static void send_message(const char *id, const char *text_in) {
     return;
   }
 
-  /* The Local room: a t:message the core composes undirected with
-   * scope:local, or a t:reaction (6.5) naming a bubble's section 5 id. */
+  /* A room by range: a t:message the core composes undirected with the
+   * room's scope, or a t:reaction (6.5) naming a bubble's section 5 id. */
   if (xroom_is(id)) {
+    const char *scope = xroom_scope(id);
     char lmid[70]; int unlike; const char *ck;
     if (votemark_parse(text, lmid, &unlike, &ck)) {
       char ts[24]; xprs_stamp(ts, sizeof(ts), hal_time_epoch());
       char wire[300] = "t:reaction f:";
       s_cat(wire, g_call, sizeof(wire));
       s_cat(wire, " ts:", sizeof(wire)); s_cat(wire, ts, sizeof(wire));
-      s_cat(wire, " scope:local", sizeof(wire));
+      if (!s_eq(scope, "global")) {      /* global is the absent field */
+        s_cat(wire, " scope:", sizeof(wire)); s_cat(wire, scope, sizeof(wire));
+      }
       s_cat(wire, unlike ? " remove:like" : " add:like", sizeof(wire));
       s_cat(wire, " r:", sizeof(wire)); s_cat(wire, lmid, sizeof(wire));
       if (hal_xprs_send(wire, s_len(wire)) != 0) { notify("warning", "Could not send"); return; }
@@ -416,7 +456,7 @@ static void send_message(const char *id, const char *text_in) {
     char parent[8]; strip_reply6(text, parent);
     if (!text[0]) return;
     char mid[8] = "";
-    if (hal_xprs_broadcast(text, s_len(text), "local", 5, parent, s_len(parent),
+    if (hal_xprs_broadcast(text, s_len(text), scope, s_len(scope), parent, s_len(parent),
                            mid, sizeof(mid)) != 2 || !mid[0]) {
       notify("warning", "Could not send");
       return;
@@ -637,7 +677,8 @@ static void on_core_packet(const char *topic, const char *row) {
     if (!(s_eq(add, "like") || s_eq(rem, "like"))) return;
     if (is_blocked(from)) return;
     if (!to[0]) {
-      if (s_eq(scope, "local")) room_react(XROOM_LOCAL, r, from, rem[0] ? 1 : 0, 0);
+      const char *xroom = jbool_def(row, "inRange", 1) ? xroom_of(scope) : 0;
+      if (xroom) room_react(xroom, r, from, rem[0] ? 1 : 0, 0);
     } else if (to[0] && is_self_call(to)) {
       room_react(from, r, from, rem[0] ? 1 : 0, 0);
     } else if (to[0]) {
@@ -668,17 +709,17 @@ static void on_core_packet(const char *topic, const char *row) {
   { char t[24]; if (jfield(row, "ts", t, sizeof(t))) ts = xprs_parse_stamp(t); }
 
   if (!to[0]) {
-    /* UNDIRECTED TRAFFIC IS THE LOCAL ROOM'S, OR NOT CHAT'S (9.11). With no
-     * d: there is no custody, no ack and no retry; `local` is the room where
-     * that is honest, because everyone in it is in earshot. What is said to
-     * everybody the mesh can reach is a status, read in the Social wapp.
-     * Dropped without a log line: on a busy mesh that is most of the air, and
-     * a line per packet is a bet that the event is rare (performance.md
+    /* UNDIRECTED TRAFFIC GOES TO THE ROOM ITS SCOPE NAMES (9.11). With no
+     * d: there is no custody, no ack and no retry. A packet heard out of
+     * range, or with a scope word nobody knows, is in no room. Dropped
+     * without a log line: on a busy mesh that is a lot of the air, and a
+     * line per packet is a bet that the event is rare (performance.md
      * 8.10). */
     char scope[16] = "";
     jstr(row, "scope", scope, sizeof(scope));
-    if (!s_eq(scope, "local")) return;
-    admit(XROOM_LOCAL, id, "in", from, m, parent, bearer, auth, 0, ts, "", "", 0, obf);
+    const char *xroom = jbool_def(row, "inRange", 1) ? xroom_of(scope) : 0;
+    if (!xroom) return;
+    admit(xroom, id, "in", from, m, parent, bearer, auth, 0, ts, "", "", 0, obf);
     return;
   }
 
