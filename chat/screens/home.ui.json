@@ -30,6 +30,23 @@
   },
   {
     "$": "screen",
+    "name": "New group",
+    "menu": true,
+    "popup": true,
+    "icon": "group_add",
+    "tip": "Create a closed group that only invited people can post in.",
+    "children": [
+      {
+        "$": "action",
+        "name": "rooms_newgroup",
+        "label": "New group",
+        "icon": "group_add",
+        "tip": "Create a closed group and open its room."
+      }
+    ]
+  },
+  {
+    "$": "screen",
     "name": "Find",
     "menu": true,
     "popup": true,
@@ -76,6 +93,23 @@
         "$type": "people",
         "empty": "Nobody within reach yet.\nStations appear here as the radio hears them - or type a callsign to message one straight away.",
         "tip": "Every XPRS station this device has heard of."
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Invite",
+    "hidden": true,
+    "toolbar": true,
+    "search": true,
+    "tip": "Pick a station to invite to this group.",
+    "children": [
+      {
+        "$": "field",
+        "name": "inviteuser",
+        "$type": "people",
+        "empty": "Nobody within reach yet.\nType a callsign to invite a station you have not heard.",
+        "tip": "Tap a station to offer it membership. It joins once it accepts."
       }
     ]
   },

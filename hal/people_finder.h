@@ -150,6 +150,9 @@ static int pf_is_self(const char *call) {
 typedef struct { char call[24]; char seen[24]; char bearer[16]; char nick[24]; int local; } pf_person;
 static pf_person pf_people[PF_MAX];
 static int pf_people_n;
+/* Set by a caller whose picker can only take a station (an invitation to a
+ * group, say): groups are left out of the candidates. Off by default. */
+static int pf_hide_groups;
 
 static void pf_collect(const char *q) {
   pf_people_n = 0;
@@ -180,6 +183,7 @@ static void pf_collect(const char *q) {
        * prefix test stays for a row the core gave no kind, a group. */
       char kind[12]; pf_jstr(row, "kind", kind, sizeof kind);
       if (!call[0] || (!kind[0] && !pf_is_station(call)) || pf_is_self(call)) continue;
+      if (pf_hide_groups && call[0] == 'X' && call[1] == '5') continue;
       if (want[0]) {
         char up[24]; unsigned k = 0;
         for (; call[k] && k < sizeof up - 1; k++) up[k] = pf_up(call[k]);

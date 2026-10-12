@@ -457,8 +457,11 @@ int room_ensure(const char *id, const char *title) {
 
 void room_set_title(const char *id, const char *title) {
   if (!title || !title[0] || !room_known(id)) return;
-  pj_t p; pj_init(&p); pj_str(&p, title); pj_str(&p, id);
-  db_exec(g_idx, "UPDATE rooms SET title=? WHERE id=?", pj_done(&p));
+  /* Called on every group refresh, so the rail is redrawn only when the
+   * title actually changed. */
+  pj_t p; pj_init(&p); pj_str(&p, title); pj_str(&p, id); pj_str(&p, title);
+  if (db_exec(g_idx, "UPDATE rooms SET title=? WHERE id=? AND title IS NOT ?", pj_done(&p)) != 0) return;
+  if (db_int(g_idx, "SELECT changes() AS n", 0, 0) <= 0) return;
   emit_upsert(id, 0, 0);
   room_rail();
 }

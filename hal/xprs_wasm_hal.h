@@ -1769,6 +1769,31 @@ __attribute__((import_module("hal"), import_name("xprs_group_roster")))
 int32_t hal_xprs_group_roster(const char *group, uint32_t group_len,
                               char *out, uint32_t out_cap);
 
+/* Mint a closed group (section 26.1) named `nick` (may be empty) and write its
+ * X5 callsign into `out`. The core generates and keeps the group's key, records
+ * this station as a member, and announces the group; the wapp never sees the
+ * key. The callsign is written before anything is aired, so the caller can
+ * open the group's room at once. Bytes written, -1 when no group could be
+ * minted (no profile open). */
+__attribute__((import_module("hal"), import_name("xprs_group_create")))
+int32_t hal_xprs_group_create(const char *nick, uint32_t nick_len,
+                              char *out, uint32_t out_cap);
+
+/* Offer membership of closed group `group` ("X5..." or "#X5...") to station
+ * `call` (section 26.3, a grant with role member). The core signs it with the
+ * group's key, which only the admin holds; the station is listed as invited
+ * until it accepts (26.3.1). 0 = offered, -1 = refused (not the admin). */
+__attribute__((import_module("hal"), import_name("xprs_group_invite")))
+int32_t hal_xprs_group_invite(const char *group, uint32_t group_len,
+                              const char *call, uint32_t call_len);
+
+/* Accept the membership of closed group `group` ("X5..." or "#X5...") that
+ * this station was offered (section 26.3.1). The core finds the offer and
+ * signs the acceptance with the profile key. 0 = joined, -1 = refused (no
+ * offer for this station, or it was withdrawn). */
+__attribute__((import_module("hal"), import_name("xprs_group_accept")))
+int32_t hal_xprs_group_accept(const char *group, uint32_t group_len);
+
 /* Set a spool tunable "key=value": archive (0/1), archiveMaxMb,
  * archiveMaxDays, serveHistory (0/1 — answer cmd:history and say
  * serve:history in the beacon), archivers (CSV of callsigns), archiverAuto (0/1 — auto-select an

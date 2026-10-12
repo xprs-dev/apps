@@ -140,8 +140,46 @@ static void room_title(const char *id, char *out, unsigned osz) {
   }
   s_cpy(out, id, osz);
 }
+/* Do we hold this group's key? The core's answer (hal_xprs_groups `role`),
+ * remembered; the wapp only uses it to decide what to OFFER on screen. */
+static int xgroup_is_admin(const char *call) {
+  int i = xgroup_find(call);
+  return i >= 0 && s_eq(g_xgroup[i].role, "admin");
+}
+/* Accepting an invitation (26.3.1). The core finds the offer and signs the
+ * acceptance with our profile key; the wapp only asks the person. Asked once
+ * per run when it arrives (a refresh must not nag), and again whenever its
+ * room is opened. RAM on purpose: an unanswered invitation is asked again on
+ * the next start, which is what it should do. */
+static char g_join_asked[XGROUP_MAX][8];
+static void join_offer(const char *call, int force) {
+  if (!hal_ui_attached()) return;
+  int slot = -1;
+  for (int i = 0; i < XGROUP_MAX; i++) {
+    if (s_eq(g_join_asked[i], call)) { if (!force) return; slot = i; break; }
+    if (slot < 0 && !g_join_asked[i][0]) slot = i;
+  }
+  if (slot >= 0) s_cpy(g_join_asked[slot], call, sizeof(g_join_asked[slot]));
+  char id[10] = "#"; s_cat(id, call, sizeof(id));
+  /* Its name may not have arrived yet; the callsign alone is still a name. */
+  char t[48]; room_title(id, t, sizeof(t));
+  if (t[0] == '#') { s_cpy(t, "the group ", sizeof(t)); s_cat(t, call, sizeof(t)); }
+  char m[400] = "{\"type\":\"ui.prompt\",\"id\":\"xgjoin:";
+  jesc(m, sizeof(m), id);
+  s_cat(m, "\",\"title\":\"Group invitation\",\"body\":\"You were invited to ", sizeof(m));
+  jesc(m, sizeof(m), t);
+  s_cat(m, ". Join to read and post in it; until then you are only invited.\","
+           "\"confirm\":\"Join\"}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+static void xgroup_room(const char *id, const char *t) {
+  int r = room_ensure(id, t);
+  if (r == 1) room_rail();
+  else if (r == 0) room_set_title(id, t);
+}
 static void xgroups_refresh(void) {
   static char gb[4096];
+  int ask = 0;
   int n = hal_xprs_groups(gb, sizeof(gb) - 1);
   if (n <= 0 || n >= (int)sizeof(gb)) return;
   gb[n] = 0;
@@ -156,14 +194,26 @@ static void xgroups_refresh(void) {
     g_xgroup_n++;
     /* A group we BELONG to gets a room, so it appears the moment it exists --
      * an admin who just created a group, or a member who just accepted, sees
-     * the conversation without waiting for the first message (26). A group we
-     * are only invited to, or a stranger's, is not ours to open: an existing
-     * room learns its name, but none is created. */
+     * the conversation without waiting for the first message (26). A
+     * stranger's group is not ours to open: an existing room learns its name,
+     * but none is created. */
     char id[10] = "#"; s_cat(id, g_xgroup[k].call, sizeof(id));
     char t[48]; room_title(id, t, sizeof(t));
-    if (xgroup_may_post(g_xgroup[k].call)) room_ensure(id, t);
+    /* room_ensure only writes the row, so a NEW room is drawn on the rail
+     * here; an existing one is renamed when the group's name arrives after
+     * the room was made (room_set_title redraws only on a change). */
+    if (xgroup_may_post(g_xgroup[k].call)) {
+      xgroup_room(id, t);
+    }
+    else if (s_eq(g_xgroup[k].role, "invited")) {
+      /* An invitation is ours to answer, so it gets a room too: the place it
+       * is seen and accepted, durable until it is (26.3.1). */
+      xgroup_room(id, t);
+      if (!ask) ask = k + 1;
+    }
     else if (room_known(id)) room_set_title(id, t);
   }
+  if (ask) join_offer(g_xgroup[ask - 1].call, 0);
 }
 
 /* ── Read receipts (13.7): the one half a wapp owns ─────────────────────
@@ -875,10 +925,10 @@ static void push_group_members(const char *gid) {
   rb[n < 0 ? 0 : n] = 0;
   static char o[8192]; const unsigned sz = sizeof(o);
   s_cpy(o, "{\"type\":\"ui.people.set\",\"field\":\"room_members\",\"sections\":[", sz);
+  int first_sec = 1;
   /* Two passes over the same flat array: members first, then invited. */
   const char *want[2] = { "member", "invited" };
   const char *label[2] = { "Members", "Invited" };
-  int first_sec = 1;
   for (int pass = 0; pass < 2; pass++) {
     const char *cur = rb; char obj[128]; int any = 0; char body[3072]; body[0] = 0;
     while (next_object(&cur, obj, sizeof(obj))) {
@@ -903,8 +953,88 @@ static void push_group_members(const char *gid) {
     s_cat(o, "{\"title\":\"", sz); s_cat(o, label[pass], sz);
     s_cat(o, "\",\"items\":[", sz); s_cat(o, body, sz); s_cat(o, "]}", sz);
   }
+  /* The admin, and only the admin, can offer membership (26.3: a grant is
+   * signed with the group's key). Last, as an icon chip: the panel opens on
+   * the members, and three worded chips do not fit its width. The row's id
+   * names the group so the tap knows which one. */
+  if (xgroup_is_admin(gid + 1)) {
+    if (!first_sec) s_cat(o, ",", sz);
+    s_cat(o, "{\"title\":\"Invite\",\"icon\":\"person_add\",\"items\":[{\"id\":\"inv:", sz);
+    jesc(o, sz, gid);
+    s_cat(o, "\",\"title\":\"Invite someone\",\"subtitle\":\"Offer a station "
+             "membership of this group\",\"icon\":\"person_add\"}]}", sz);
+  }
   s_cat(o, "]}", sz);
   hal_msg_send(o, s_len(o));
+}
+
+/* A new closed group (26.1). The name is all the wapp has to say: the core
+ * mints the key, keeps it, records us as a member and announces the group,
+ * and hands back the X5 callsign before anything is aired. The room opens on
+ * that callsign at once, as the admin's own; core.groups follows and finds
+ * it already there. Inviting people is the member panel's business
+ * (invite_open). */
+static void group_create(const char *nick) {
+  char call[16] = "";
+  int n = hal_xprs_group_create(nick, s_len(nick), call, sizeof(call) - 1);
+  if (n <= 0 || n >= (int)sizeof(call)) {
+    notify("warning", "Could not create the group");
+    return;
+  }
+  call[n] = 0;
+  xgroups_refresh();
+  char id[10] = "#"; s_cat(id, call, sizeof(id));
+  char title[48]; room_title(id, title, sizeof(title));
+  room_start(id, title);
+  push_group_members(id);
+  notify("info", "Group created");
+}
+
+/* The answer to join_offer: the core signs our acceptance, and the roster
+ * that moves fires core.groups, which refreshes the rail and the panel. */
+static void group_join(const char *gid) {
+  if (!xgroup_is(gid)) return;
+  if (hal_xprs_group_accept(gid + 1, s_len(gid + 1)) != 0) {
+    notify("warning", "Could not join: the invitation is no longer open");
+    return;
+  }
+  xgroups_refresh();
+  if (s_eq(room_open_id(), gid)) push_group_members(gid);
+  char t[48]; room_title(gid, t, sizeof(t));
+  char m[80] = "Joined "; s_cat(m, t, sizeof(m));
+  notify("info", m);
+}
+
+/* Inviting (26.3). The member panel's Invite row opens a station picker for
+ * the group it names; a tap there asks the core to offer membership. The
+ * core signs with the group key and refuses if we are not the admin. */
+static char g_invite_gid[12];
+static char g_invite_q[24];
+static void invite_open(const char *gid) {
+  if (!xgroup_is(gid)) return;
+  s_cpy(g_invite_gid, gid, sizeof(g_invite_gid));
+  g_invite_q[0] = 0;
+  pf_hide_groups = 1;
+  render_people("inviteuser", "", 0);
+  pf_hide_groups = 0;
+  screen_open("Invite");
+}
+static void invite_pick(const char *buf) {
+  char call[24] = "";
+  if (!pf_pick(buf, "inviteuser", call, sizeof(call)) || call[0] == '#') return;
+  if (!g_invite_gid[0]) return;
+  if (call[0] == 'X' && call[1] == '5') {
+    notify("warning", "A group cannot be invited, only a station");
+    return;
+  }
+  if (hal_xprs_group_invite(g_invite_gid, s_len(g_invite_gid), call, s_len(call)) != 0) {
+    notify("warning", "Only the group's admin can invite");
+    return;
+  }
+  char m[64] = "Invited "; s_cat(m, call, sizeof(m));
+  notify("info", m);
+  screen_close();
+  push_group_members(g_invite_gid);
 }
 
 static void go_tap(const char *buf, const char *key) {
@@ -974,7 +1104,11 @@ static void do_open(const char *buf) {
   }
   /* A closed group's member panel is the roster, pushed now so it is ready
    * the moment the header's group button is tapped. */
-  if (xgroup_is(convo)) push_group_members(convo);
+  if (xgroup_is(convo)) {
+    push_group_members(convo);
+    int i = xgroup_find(convo + 1);
+    if (i >= 0 && s_eq(g_xgroup[i].role, "invited")) join_offer(convo + 1, 1);
+  }
 }
 
 /* ── module entry points ──────────────────────────────────────────────── */
@@ -1117,6 +1251,25 @@ void module_handle_event(void) {
     render_people("finduser", "", 0);
     screen_open("New chat");
   }
+  else if (s_eq(cmd, "rooms_newgroup")) {
+    static const char pm[] =
+      "{\"type\":\"ui.prompt\",\"id\":\"xgnew:\",\"title\":\"New group\","
+      "\"body\":\"A closed group: only the people you invite can post in it. "
+      "The name is a label; the group's callsign comes from its own key.\","
+      "\"confirm\":\"Create\",\"input\":{\"hint\":\"group name\",\"max\":24}}";
+    hal_msg_send(pm, sizeof(pm) - 1);
+  }
+  else if (s_eq(cmd, "room_members_tap")) {
+    char id[48] = ""; jstr(buf, "room_members_id", id, sizeof(id));
+    if (s_pre(id, "inv:")) invite_open(id + 4);
+  }
+  else if (s_eq(cmd, "inviteuser_search")) {
+    jstr(buf, "inviteuser_query", g_invite_q, sizeof(g_invite_q));
+    pf_hide_groups = 1;
+    render_people("inviteuser", g_invite_q, 0);
+    pf_hide_groups = 0;
+  }
+  else if (s_eq(cmd, "inviteuser_tap")) invite_pick(buf);
   else if (s_eq(cmd, "finduser_search")) {
     jstr(buf, "finduser_query", g_find_q, sizeof(g_find_q));
     render_people("finduser", g_find_q, 0);
@@ -1161,6 +1314,11 @@ void module_handle_event(void) {
     if (s_pre(pid, "prof:")) {
       if (s_eq(val, "block")) do_block(pid + 5);
       else if (s_eq(val, "unblock")) do_unblock(pid + 5);
+    }
+    else if (s_pre(pid, "xgjoin:")) group_join(pid + 7);
+    else if (s_eq(pid, "xgnew:")) {
+      char nick[64] = ""; jstr(buf, "prompt_input", nick, sizeof(nick));
+      group_create(nick);
     }
     else if (s_pre(pid, "xrpw:")) {
       /* A passphrase for a redacted message: try it, and the core remembers it

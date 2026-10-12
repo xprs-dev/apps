@@ -21,6 +21,9 @@ const char* mock_bcast_scope(void); void mock_bcast_scope_clear(void);
 const char* mock_reads(void); int mock_reads_count(void); void mock_reads_clear(void);
 void mock_set_groups(const char*);
 void mock_set_roster(const char*);
+const char* mock_created_nick(void); void mock_set_create_fail(int);
+const char* mock_invited(void); void mock_set_invite_rc(int32_t);
+const char* mock_accepted(void); void mock_set_accept_rc(int32_t);
 void mock_set_send_rc(int32_t);
 void mock_clear_wire(void);
 void mock_ui_attached(int); const char* mock_last_status(void);
@@ -801,16 +804,152 @@ TEST(a_group_we_belong_to_gets_a_room_the_moment_it_exists) {
   fresh();
   /* The user's bug: creating a group (or accepting into one) must surface a
    * chat room without waiting for the first message. A group we BELONG to
-   * (admin/member/mod) gets a room; one we are only invited to does not. */
+   * (admin/member/mod) gets a room, and so does an invitation (the place it
+   * is accepted); a stranger's group does not. */
   mock_set_groups(
     "[{\"call\":\"X5MINE\",\"nick\":\"mine\",\"role\":\"admin\"},"
     " {\"call\":\"X5MEMB\",\"nick\":\"memb\",\"role\":\"member\"},"
-    " {\"call\":\"X5OFFR\",\"nick\":\"offer\",\"role\":\"invited\"}]");
+    " {\"call\":\"X5OFFR\",\"nick\":\"offer\",\"role\":\"invited\"},"
+    " {\"call\":\"X5STRG\",\"nick\":\"strange\",\"role\":\"none\"}]");
   event_push("core.groups", "{}");
   module_handle_event();
   CHECK(room_known("#X5MINE"));   /* admin — ours */
   CHECK(room_known("#X5MEMB"));   /* member — ours */
-  CHECK(!room_known("#X5OFFR"));  /* invited only — not ours to open */
+  CHECK(room_known("#X5OFFR"));   /* invited — ours to answer */
+  CHECK(!room_known("#X5STRG"));  /* a stranger's — not ours to open */
+  mock_set_groups("[]");
+}
+
+TEST(new_group_asks_for_a_name_and_opens_the_room_the_core_minted) {
+  fresh();
+  /* The menu's New group asks for a name; the wapp mints nothing itself. */
+  inbox_set("{\"type\":\"action\",\"action\":\"rooms_newgroup\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"type\":\"ui.prompt\",\"id\":\"xgnew:\""));
+  /* The answer goes to the core, and the room the core named opens at once
+   * under the group's name, without waiting for core.groups. */
+  cap_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgnew:\",\"prompt_value\":\"\",\"prompt_input\":\"lisboa-net\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_created_nick(), "lisboa-net") == 0);
+  CHECK(room_known("#X5NEWG"));
+  CHECK(strcmp(room_open_id(), "#X5NEWG") == 0);
+  CHECK(cap_contains("lisboa-net"));
+  CHECK(cap_contains("Group created"));
+  /* No profile open: the core says no, and the wapp says so. */
+  cap_clear();
+  mock_set_create_fail(1);
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgnew:\",\"prompt_value\":\"\",\"prompt_input\":\"x\"}");
+  module_handle_event();
+  CHECK(cap_contains("Could not create the group"));
+  mock_set_create_fail(0);
+  mock_set_groups("[]");
+}
+
+TEST(the_admin_invites_from_the_member_panel_and_the_core_signs) {
+  fresh();
+  mock_set_invite_rc(0);
+  mock_set_groups(
+    "[{\"call\":\"X5MINE\",\"nick\":\"mine\",\"role\":\"admin\"},"
+    " {\"call\":\"X5MEMB\",\"nick\":\"memb\",\"role\":\"member\"}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  /* Only the admin is offered the Invite row. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5MEMB\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.people.set"); CHECK(!m || !strstr(m, "inv:")); }
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5MINE\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.people.set");
+    CHECK(m && strstr(m, "room_members") && strstr(m, "inv:#X5MINE") && strstr(m, "Invite someone")); }
+  /* The row opens the station picker. */
+  cap_clear();
+  inbox_set("{\"command\":\"room_members_tap\",\"room_members_id\":\"inv:#X5MINE\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"ui.screen.open\",\"name\":\"Invite\""));
+  { const char *m = cap_find("ui.people.set"); CHECK(m && strstr(m, "inviteuser") && strstr(m, "go:X1NEAR")); }
+  /* A tap asks the core to offer membership, and says so. */
+  cap_clear();
+  inbox_set("{\"command\":\"inviteuser_tap\",\"inviteuser_id\":\"go:X1NEAR\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_invited(), "#X5MINE:X1NEAR") == 0);
+  CHECK(cap_contains("Invited X1NEAR"));
+  /* A group is not somebody to invite, typed or picked. */
+  cap_clear();
+  mock_set_invite_rc(0);
+  inbox_set("{\"command\":\"inviteuser_tap\",\"inviteuser_id\":\"go:X5ABCD\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_invited(), "") == 0);
+  CHECK(cap_contains("A group cannot be invited"));
+  /* The core refuses: the wapp says why. */
+  cap_clear();
+  mock_set_invite_rc(-1);
+  inbox_set("{\"command\":\"inviteuser_tap\",\"inviteuser_id\":\"go:X1FAR\"}");
+  module_handle_event();
+  CHECK(cap_contains("Only the group's admin can invite"));
+  mock_set_invite_rc(0);
+  mock_set_groups("[]");
+}
+
+TEST(an_invitation_gets_a_room_and_a_join_prompt_and_the_core_signs) {
+  fresh();
+  mock_set_accept_rc(0);
+  /* The invitation arrives: a room on the rail, and the question asked once. */
+  cap_clear();
+  mock_set_groups("[{\"call\":\"X5INVT\",\"nick\":\"crew\",\"role\":\"invited\"}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  { const char *m = cap_find("ui.rooms.set"); CHECK(m && strstr(m, "#X5INVT")); }
+  CHECK(cap_contains("\"id\":\"xgjoin:#X5INVT\"") && cap_contains("\"confirm\":\"Join\""));
+  /* Another refresh does not nag. */
+  cap_clear();
+  event_push("core.groups", "{}");
+  module_handle_event();
+  CHECK(!cap_contains("xgjoin:"));
+  /* Opening the room asks again. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5INVT\"}");
+  module_handle_event();
+  CHECK(cap_contains("xgjoin:#X5INVT"));
+  /* Join: the core signs, and the wapp says so. */
+  cap_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgjoin:#X5INVT\",\"prompt_value\":\"\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_accepted(), "X5INVT") == 0);
+  CHECK(cap_contains("Joined crew (X5INVT)"));
+  /* A member is not asked any more. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5INVT\"}");
+  module_handle_event();
+  CHECK(!cap_contains("xgjoin:"));
+  /* A withdrawn offer: the core refuses and the wapp says why. */
+  cap_clear();
+  mock_set_accept_rc(-1);
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgjoin:#X5INVT\",\"prompt_value\":\"\"}");
+  module_handle_event();
+  CHECK(cap_contains("the invitation is no longer open"));
+  mock_set_accept_rc(0);
+  mock_set_groups("[]");
+}
+
+TEST(a_group_room_learns_its_name_when_it_arrives_after_the_room) {
+  fresh();
+  mock_set_groups("[{\"call\":\"X5LATE\",\"nick\":\"\",\"role\":\"member\"}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  CHECK(room_known("#X5LATE"));
+  cap_clear();
+  mock_set_groups("[{\"call\":\"X5LATE\",\"nick\":\"late\",\"role\":\"member\"}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  { const char *m = cap_find("ui.rooms.set"); CHECK(m && strstr(m, "late (X5LATE)")); }
+  /* Nothing changed: the rail is not redrawn. */
+  cap_clear();
+  event_push("core.groups", "{}");
+  module_handle_event();
+  CHECK(!cap_find("ui.rooms.set"));
   mock_set_groups("[]");
 }
 
@@ -1011,6 +1150,10 @@ int main(void) {
   run_finding_a_group_opens_the_group_room_and_the_core_decides_posting();
   run_the_member_panel_lists_the_roster_when_a_group_opens();
   run_a_group_we_belong_to_gets_a_room_the_moment_it_exists();
+  run_new_group_asks_for_a_name_and_opens_the_room_the_core_minted();
+  run_the_admin_invites_from_the_member_panel_and_the_core_signs();
+  run_an_invitation_gets_a_room_and_a_join_prompt_and_the_core_signs();
+  run_a_group_room_learns_its_name_when_it_arrives_after_the_room();
   run_a_closed_group_post_renders_from_either_shape_the_core_delivers();
   run_the_host_can_open_a_1to1_with_a_station_and_name_it();
   run_a_shared_file_reaches_the_bubble_on_both_shapes_and_only_once();

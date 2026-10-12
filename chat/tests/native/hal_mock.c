@@ -168,6 +168,25 @@ int32_t hal_xprs_groups(char* o,uint32_t cap){ if(g_hk_groups) return g_hk_group
 static char g_roster[2048] = "[]";
 void mock_set_roster(const char* json){ snprintf(g_roster,sizeof(g_roster),"%s",json&&json[0]?json:"[]"); }
 int32_t hal_xprs_group_roster(const char* g,uint32_t gl,char* o,uint32_t cap){ if(g_hk_roster) return g_hk_roster(g,gl,o,cap); (void)g;(void)gl; uint32_t n=strlen(g_roster); if(n>cap) return -(int32_t)n; memcpy(o,g_roster,n); return n; }
+/* Minting is the core's; the mock hands back a fixed callsign, adds the group
+ * to what hal_xprs_groups reports with us as admin (as the core does), and
+ * remembers the nick it was asked for. -1 when a test says no profile is open. */
+static char g_created_nick[64]; static int g_create_fail=0;
+const char* mock_created_nick(void){ return g_created_nick; }
+void mock_set_create_fail(int f){ g_create_fail=f; }
+int32_t hal_xprs_group_create(const char* n,uint32_t nl,char* o,uint32_t cap){ if(g_create_fail) return -1; uint32_t k=nl<sizeof(g_created_nick)-1?nl:sizeof(g_created_nick)-1; memcpy(g_created_nick,n,k); g_created_nick[k]=0; snprintf(g_groups,sizeof(g_groups),"[{\"call\":\"X5NEWG\",\"nick\":\"%s\",\"role\":\"admin\",\"admin\":true}]",g_created_nick); const char* c="X5NEWG"; uint32_t m=strlen(c); if(m>cap) return -1; memcpy(o,c,m); if(m<cap) o[m]=0; return m; }
+/* The core signs the offer; the mock records "<group>:<call>" and answers
+ * what the test set (-1 = not the admin). */
+static char g_invited[64]; static int32_t g_invite_rc=0;
+const char* mock_invited(void){ return g_invited; }
+void mock_set_invite_rc(int32_t rc){ g_invite_rc=rc; g_invited[0]=0; }
+int32_t hal_xprs_group_invite(const char* g,uint32_t gl,const char* c,uint32_t cl){ snprintf(g_invited,sizeof(g_invited),"%.*s:%.*s",(int)gl,g,(int)cl,c); return g_invite_rc; }
+/* The member's own half: the mock records the group and, on success, turns
+ * our role in what hal_xprs_groups reports from invited into member. */
+static char g_accepted[16]; static int32_t g_accept_rc=0;
+const char* mock_accepted(void){ return g_accepted; }
+void mock_set_accept_rc(int32_t rc){ g_accept_rc=rc; g_accepted[0]=0; }
+int32_t hal_xprs_group_accept(const char* g,uint32_t gl){ snprintf(g_accepted,sizeof(g_accepted),"%.*s",(int)gl,g); if(g_accept_rc==0){ char* r=strstr(g_groups,"\"invited\""); if(r){ memmove(r+8,r+9,strlen(r+9)+1); memcpy(r,"\"member\"",8); } } return g_accept_rc; }
 int32_t hal_xprs_stations(char* o,uint32_t cap){ const char* s="[{\"title\":\"Heard over the air (2)\",\"items\":[{\"id\":\"X1NEAR\",\"title\":\"X1NEAR\",\"subtitle\":\"BLE - -40 dBm - 3 packets\",\"tags\":[\"seen 20s ago\",\"BLE\",\"peers 2\"]},{\"id\":\"X1TEST\",\"title\":\"X1TEST\",\"subtitle\":\"BLE\",\"tags\":[\"seen 5s ago\",\"BLE\"]}]},{\"title\":\"Heard this hour (1)\",\"items\":[{\"id\":\"X1EARLIER\",\"title\":\"X1EARLIER\",\"subtitle\":\"LAN\",\"tags\":[\"seen 40m ago\",\"LAN\"]}]},{\"title\":\"On Reticulum (1)\",\"items\":[{\"id\":\"X1FAR\",\"title\":\"X1FAR\",\"subtitle\":\"RNS\",\"tags\":[\"seen 3m ago\",\"RNS\"]}]}]"; uint32_t n=strlen(s); if(n>cap) return -(int32_t)n; memcpy(o,s,n); return n; }
 int32_t hal_mesh_devices(char* o,uint32_t cap){ const char* s="[{\"title\":\"Nearby\",\"items\":[{\"id\":\"X1NEAR\",\"title\":\"X1NEAR\",\"subtitle\":\"phone\"}]},{\"title\":\"Multi-hop\",\"items\":[{\"id\":\"X1FAR\",\"title\":\"X1FAR\"}]}]"; uint32_t n=strlen(s); if(n>cap) return -(int32_t)n; memcpy(o,s,n); return n; }
 int32_t hal_people_directory(const char* q,uint32_t ql,char* o,uint32_t cap){ (void)q;(void)ql; const char* s="[{\"kind\":\"xprs\",\"callsign\":\"X1PEER\",\"nick\":\"Peer\",\"live\":true}]"; uint32_t n=strlen(s); if(n>cap) return -2; memcpy(o,s,n); return n; }
