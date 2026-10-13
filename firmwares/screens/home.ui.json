@@ -8,7 +8,9 @@
         "$": "field",
         "name": "stations",
         "$type": "people",
-        "empty": "No station yet.\n\nFlash one from xprs.dev/firmware and keep this phone next to it: within half a minute it asks to be claimed and appears here.\n\nA board without Bluetooth: join its hotspot, XPRS- and its callsign."
+        "empty_art": "media/art/stations.svg",
+        "empty_title": "No station yet",
+        "empty": "A station is a small XPRS board that passes messages on for everyone around it, even when nobody has internet.\n\n1. Flash a board: plug it into this phone over USB and open the Flash tab.\n\n2. Keep the phone next to it. Within half a minute the new station asks to be claimed.\n\n3. Claim it and give it your WiFi. It then shows up here, where you can name it and see how it is doing.\n\nA board without Bluetooth is set up through its own WiFi hotspot, named XPRS- and its callsign."
       }
     ]
   },
@@ -24,7 +26,9 @@
         "$": "field",
         "name": "flash",
         "$type": "people",
-        "empty": "No board on USB.\n\nPlug one in (an OTG cable on a phone), then Refresh from the menu at the top right."
+        "empty_art": "media/art/usb.svg",
+        "empty_title": "No board plugged in",
+        "empty": "Connect a board to this phone with a USB OTG cable (on a computer, any USB cable works).\n\nThe app recognises the chip, downloads the matching XPRS firmware from xprs.dev, writes it and checks the result.\n\nPlugged in but not listed? Tap Refresh in the menu at the top right."
       }
     ]
   },
@@ -172,7 +176,7 @@
     "name": "Identity",
     "icon": "key",
     "hidden": true,
-    "tip": "A station's callsign comes from its key. A new key is a new callsign.",
+    "tip": "A station's callsign comes from its key, and a new key is a new callsign. A licensed callsign replaces it on the air and keeps the key.",
     "children": [
       {
         "$": "group",
@@ -189,6 +193,19 @@
       { "$": "action", "name": "identity_apply", "label": "Apply", "style": "primary", "icon": "key",
         "confirm": true, "confirm-label": "Change its key?",
         "confirm-text": "The station restarts under a new callsign. Anyone who knew the old one has to learn the new one." },
+      {
+        "$": "group",
+        "name": "Licensed callsign",
+        "children": [
+          { "$": "field", "name": "call", "$type": "string", "label": "Callsign", "hint": "CT1ABC", "max": 11 }
+        ]
+      },
+      { "$": "action", "name": "call_apply", "label": "Use this callsign", "icon": "cell_tower",
+        "confirm": true, "confirm-label": "Transmit under this callsign?",
+        "confirm-text": "The station restarts and transmits under it, with the same key. Only a callsign issued to you may be used on amateur bands." },
+      { "$": "action", "name": "call_derived", "label": "Use derived callsign", "icon": "key",
+        "confirm": true, "confirm-label": "Go back to its derived callsign?",
+        "confirm-text": "The station restarts under the callsign its key derives." },
       { "$": "action", "name": "back", "label": "Back", "icon": "close" }
     ]
   },

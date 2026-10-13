@@ -396,6 +396,63 @@ static void test_new_key_answer_brings_its_key(void)
     CHECK(cap_count("New identity in use") >= 1, "and closed");
 }
 
+/* 6.4.2: the owner's licensed callsign, under the same key. Nothing derives
+ * it, so the station is followed by the key we already hold for it, on its
+ * t:identity or on the k: of its 200, and back again the same way. */
+static void test_licensed_callsign(void)
+{
+    char was[16], npub[80];
+    snprintf(was, sizeof was, "%s", g_st[g_sel].call);
+    snprintf(npub, sizeof npub, "%s", g_st[g_sel].npub);
+
+    cap_clear();
+    int aired = g_aired_n;
+    command("{\"command\":\"call_apply\",\"fields\":{\"call\":\"x1qz3n\"}}");
+    CHECK(g_aired_n == aired, "a key's callsign is not sent as a licence");
+    CHECK(cap_count("X1 to X5 come from a key") >= 1, "and it says why");
+
+    command("{\"command\":\"call_apply\",\"fields\":{\"call\":\" ct1abc-9 \"}}");
+    CHECK(strstr(last_aired(), " cmd:set call:CT1ABC-9") != 0, "call:, uppercase, in the clear: %s", last_aired());
+    CHECK(subscribed("xprs.identity"), "identities are heard while the name changes");
+    char id[7];
+    last_id(id);
+    result(was, id, "code:202 wifi:up ip:192.168.1.40 ap:off zone:+01:00");
+    CHECK(cap_count("Restarting as CT1ABC-9") >= 1, "the 202 names it");
+
+    char w[300];
+    snprintf(w, sizeof w, "t:identity f:CT1ABC-9 ts:2026-09-10_12:02:00 k:%s sig:KKKK", NEW_NPUB);
+    deliver("xprs.identity", row("identity", "CT1ABC-9", "verified", w));
+    CHECK(find("CT1ABC-9") < 0 && find(was) >= 0, "the name under another key is somebody else");
+
+    snprintf(w, sizeof w, "t:identity f:CT1ABC-9 ts:2026-09-10_12:02:00 k:%s sig:KKKK", npub);
+    deliver("xprs.identity", row("identity", "CT1ABC-9", "verified", w));
+    CHECK(find("CT1ABC-9") >= 0 && find(was) < 0, "followed by the key it keeps");
+    CHECK(fw_eq(g_st[find("CT1ABC-9")].npub, npub), "and the key did not change");
+
+    char tail[200];
+    snprintf(tail, sizeof tail, "code:200 k:%s wifi:up ip:192.168.1.40", npub);
+    result("CT1ABC-9", id, tail);
+    CHECK(cap_count("Transmitting as CT1ABC-9") >= 1, "its 200 closes it");
+    CHECK(!subscribed("xprs.identity"), "and identities are nobody's business again");
+
+    cap_clear();
+    command("{\"command\":\"open_identity\",\"fields\":{}}");
+    CHECK(cap_count("\"field\":\"call\",\"value\":\"CT1ABC-9\"") >= 1, "the panel shows the licence");
+    CHECK(cap_count("\"field\":\"call_derived__hidden\",\"value\":false") >= 1, "with the way back");
+
+    /* Back to the derived one; only the 200 arrives. */
+    command("{\"command\":\"call_derived\",\"fields\":{\"call\":\"CT1ABC-9\"}}");
+    CHECK(strstr(last_aired(), " cmd:set call:derived") != 0, "call:derived: %s", last_aired());
+    last_id(id);
+    result("CT1ABC-9", id, "code:202 wifi:up");
+    result(was, id, tail);
+    CHECK(find(was) >= 0 && find("CT1ABC-9") < 0, "followed back by the k: in its answer");
+
+    cap_clear();
+    command("{\"command\":\"open_identity\",\"fields\":{}}");
+    CHECK(cap_count("\"field\":\"call_derived__hidden\",\"value\":true") >= 1, "no way back from where it is");
+}
+
 static void test_stats_from_the_core(void)
 {
     /* What the core heard on beacons and service announcements (15.5) is
@@ -791,6 +848,7 @@ int main(void)
     test_new_key();
     test_new_key_202_missed();
     test_new_key_answer_brings_its_key();
+    test_licensed_callsign();
     test_import_is_sealed();
     test_stats_from_the_core();
     test_somebody_elses_station();

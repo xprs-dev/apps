@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 180">
+  <!-- The phone -->
+  <rect x="34" y="34" width="70" height="124" rx="12" fill="#263238" stroke="#78909C" stroke-width="3"/>
+  <rect x="42" y="48" width="54" height="92" rx="4" fill="#37474F"/>
+  <rect x="58" y="40" width="22" height="3" rx="1.5" fill="#78909C"/>
+  <circle cx="69" cy="80" r="14" fill="#29B6F6"/>
+  <path d="M63 74 L75 86 L69 92 L69 68 L75 74 L63 86" fill="none" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="50" y="106" width="38" height="5" rx="2.5" fill="#78909C"/>
+  <rect x="50" y="116" width="26" height="5" rx="2.5" fill="#607D8B"/>
+  <!-- Bluetooth between them -->
+  <path d="M128 78 A28 28 0 0 1 128 118" fill="none" stroke="#29B6F6" stroke-width="4" stroke-linecap="round"/>
+  <path d="M146 66 A44 44 0 0 1 146 130" fill="none" stroke="#29B6F6" stroke-width="4" stroke-linecap="round" opacity="0.75"/>
+  <path d="M164 54 A60 60 0 0 1 164 142" fill="none" stroke="#29B6F6" stroke-width="4" stroke-linecap="round" opacity="0.5"/>
+  <!-- The station: a small board with an antenna -->
+  <rect x="202" y="90" width="106" height="64" rx="8" fill="#2E7D32" stroke="#66BB6A" stroke-width="3"/>
+  <rect x="236" y="104" width="38" height="34" rx="3" fill="#1B5E20" stroke="#A5D6A7" stroke-width="2"/>
+  <circle cx="216" cy="104" r="3.5" fill="#A5D6A7"/>
+  <circle cx="294" cy="104" r="3.5" fill="#A5D6A7"/>
+  <circle cx="216" cy="140" r="3.5" fill="#A5D6A7"/>
+  <circle cx="294" cy="140" r="3.5" fill="#A5D6A7"/>
+  <circle cx="290" cy="121" r="4" fill="#FFCA28"/>
+  <rect x="284" y="46" width="6" height="46" rx="3" fill="#90A4AE"/>
+  <circle cx="287" cy="44" r="6" fill="#90A4AE"/>
+  <!-- and its WiFi -->
+  <path d="M222 66 A26 26 0 0 1 258 66" fill="none" stroke="#FFB74D" stroke-width="4" stroke-linecap="round"/>
+  <path d="M230 74 A14 14 0 0 1 250 74" fill="none" stroke="#FFB74D" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="240" cy="82" r="4" fill="#FFB74D"/>
+</svg>

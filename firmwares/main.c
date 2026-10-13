@@ -10,7 +10,8 @@
  *   Station   what it is and how it stands; Claim while nobody owns it
  *   WiFi      network and password, sealed in x: to the station's key
  *   Name      nick, time zone, its own hotspot
- *   Identity  a new key the station makes, or an nsec, sealed
+ *   Identity  a new key the station makes, or an nsec, sealed; or the
+ *             callsign an authority issued its owner (6.4.2), same key
  *   Stats     15.5 telemetry the core already heard, the policy (11.9,
  *             anybody may ask), and the firmware's own diagnostics
  *   Answers   every answer the station gave
@@ -65,6 +66,7 @@ typedef struct {
     char last_what[8];            /* what a late final answer was to */
     char next_x[FW_WIRE_UNSIGNED];/* the second half of a long ssid+pass */
     char rekey_npub[70];          /* following a new key (11.10) */
+    char want_call[12];           /* the callsign a call: asked for */
     unsigned long long last_ts;   /* the last ts: we used with it */
     int  ask_pol;                 /* a q:policy is out: observations wanted */
     char now[96];                 /* the one line the Station screen shows */
@@ -692,7 +694,8 @@ static void listen(void)
     for (int i = 0; i < g_nst; i++) {
         if (g_st[i].pend_id[0]) asked = 1;
         if (g_st[i].rekey_npub[0] ||
-            (g_st[i].pend_id[0] && fw_eq(g_st[i].pend_what, "key"))) keying = 1;
+            (g_st[i].pend_id[0] && (fw_eq(g_st[i].pend_what, "key") ||
+                                    fw_eq(g_st[i].pend_what, "call")))) keying = 1;
         if (g_st[i].ask_pol) asking = 1;
     }
     sub(&g_sub_res, asked, "xprs.result");
@@ -925,7 +928,31 @@ static void on_request(const char *row)
     }
 }
 
-/* Heard only while a station is changing its key (listen()). */
+/* An X1 to X5 callsign: one a key made, not one an authority issued. */
+static int self_generated(const char *c)
+{
+    return c[0] == 'X' && c[1] >= '1' && c[1] <= '5' && fw_len(c) >= 3;
+}
+
+/* The same station under another name: same key, new callsign (6.4.2). Its
+ * record moves with it, so the old one does not come back as a stranger. */
+static void rename_to(int i, const char *call)
+{
+    st_t *s = &g_st[i];
+    char k[24] = "st.";
+    fw_cat(k, s->call, sizeof k);
+    kv_put(k, "");
+    char line[80] = "Now transmitting as ";
+    fw_cat(line, call, sizeof line);
+    log_line(s->call, line);
+    fw_cpy(s->call, call, sizeof s->call);
+    set_now(s, line);
+    save();
+    push_list();
+    if (g_sel == i) { push_hub(); screen_open("Station", s->nick[0] ? s->nick : s->call); }
+}
+
+/* Heard only while a station is changing its key or its callsign (listen()). */
 static void on_identity(const char *row)
 {
     char wire[FW_WIRE_MAX + 1], call[16], k[80], sig[16];
@@ -933,6 +960,18 @@ static void on_identity(const char *row)
     if (!fw_eq(sig, "verified")) return;
     if (!fw_json(row, "wire", wire, sizeof wire)) return;
     if (!fw_field(wire, "f", call, sizeof call) || !fw_field(wire, "k", k, sizeof k)) return;
+    /* A station taking an issued callsign: it derives from no key, so the
+     * only thing that says it is ours is the key it binds, the one we hold
+     * (6.4.2), on a t:identity the core checked against that key. */
+    for (int i = 0; i < g_nst; i++) {
+        st_t *s = &g_st[i];
+        if (s->pend_id[0] && fw_eq(s->pend_what, "call") && fw_eq(s->npub, k) &&
+            !fw_eq(s->call, call)) {
+            rename_to(i, call);
+            listen();
+            return;
+        }
+    }
     if (!fw_call_matches(call, k)) return;
     fw_cpy(g_ids[g_ids_w].call, call, sizeof g_ids[0].call);
     fw_cpy(g_ids[g_ids_w].npub, k, sizeof g_ids[0].npub);
@@ -1030,16 +1069,22 @@ static void on_result(const char *row)
             if (fw_eq(from, k2)) nk = s->rekey_npub;
         }
         static char rk[80];
-        if (!nk && fw_eq(s->pend_what, "key")) {
-            /* Its own key, in the answer (11.10), or one it announced. */
-            if (fw_field(wire, "k", rk, sizeof rk) && fw_call_matches(from, rk)) nk = rk;
-            for (int j = 0; !nk && j < 4; j++)
-                if (fw_eq(g_ids[j].call, from)) nk = g_ids[j].npub;
+        if (fw_eq(s->pend_what, "call") && fw_field(wire, "k", rk, sizeof rk) &&
+            fw_eq(rk, s->npub)) {
+            /* Its new callsign, under the key we already hold (6.4.2). */
+            rename_to(i, from);
+        } else {
+            if (!nk && fw_eq(s->pend_what, "key")) {
+                /* Its own key, in the answer (11.10), or one it announced. */
+                if (fw_field(wire, "k", rk, sizeof rk) && fw_call_matches(from, rk)) nk = rk;
+                for (int j = 0; !nk && j < 4; j++)
+                    if (fw_eq(g_ids[j].call, from)) nk = g_ids[j].npub;
+            }
+            if (!nk) return;
+            fw_cpy(s->call, from, sizeof s->call);
+            fw_cpy(s->npub, nk, sizeof s->npub);
+            s->rekey_npub[0] = 0;
         }
-        if (!nk) return;
-        fw_cpy(s->call, from, sizeof s->call);
-        fw_cpy(s->npub, nk, sizeof s->npub);
-        s->rekey_npub[0] = 0;
     }
     take_state(s, wire);
     s->heard_ms = hal_time_ms();
@@ -1059,6 +1104,12 @@ static void on_result(const char *row)
         } else if (fw_eq(what, "wifi")) {
             log_line(s->call, "Joining the network...");
             set_now(s, "Joining the network...");
+        } else if (fw_eq(what, "call")) {
+            char line[80] = "Restarting as ";
+            fw_cat(line, s->want_call[0] ? s->want_call : "its derived callsign", sizeof line);
+            fw_cat(line, "...", sizeof line);
+            log_line(s->call, line);
+            set_now(s, line);
         } else {
             log_line(s->call, "Working on it...");
             set_now(s, "Working on it...");
@@ -1091,6 +1142,11 @@ static void on_result(const char *row)
         } else if (fw_eq(what, "key")) {
             log_line(s->call, "New identity in use.");
             set_now(s, "New identity in use.");
+        } else if (fw_eq(what, "call")) {
+            char line[80] = "Transmitting as ";
+            fw_cat(line, s->call, sizeof line);
+            log_line(s->call, line);
+            set_now(s, line);
         } else if (fw_eq(what, "zdiag")) {
             s->asking = 0;
             save_stats(s);
@@ -1686,6 +1742,10 @@ static void on_command(void)
     if (fw_eq(cmd, "open_identity")) {
         field_set("identity", "new");
         field_set("nsec", "");
+        /* The issued callsign it transmits under, when it has one. */
+        int issued = !self_generated(s->call);
+        field_set("call", issued ? s->call : "");
+        flag_hidden("call_derived", !issued);
         screen_open("Identity", s->call);
         return;
     }
@@ -1797,6 +1857,31 @@ static void on_command(void)
         } else do_set(s, "key:new", "key");
         for (unsigned i = 0; nsec[i]; i++) nsec[i] = 0;
         field_set("nsec", "");
+    } else if (fw_eq(cmd, "call_apply") || fw_eq(cmd, "call_derived")) {
+        /* 6.4.2: the callsign on the owner's licence, or back to the one
+         * the key derives. The station checks it the way the app's profile
+         * screen does and says why when it will not take it; what is
+         * refused here is only what is plainly not one. */
+        char raw[24] = "", c[16] = "";
+        if (fw_eq(cmd, "call_apply")) fields("call", raw, sizeof raw);
+        unsigned n = 0;
+        for (const char *p = raw; *p && n + 1 < sizeof c; p++) {
+            if (*p == ' ') continue;
+            c[n++] = (*p >= 'a' && *p <= 'z') ? (char)(*p - 'a' + 'A') : *p;
+        }
+        c[n] = 0;
+        if (!s->mine) log_line(s->call, "Claim it first");
+        else if (fw_eq(cmd, "call_apply") && !c[0]) log_line(s->call, "Which callsign?");
+        else if (n > 11) log_line(s->call, "At most 11 characters on a station");
+        else if (c[0] && self_generated(c))
+            log_line(s->call, "X1 to X5 come from a key. Enter the callsign on your licence.");
+        else if (fw_eq(c, s->call)) log_line(s->call, "It already transmits as that");
+        else {
+            char f[32] = "call:";
+            fw_cat(f, c[0] ? c : "derived", sizeof f);
+            fw_cpy(s->want_call, c, sizeof s->want_call);
+            do_set(s, f, "call");
+        }
     } else if (fw_eq(cmd, "stats")) {
         do_ask(s);
         s->asking = 1;
