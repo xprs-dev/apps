@@ -129,8 +129,11 @@ static void chan_load(void) {
  * answer over and this wapp only renders it and refuses to compose where it
  * has no standing. It does NOT create a room per group: a room appears when
  * somebody speaks in it or the user opens it. */
-#define XGROUP_MAX 16
-static struct { char call[8]; char nick[24]; char role[8]; } g_xgroup[XGROUP_MAX];
+#define XGROUP_MAX 48
+/* `parent`: the group that lists this one as a folder (10.2), "" for a root.
+ * The tree is the core's answer (hal_xprs_groups), five levels and no cycles
+ * already applied; this wapp only draws it. */
+static struct { char call[8]; char nick[24]; char role[8]; char parent[8]; } g_xgroup[XGROUP_MAX];
 static int g_xgroup_n;
 
 static int xgroup_is(const char *id) {
@@ -164,6 +167,35 @@ static void room_title(const char *id, char *out, unsigned osz) {
   }
   s_cpy(out, id, osz);
 }
+/* How deep [call] sits in the tree, a root being 1 (10.2). Bounded by the
+ * table, so a malformed answer cannot loop. */
+static int xgroup_depth(const char *call) {
+  int d = 1, i = xgroup_find(call);
+  while (i >= 0 && g_xgroup[i].parent[0] && d <= XGROUP_MAX) {
+    i = xgroup_find(g_xgroup[i].parent);
+    d++;
+  }
+  return d;
+}
+/* Is [call] a folder somewhere below [root]? */
+static int xgroup_below(const char *call, const char *root) {
+  int i = xgroup_find(call), hops = 0;
+  while (i >= 0 && g_xgroup[i].parent[0] && hops++ < XGROUP_MAX) {
+    if (s_eq(g_xgroup[i].parent, root)) return 1;
+    i = xgroup_find(g_xgroup[i].parent);
+  }
+  return 0;
+}
+/* room.h: where a room hangs on the rail. A folder names its parent's room
+ * and how deep it sits below the root; everything else is a root (0). */
+int room_tree(const char *id, char *parent, unsigned cap) {
+  parent[0] = 0;
+  if (!(id[0] == '#' && id[1] == 'X' && id[2] == '5')) return 0;
+  int i = xgroup_find(id + 1);
+  if (i < 0 || !g_xgroup[i].parent[0]) return 0;
+  s_cpy(parent, "#", cap); s_cat(parent, g_xgroup[i].parent, cap);
+  return xgroup_depth(id + 1) - 1;
+}
 /* Do we hold this group's key? The core's answer (hal_xprs_groups `role`),
  * remembered; the wapp only uses it to decide what to OFFER on screen. */
 static int xgroup_is_admin(const char *call) {
@@ -188,12 +220,25 @@ static void join_offer(const char *call, int force) {
   /* Its name may not have arrived yet; the callsign alone is still a name. */
   char t[48]; room_title(id, t, sizeof(t));
   if (t[0] == '#') { s_cpy(t, "the group ", sizeof(t)); s_cat(t, call, sizeof(t)); }
-  char m[400] = "{\"type\":\"ui.prompt\",\"id\":\"xgjoin:";
+  /* Folders below it that we were offered too: one answer joins them all,
+   * and the prompt says so, because consent is to what was named. */
+  int folders = 0;
+  for (int i = 0; i < g_xgroup_n; i++)
+    if (s_eq(g_xgroup[i].role, "invited") && xgroup_below(g_xgroup[i].call, call)) folders++;
+  char m[440] = "{\"type\":\"ui.prompt\",\"id\":\"xgjoin:";
   jesc(m, sizeof(m), id);
   s_cat(m, "\",\"title\":\"Group invitation\",\"body\":\"You were invited to ", sizeof(m));
   jesc(m, sizeof(m), t);
-  s_cat(m, ". Join to read and post in it; until then you are only invited.\","
-           "\"confirm\":\"Join\"}", sizeof(m));
+  if (folders) {
+    char nb[8]; u_itoa((unsigned)folders, nb);
+    s_cat(m, ". Join to read and post in it and in its ", sizeof(m));
+    s_cat(m, nb, sizeof(m));
+    s_cat(m, folders == 1 ? " folder" : " folders", sizeof(m));
+    s_cat(m, "; until then you are only invited.\",\"confirm\":\"Join\"}", sizeof(m));
+  } else {
+    s_cat(m, ". Join to read and post in it; until then you are only invited.\","
+             "\"confirm\":\"Join\"}", sizeof(m));
+  }
   hal_msg_send(m, s_len(m));
 }
 static void xgroup_room(const char *id, const char *t) {
@@ -202,11 +247,19 @@ static void xgroup_room(const char *id, const char *t) {
   else if (r == 0) room_set_title(id, t);
 }
 static void xgroups_refresh(void) {
-  static char gb[4096];
+  static char gb[12288];
   int ask = 0;
   int n = hal_xprs_groups(gb, sizeof(gb) - 1);
   if (n <= 0 || n >= (int)sizeof(gb)) return;
   gb[n] = 0;
+  /* The tree as it was, so a folder whose listing arrives after its room was
+   * made moves under its group on the rail. */
+  static char was[XGROUP_MAX * 18], now[XGROUP_MAX * 18];
+  was[0] = 0;
+  for (int i = 0; i < g_xgroup_n; i++) {
+    s_cat(was, g_xgroup[i].call, sizeof(was)); s_cat(was, ">", sizeof(was));
+    s_cat(was, g_xgroup[i].parent, sizeof(was)); s_cat(was, ";", sizeof(was));
+  }
   g_xgroup_n = 0;
   const char *cur = gb; char obj[600];
   while (g_xgroup_n < XGROUP_MAX && next_object(&cur, obj, sizeof(obj))) {
@@ -214,8 +267,18 @@ static void xgroups_refresh(void) {
     jstr(obj, "call", g_xgroup[k].call, sizeof(g_xgroup[k].call));
     jstr(obj, "nick", g_xgroup[k].nick, sizeof(g_xgroup[k].nick));
     jstr(obj, "role", g_xgroup[k].role, sizeof(g_xgroup[k].role));
+    if (!jstr(obj, "parent", g_xgroup[k].parent, sizeof(g_xgroup[k].parent)))
+      g_xgroup[k].parent[0] = 0;
     if (!g_xgroup[k].call[0]) continue;
     g_xgroup_n++;
+  }
+  now[0] = 0;
+  for (int i = 0; i < g_xgroup_n; i++) {
+    s_cat(now, g_xgroup[i].call, sizeof(now)); s_cat(now, ">", sizeof(now));
+    s_cat(now, g_xgroup[i].parent, sizeof(now)); s_cat(now, ";", sizeof(now));
+  }
+  int moved = !s_eq(was, now);
+  for (int k = 0; k < g_xgroup_n; k++) {
     /* A group we BELONG to gets a room, so it appears the moment it exists --
      * an admin who just created a group, or a member who just accepted, sees
      * the conversation without waiting for the first message (26). A
@@ -231,12 +294,17 @@ static void xgroups_refresh(void) {
     }
     else if (s_eq(g_xgroup[k].role, "invited")) {
       /* An invitation is ours to answer, so it gets a room too: the place it
-       * is seen and accepted, durable until it is (26.3.1). */
+       * is seen and accepted, durable until it is (26.3.1). A folder of a
+       * group we already belong to is asked when it is opened, not on
+       * arrival: it sits in the tree under the group, and a prompt for every
+       * folder the admin adds would be a prompt per topic. */
       xgroup_room(id, t);
-      if (!ask) ask = k + 1;
+      const char *up = g_xgroup[k].parent;
+      if (!ask && !(up[0] && xgroup_may_post(up))) ask = k + 1;
     }
     else if (room_known(id)) room_set_title(id, t);
   }
+  if (moved) room_rail();
   if (ask) join_offer(g_xgroup[ask - 1].call, 0);
 }
 
@@ -1004,6 +1072,16 @@ static void push_group_members(const char *gid) {
     jesc(o, sz, gid);
     s_cat(o, "\",\"title\":\"Invite someone\",\"subtitle\":\"Offer a station "
              "membership of this group\",\"icon\":\"person_add\"}]}", sz);
+    /* The group's own things, also the admin's alone: its picture is signed
+     * with the group key (6.3.2, 10.1), and so is listing a folder (10.2),
+     * which stops at the fifth level because every client ignores deeper. */
+    s_cat(o, ",{\"title\":\"Manage\",\"icon\":\"tune\",\"items\":[", sz);
+    if (xgroup_depth(gid + 1) < 5) {
+      s_cat(o, "{\"id\":\"fold:", sz); jesc(o, sz, gid);
+      s_cat(o, "\",\"title\":\"New folder\",\"icon\":\"create_new_folder\"},", sz);
+    }
+    s_cat(o, "{\"id\":\"pic:", sz); jesc(o, sz, gid);
+    s_cat(o, "\",\"title\":\"Change picture\",\"icon\":\"image\"}]}", sz);
   }
   s_cat(o, "]}", sz);
   hal_msg_send(o, s_len(o));
@@ -1031,6 +1109,62 @@ static void group_create(const char *nick) {
   notify("info", "Group created");
 }
 
+/* Offer [folder] to everyone who belongs to [gid] now (10.2: membership
+ * does not travel down, so a folder starts with its admin alone). One call,
+ * the callsigns comma separated: the core grants them in as few packets as
+ * fit. Each still has to accept (26.3.1). */
+static void folder_offer_members(const char *gid, const char *folder) {
+  static char rb[4096];
+  int n = hal_xprs_group_roster(gid, s_len(gid), rb, sizeof(rb) - 1);
+  if (n <= 0 || n >= (int)sizeof(rb)) return;
+  rb[n] = 0;
+  static char calls[1024]; calls[0] = 0;
+  const char *cur = rb; char obj[128];
+  while (next_object(&cur, obj, sizeof(obj))) {
+    char st[12] = "", call[16] = "";
+    jstr(obj, "state", st, sizeof(st));
+    jstr(obj, "call", call, sizeof(call));
+    if (!s_eq(st, "member") || !call[0] || is_self_call(call)) continue;
+    if (calls[0]) s_cat(calls, ",", sizeof(calls));
+    s_cat(calls, call, sizeof(calls));
+  }
+  if (calls[0]) hal_xprs_group_invite(folder, s_len(folder), calls, s_len(calls));
+}
+
+/* A folder inside a group, for one topic: a subgroup (10.2) the core mints
+ * and the parent lists. The group's members are offered it at once, and the
+ * folder's room opens under the group on the rail. */
+static void folder_create(const char *gid, const char *nick) {
+  if (!xgroup_is(gid)) return;
+  char call[16] = "";
+  int n = hal_xprs_group_folder(gid + 1, s_len(gid + 1), nick, s_len(nick),
+                                call, sizeof(call) - 1);
+  if (n <= 0 || n >= (int)sizeof(call)) {
+    notify("warning", "Could not create the folder");
+    return;
+  }
+  call[n] = 0;
+  folder_offer_members(gid, call);
+  xgroups_refresh();
+  char id[10] = "#"; s_cat(id, call, sizeof(id));
+  char title[48]; room_title(id, title, sizeof(title));
+  room_start(id, title);
+  push_group_members(id);
+  notify("info", "Folder created");
+}
+
+/* A group's or a folder's picture. The host picks it and makes the
+ * thumbnail (ui.pick.picture); the core signs it with the group key and
+ * announces it (6.3.2). The host draws it wherever it draws the group. */
+static void picture_set(const char *gid, const char *token) {
+  if (!xgroup_is(gid) || !token[0]) return;
+  if (hal_xprs_group_picture(gid + 1, s_len(gid + 1), token, s_len(token)) != 0) {
+    notify("warning", "Only the group's admin can change its picture");
+    return;
+  }
+  notify("info", "Picture changed");
+}
+
 /* The answer to join_offer: the core signs our acceptance, and the roster
  * that moves fires core.groups, which refreshes the rail and the panel. */
 static void group_join(const char *gid) {
@@ -1039,6 +1173,10 @@ static void group_join(const char *gid) {
     notify("warning", "Could not join: the invitation is no longer open");
     return;
   }
+  /* The folders below it that we were offered too, which the prompt named. */
+  for (int i = 0; i < g_xgroup_n; i++)
+    if (s_eq(g_xgroup[i].role, "invited") && xgroup_below(g_xgroup[i].call, gid + 1))
+      hal_xprs_group_accept(g_xgroup[i].call, s_len(g_xgroup[i].call));
   xgroups_refresh();
   if (s_eq(room_open_id(), gid)) push_group_members(gid);
   char t[48]; room_title(gid, t, sizeof(t));
@@ -1072,6 +1210,11 @@ static void invite_pick(const char *buf) {
     notify("warning", "Only the group's admin can invite");
     return;
   }
+  /* And into the folders below it that we keep: a group's topics are part of
+   * the group, though each roster is its own (10.2). */
+  for (int i = 0; i < g_xgroup_n; i++)
+    if (s_eq(g_xgroup[i].role, "admin") && xgroup_below(g_xgroup[i].call, g_invite_gid + 1))
+      hal_xprs_group_invite(g_xgroup[i].call, s_len(g_xgroup[i].call), call, s_len(call));
   char m[64] = "Invited "; s_cat(m, call, sizeof(m));
   notify("info", m);
   screen_close();
@@ -1303,6 +1446,21 @@ void module_handle_event(void) {
   else if (s_eq(cmd, "room_members_tap")) {
     char id[48] = ""; jstr(buf, "room_members_id", id, sizeof(id));
     if (s_pre(id, "inv:")) invite_open(id + 4);
+    else if (s_pre(id, "fold:") && xgroup_is(id + 5)) {
+      char pm[400] = "{\"type\":\"ui.prompt\",\"id\":\"xgfold:";
+      jesc(pm, sizeof(pm), id + 5);
+      s_cat(pm, "\",\"title\":\"New folder\",\"body\":\"A folder for one topic "
+                "inside this group. Its members are invited to it.\","
+                "\"confirm\":\"Create\",\"input\":{\"hint\":\"folder name\",\"max\":24}}",
+            sizeof(pm));
+      hal_msg_send(pm, s_len(pm));
+    }
+    else if (s_pre(id, "pic:") && xgroup_is(id + 4)) {
+      char pm[96] = "{\"type\":\"ui.pick.picture\",\"id\":\"gpic:";
+      jesc(pm, sizeof(pm), id + 4);
+      s_cat(pm, "\"}", sizeof(pm));
+      hal_msg_send(pm, s_len(pm));
+    }
   }
   else if (s_eq(cmd, "inviteuser_search")) {
     jstr(buf, "inviteuser_query", g_invite_q, sizeof(g_invite_q));
@@ -1361,6 +1519,10 @@ void module_handle_event(void) {
       char nick[64] = ""; jstr(buf, "prompt_input", nick, sizeof(nick));
       group_create(nick);
     }
+    else if (s_pre(pid, "xgfold:")) {
+      char nick[64] = ""; jstr(buf, "prompt_input", nick, sizeof(nick));
+      folder_create(pid + 7, nick);
+    }
     else if (s_pre(pid, "xrpw:")) {
       /* A passphrase for a redacted message: try it, and the core remembers it
        * if it opens the message (9.2.1). */
@@ -1375,6 +1537,13 @@ void module_handle_event(void) {
                         s_len(g_redact_text), pw, s_len(pw));
       g_redact_text[0] = 0;
     }
+  }
+  /* The host's answer to ui.pick.picture: a thumbnail it made, by token. */
+  else if (s_eq(cmd, "picture_picked")) {
+    char pid[24] = "", token[96] = "";
+    jstr(buf, "picture_id", pid, sizeof(pid));
+    jstr(buf, "picture_token", token, sizeof(token));
+    if (s_pre(pid, "gpic:")) picture_set(pid + 5, token);
   }
   else if (s_eq(cmd, "chan_apply")) {
     /* Explicit apply, so an unset checkbox serialised as false on some other

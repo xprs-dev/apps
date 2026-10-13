@@ -1750,7 +1750,10 @@ int32_t hal_xprs_history(const char *query, uint32_t query_len,
 /* The closed groups (section 26) this station knows, and what WE are in each.
  * A wapp cannot work this out for itself: the answer is a replay of signed
  * acts against a callsign->key map the host owns. Reply:
- *   [{call,nick,role,admin,members,candidates,verified}]
+ *   [{call,nick,role,admin,members,candidates,verified,parent}]
+ * `parent` is the group that lists this one as a subgroup (XPRS.md 10.2), a
+ * folder, and is absent for a root; the core applies the five-level and
+ * no-cycle rules, so the wapp draws the tree as given.
  * `role` is admin|mod|member|invited|none. Only member, mod and admin may
  * post — 26.3.1 says a grant confers nothing until the person accepts it, so
  * `invited` is somebody who has been ASKED and has not answered. `verified`
@@ -1780,12 +1783,38 @@ int32_t hal_xprs_group_create(const char *nick, uint32_t nick_len,
                               char *out, uint32_t out_cap);
 
 /* Offer membership of closed group `group` ("X5..." or "#X5...") to station
- * `call` (section 26.3, a grant with role member). The core signs it with the
- * group's key, which only the admin holds; the station is listed as invited
- * until it accepts (26.3.1). 0 = offered, -1 = refused (not the admin). */
+ * `call` (section 26.3, a grant with role member), or to several stations
+ * separated by commas, which the core grants in as few packets as fit. The
+ * core signs it with the group's key, which only the admin holds; the station
+ * is listed as invited until it accepts (26.3.1). 0 = offered, -1 = refused
+ * (not the admin). */
 __attribute__((import_module("hal"), import_name("xprs_group_invite")))
 int32_t hal_xprs_group_invite(const char *group, uint32_t group_len,
                               const char *call, uint32_t call_len);
+
+/* A folder inside closed group `parent` ("X5..." or "#X5..."), named `nick`
+ * (may be empty): what XPRS.md 10.2 calls a subgroup, a closed group of its
+ * own with its own key and roster, listed by the parent with role:sub. The
+ * core mints and keeps the key and signs the listing with the parent's key,
+ * so only the parent's admin can make one. Membership does not travel down:
+ * nobody is offered a place until invited with hal_xprs_group_invite. The
+ * folder's X5 callsign is written into `out` before anything is aired.
+ * Bytes written, -1 when refused (not the admin, five levels deep already,
+ * no profile open). hal_xprs_groups names a folder's parent in `parent`. */
+__attribute__((import_module("hal"), import_name("xprs_group_folder")))
+int32_t hal_xprs_group_folder(const char *parent, uint32_t parent_len,
+                              const char *nick, uint32_t nick_len,
+                              char *out, uint32_t out_cap);
+
+/* Set closed group `group`'s picture (XPRS.md 6.3.2 on the group's own
+ * t:identity, 10.1), signed with the group's key, so only its admin can.
+ * `token` is the `file:` reference the host's `ui.pick.picture` answered
+ * with (a small square thumbnail); empty takes the picture back. The host
+ * draws a group's picture wherever it draws the group. 0 = announced,
+ * -1 = refused. */
+__attribute__((import_module("hal"), import_name("xprs_group_picture")))
+int32_t hal_xprs_group_picture(const char *group, uint32_t group_len,
+                               const char *token, uint32_t token_len);
 
 /* Accept the membership of closed group `group` ("X5..." or "#X5...") that
  * this station was offered (section 26.3.1). The core finds the offer and

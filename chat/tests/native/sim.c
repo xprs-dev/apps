@@ -57,6 +57,10 @@ extern int32_t (*g_hk_groups)(char*,uint32_t);
 extern int32_t (*g_hk_roster)(const char*,uint32_t,char*,uint32_t);
 extern int32_t (*g_hk_unlock)(const char*,uint32_t,const char*,uint32_t);
 extern int32_t (*g_hk_redact)(const char*,uint32_t,const char*,uint32_t,const char*,uint32_t);
+extern int32_t (*g_hk_folder)(const char*,uint32_t,const char*,uint32_t,char*,uint32_t);
+extern int32_t (*g_hk_picture)(const char*,uint32_t,const char*,uint32_t);
+extern int32_t (*g_hk_invite)(const char*,uint32_t,const char*,uint32_t);
+extern int32_t (*g_hk_accept)(const char*,uint32_t);
 
 /* the section-5 identifier, from the wapp's own xprs.c */
 void xprs_id(const char *wire, unsigned len, char out[7]);
@@ -79,6 +83,8 @@ typedef struct {
 typedef struct {
   char call[8];                                  /* X5.... (no #) */
   char nick[24];
+  char parent[8];                                /* the group listing it (10.2), or "" */
+  char picture[96];                              /* file: token of its picture, or "" */
   struct { char call[8]; char role[8]; } mem[MAXMEM]; int mn;   /* role incl. "invited" */
 } grp_t;
 
@@ -332,8 +338,10 @@ static int32_t hk_groups(char* o,uint32_t cap){
     for(int i=0;i<G[gi].mn;i++) if(!strcmp(G[gi].mem[i].call,me)){
       if(!first) buf[n++]=',';
       first=0;
-      n+=snprintf(buf+n,sizeof buf-n,"{\"call\":\"%s\",\"nick\":\"%s\",\"role\":\"%s\"}",
+      n+=snprintf(buf+n,sizeof buf-n,"{\"call\":\"%s\",\"nick\":\"%s\",\"role\":\"%s\"",
                   G[gi].call,G[gi].nick,G[gi].mem[i].role);
+      if(G[gi].parent[0]) n+=snprintf(buf+n,sizeof buf-n,",\"parent\":\"%s\"",G[gi].parent);
+      buf[n++]='}';
       break;
     }
   }
@@ -453,12 +461,73 @@ static int add_node(const char* call){
 }
 static grp_t* add_group(const char* call,const char* nick){
   grp_t* g=&G[GN++]; snprintf(g->call,sizeof g->call,"%s",call);
-  snprintf(g->nick,sizeof g->nick,"%s",nick); g->mn=0; return g;
+  snprintf(g->nick,sizeof g->nick,"%s",nick); g->mn=0;
+  g->parent[0]=0; g->picture[0]=0; return g;
 }
 static void group_put(grp_t* g,const char* call,const char* role){
   for(int i=0;i<g->mn;i++) if(!strcmp(g->mem[i].call,call)){ snprintf(g->mem[i].role,sizeof g->mem[i].role,"%s",role); return; }
   snprintf(g->mem[g->mn].call,sizeof g->mem[g->mn].call,"%s",call);
   snprintf(g->mem[g->mn].role,sizeof g->mem[g->mn].role,"%s",role); g->mn++;
+}
+
+static const char* grp_role(grp_t* g,const char* call){
+  for(int i=0;i<g->mn;i++) if(!strcmp(g->mem[i].call,call)) return g->mem[i].role;
+  return "";
+}
+/* Tell every station named that its groups moved (core.groups). */
+static void groups_changed(grp_t* g){
+  for(int i=0;i<g->mn;i++){ int ni=node_by_call(g->mem[i].call); if(ni>=0) enqueue(ni,"core.groups","{}"); }
+}
+
+/* ── the stand-in core's half of folders (XPRS.md 10.2) and pictures ─────
+ * A folder is a group of its own with the parent's admin as its admin and a
+ * parent the core reports; minting it is refused to anybody but that admin.
+ * An invite is a grant per callsign (comma separated), refused likewise; an
+ * accept turns an offer into membership. A picture is the admin's alone. */
+static int g_folder_seq=0;
+static int32_t hk_folder(const char* p,uint32_t pl,const char* n,uint32_t nl,char* o,uint32_t cap){
+  char pc[8]; snprintf(pc,sizeof pc,"%.*s",(int)pl,p);
+  grp_t* par=grp_by_call(pc);
+  const char* me = cur>=0 ? N[cur].call : "";
+  if(!par || strcmp(grp_role(par,me),"admin")) return -1;
+  char call[8]; snprintf(call,sizeof call,"X5F%03d",++g_folder_seq);
+  char nick[24]; snprintf(nick,sizeof nick,"%.*s",(int)nl,n);
+  grp_t* f=add_group(call,nick);
+  snprintf(f->parent,sizeof f->parent,"%s",pc);
+  group_put(f,me,"admin");
+  groups_changed(par);
+  uint32_t m=strlen(call); if(m>=cap) return -1;
+  memcpy(o,call,m); o[m]=0; return (int32_t)m;
+}
+static int32_t hk_invite(const char* g,uint32_t gl,const char* c,uint32_t cl){
+  char gc[8]; snprintf(gc,sizeof gc,"%.*s",(int)gl,g[0]=='#'?g+1:g);
+  if(g[0]=='#') gc[gl-1<sizeof gc?gl-1:sizeof gc-1]=0;
+  grp_t* gr=grp_by_call(gc);
+  const char* me = cur>=0 ? N[cur].call : "";
+  if(!gr || strcmp(grp_role(gr,me),"admin")) return -1;
+  char list[256]; snprintf(list,sizeof list,"%.*s",(int)cl,c);
+  for(char* t=strtok(list,","); t; t=strtok(0,",")){
+    if(!grp_role(gr,t)[0]) group_put(gr,t,"invited");
+  }
+  groups_changed(gr);
+  return 0;
+}
+static int32_t hk_accept(const char* g,uint32_t gl){
+  char gc[8]; snprintf(gc,sizeof gc,"%.*s",(int)gl,g);
+  grp_t* gr=grp_by_call(gc);
+  const char* me = cur>=0 ? N[cur].call : "";
+  if(!gr || strcmp(grp_role(gr,me),"invited")) return -1;
+  group_put(gr,me,"member");
+  groups_changed(gr);
+  return 0;
+}
+static int32_t hk_picture(const char* g,uint32_t gl,const char* t,uint32_t tl){
+  char gc[8]; snprintf(gc,sizeof gc,"%.*s",(int)gl,g);
+  grp_t* gr=grp_by_call(gc);
+  const char* me = cur>=0 ? N[cur].call : "";
+  if(!gr || strcmp(grp_role(gr,me),"admin")) return -1;
+  snprintf(gr->picture,sizeof gr->picture,"%.*s",(int)tl,t);
+  return 0;
 }
 
 /* become node ni (a restart if we were someone else). */
@@ -838,11 +907,120 @@ static void t_compose_obf_refused(void){
   g_redact_refuse=0;
 }
 
+/* Folders (XPRS.md 10.2) and pictures (6.3.2): the admin makes a folder
+ * inside a group and the group's members are offered it; it hangs under the
+ * group on everybody's rail; a member is asked to join it when they open it,
+ * not on arrival; a post there reaches who accepted and nobody else; the
+ * picture is the admin's to set; and a station invited to the group later is
+ * offered its folders too, and one Join takes both. */
+/* The newest capture line containing [s]: the rail is redrawn as it changes. */
+static const char* cap_last(const char* s){
+  for(int i=cap_n()-1;i>=0;i--) if(strstr(cap_nth(i),s)) return cap_nth(i);
+  return 0;
+}
+static void t_folders(void){
+  printf("closed group -- folders inside it, and pictures\n");
+  reset_world();
+  int A=add_node("X1ANNA"), B=add_node("X1BOBB"), C=add_node("X1CATE"), D=add_node("X1DAVE");
+  grp_t* g=add_group("X5GULF","Gulf net");
+  group_put(g,"X1ANNA","admin"); group_put(g,"X1BOBB","member"); group_put(g,"X1CATE","member");
+
+  /* The admin's panel offers a folder and a picture; a member's does not. */
+  cap_clear(); open_room(A,"#X5GULF");
+  CHECK(cap_contains("fold:#X5GULF") && cap_contains("New folder"));
+  CHECK(cap_contains("pic:#X5GULF") && cap_contains("Change picture"));
+  cap_clear(); open_room(B,"#X5GULF");
+  CHECK(cap_contains("room_members") && !cap_contains("fold:#X5GULF") && !cap_contains("pic:#X5GULF"));
+
+  /* A taps New folder and names it. */
+  cap_clear();
+  ui(A,"{\"command\":\"room_members_tap\",\"room_members_id\":\"fold:#X5GULF\"}");
+  CHECK(cap_contains("\"id\":\"xgfold:#X5GULF\""));
+  cap_clear();
+  ui(A,"{\"command\":\"prompt\",\"prompt_id\":\"xgfold:#X5GULF\",\"prompt_input\":\"Repairs\"}");
+  grp_t* f=grp_by_call("X5F001");
+  CHECK(f && !strcmp(f->parent,"X5GULF") && !strcmp(f->nick,"Repairs"));
+  /* The group's members were offered it in one ask; the admin is in it. */
+  CHECK(f && !strcmp(grp_role(f,"X1BOBB"),"invited") && !strcmp(grp_role(f,"X1CATE"),"invited"));
+  CHECK(f && !strcmp(grp_role(f,"X1ANNA"),"admin"));
+  CHECK(cap_contains("Folder created"));
+  /* On the admin's rail it hangs under the group, one level down. */
+  { const char* r=cap_last("ui.rooms.set");
+    CHECK(r && strstr(r,"\"id\":\"#X5F001\"") && strstr(r,"\"parent\":\"#X5GULF\",\"depth\":1")); }
+
+  /* B hears of it: the folder is on the rail under the group, and B is not
+   * prompted for it until B opens it. */
+  cap_clear(); pump(B);
+  { const char* r=cap_last("ui.rooms.set");
+    CHECK(r && strstr(r,"#X5F001") && strstr(r,"\"parent\":\"#X5GULF\"")); }
+  CHECK(!cap_contains("xgjoin:#X5F001"));
+  cap_clear(); open_room(B,"#X5F001");
+  CHECK(cap_contains("xgjoin:#X5F001"));
+  /* Not a member yet: the core's door refuses B's post. */
+  cap_clear(); send(B,"#X5F001","too early");
+  CHECK(cap_contains("once you accept"));
+  cap_clear();
+  ui(B,"{\"command\":\"prompt\",\"prompt_id\":\"xgjoin:#X5F001\",\"prompt_value\":\"\"}");
+  CHECK(f && !strcmp(grp_role(f,"X1BOBB"),"member"));
+
+  /* B posts in the folder: A reads it there; C, who has not joined, does not. */
+  send(B,"#X5F001","pump is fixed");
+  cap_clear(); pump(A); open_room(A,"#X5F001");
+  CHECK(cap_contains("pump is fixed"));
+  cap_clear(); pump(C); open_room(C,"#X5F001");
+  CHECK(!cap_contains("pump is fixed"));
+  /* Nor did it leak into the group itself. */
+  cap_clear(); open_room(B,"#X5GULF");
+  { int leaked=0;
+    for(int i=0;i<cap_n();i++)
+      if(strstr(cap_nth(i),"ui.convo.msg") && strstr(cap_nth(i),"pump is fixed")) leaked=1;
+    CHECK(!leaked); }
+
+  /* The picture: A asks the host for one, the host answers with a token, and
+   * the core is asked to sign it as the folder. */
+  cap_clear(); open_room(A,"#X5F001");
+  ui(A,"{\"command\":\"room_members_tap\",\"room_members_id\":\"pic:#X5F001\"}");
+  CHECK(cap_contains("\"type\":\"ui.pick.picture\",\"id\":\"gpic:#X5F001\""));
+  cap_clear();
+  ui(A,"{\"command\":\"picture_picked\",\"picture_id\":\"gpic:#X5F001\","
+       "\"picture_token\":\"file:nYxKzGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg\"}");
+  CHECK(f && !strcmp(f->picture,"file:nYxKzGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg"));
+  CHECK(cap_contains("Picture changed"));
+  /* A member cannot: the core refuses and the wapp says why. */
+  cap_clear();
+  ui(B,"{\"command\":\"picture_picked\",\"picture_id\":\"gpic:#X5GULF\","
+       "\"picture_token\":\"file:nYxKzGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg\"}");
+  CHECK(cap_contains("Only the group's admin can change its picture"));
+  CHECK(!g->picture[0]);
+
+  /* D is invited to the group later: the offer covers its folder, the prompt
+   * names it, and one Join takes both. */
+  open_room(A,"#X5GULF");
+  ui(A,"{\"command\":\"room_members_tap\",\"room_members_id\":\"inv:#X5GULF\"}");
+  ui(A,"{\"command\":\"inviteuser_tap\",\"inviteuser_id\":\"go:X1DAVE\"}");
+  CHECK(!strcmp(grp_role(g,"X1DAVE"),"invited") && f && !strcmp(grp_role(f,"X1DAVE"),"invited"));
+  cap_clear(); pump(D);
+  CHECK(cap_contains("xgjoin:#X5GULF") && cap_contains("in its 1 folder"));
+  /* Both rooms are on D's rail already, the folder under the group. */
+  { const char* r=cap_last("ui.rooms.set");
+    CHECK(r && strstr(r,"#X5GULF") && strstr(r,"\"id\":\"#X5F001\"") && strstr(r,"\"parent\":\"#X5GULF\"")); }
+  cap_clear();
+  ui(D,"{\"command\":\"prompt\",\"prompt_id\":\"xgjoin:#X5GULF\",\"prompt_value\":\"\"}");
+  CHECK(!strcmp(grp_role(g,"X1DAVE"),"member") && f && !strcmp(grp_role(f,"X1DAVE"),"member"));
+
+  /* A restart keeps the tree: the rail comes back with the folder under its
+   * group (the parent is the core's answer, read again at init). */
+  cap_clear(); load(C); load(D);
+  { const char* r=cap_last("ui.rooms.set");
+    CHECK(r && strstr(r,"\"parent\":\"#X5GULF\"")); }
+}
+
 int main(void){
   mock_set_time(1700000000ULL);
   g_hk_identity=hk_identity; g_hk_send=hk_send; g_hk_message=hk_message;
   g_hk_broadcast=hk_broadcast; g_hk_read=hk_read; g_hk_groups=hk_groups; g_hk_roster=hk_roster;
   g_hk_unlock=hk_unlock; g_hk_redact=hk_redact;
+  g_hk_folder=hk_folder; g_hk_invite=hk_invite; g_hk_accept=hk_accept; g_hk_picture=hk_picture;
 
   t_direct();
   t_emoji();
@@ -856,6 +1034,7 @@ int main(void){
   t_group_restart();
   t_local();
   t_rooms_by_range();
+  t_folders();
 
   printf("\nsim: %d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;

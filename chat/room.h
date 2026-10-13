@@ -111,6 +111,12 @@ int  block_add(const char *call);      /* 1 blocked now, 0 no change */
 int  block_remove(const char *call);
 void blocked_publish(void);
 
+/* Where [id] hangs on the rail: a folder inside a closed group (XPRS.md
+ * 10.2) writes its parent's room id into [parent] and returns how deep it
+ * sits below its root; any other room returns 0 with [parent] empty.
+ * Defined in main.c, which holds the core's answer. */
+int room_tree(const char *id, char *parent, unsigned cap);
+
 /* Shared with main.c */
 void fmt_time_at(char *b, unsigned long long epoch);
 /* YYYY-MM-DD in the reader's local time, for the host's day separators. */

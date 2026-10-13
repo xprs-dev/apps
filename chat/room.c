@@ -318,7 +318,7 @@ static void notify_msg(const char *room, const char *from, const char *body, con
 }
 
 void room_rail(void) {
-  static char rail[8192];
+  static char rail[16384];
   s_cpy(rail, "{\"type\":\"ui.rooms.set\",\"field\":\"rooms\",\"rooms\":[", sizeof(rail));
   int n = db_query(g_idx, "SELECT id,title,activity_ts FROM rooms WHERE closed=0 AND archived=0 "
                           "ORDER BY activity_ts DESC, id LIMIT 64", 0, g_q, sizeof(g_q));
@@ -337,7 +337,14 @@ void room_rail(void) {
       first = 0;
       s_cat(rail, "{\"id\":\"", sizeof(rail)); jesc(rail, sizeof(rail), id);
       s_cat(rail, "\",\"name\":\"", sizeof(rail)); jesc(rail, sizeof(rail), title);
-      s_cat(rail, "\",\"depth\":0,\"seen\":", sizeof(rail));
+      /* A folder is drawn under its group (10.2); the host orders the tree. */
+      char up[16]; int depth = room_tree(id, up, sizeof(up));
+      if (up[0]) {
+        s_cat(rail, "\",\"parent\":\"", sizeof(rail)); jesc(rail, sizeof(rail), up);
+      }
+      s_cat(rail, "\",\"depth\":", sizeof(rail));
+      { char nb[8]; u_itoa((unsigned)depth, nb); s_cat(rail, nb, sizeof(rail)); }
+      s_cat(rail, ",\"seen\":", sizeof(rail));
       { char nb[24]; u_lltoa((unsigned long long)jint(row, "activity_ts"), nb); s_cat(rail, nb, sizeof(rail)); }
       s_cat(rail, "}", sizeof(rail));
       s_cat(lg, " ", sizeof(lg)); s_cat(lg, id, sizeof(lg));

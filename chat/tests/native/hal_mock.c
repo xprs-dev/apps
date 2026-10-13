@@ -46,6 +46,10 @@ int32_t (*g_hk_groups)(char*,uint32_t) = 0;
 int32_t (*g_hk_roster)(const char*,uint32_t,char*,uint32_t) = 0;
 int32_t (*g_hk_unlock)(const char*,uint32_t,const char*,uint32_t) = 0;
 int32_t (*g_hk_redact)(const char*,uint32_t,const char*,uint32_t,const char*,uint32_t) = 0;
+int32_t (*g_hk_folder)(const char*,uint32_t,const char*,uint32_t,char*,uint32_t) = 0;
+int32_t (*g_hk_picture)(const char*,uint32_t,const char*,uint32_t) = 0;
+int32_t (*g_hk_invite)(const char*,uint32_t,const char*,uint32_t) = 0;
+int32_t (*g_hk_accept)(const char*,uint32_t) = 0;
 void mock_set_root(const char* r){ static char b[256]; snprintf(b,sizeof(b),"%s",r); g_root=b; }
 
 /* ---- capture of hal_msg_send ---- */
@@ -180,13 +184,20 @@ int32_t hal_xprs_group_create(const char* n,uint32_t nl,char* o,uint32_t cap){ i
 static char g_invited[64]; static int32_t g_invite_rc=0;
 const char* mock_invited(void){ return g_invited; }
 void mock_set_invite_rc(int32_t rc){ g_invite_rc=rc; g_invited[0]=0; }
-int32_t hal_xprs_group_invite(const char* g,uint32_t gl,const char* c,uint32_t cl){ snprintf(g_invited,sizeof(g_invited),"%.*s:%.*s",(int)gl,g,(int)cl,c); return g_invite_rc; }
+int32_t hal_xprs_group_invite(const char* g,uint32_t gl,const char* c,uint32_t cl){ if(g_hk_invite) return g_hk_invite(g,gl,c,cl); snprintf(g_invited,sizeof(g_invited),"%.*s:%.*s",(int)gl,g,(int)cl,c); return g_invite_rc; }
 /* The member's own half: the mock records the group and, on success, turns
  * our role in what hal_xprs_groups reports from invited into member. */
 static char g_accepted[16]; static int32_t g_accept_rc=0;
 const char* mock_accepted(void){ return g_accepted; }
 void mock_set_accept_rc(int32_t rc){ g_accept_rc=rc; g_accepted[0]=0; }
-int32_t hal_xprs_group_accept(const char* g,uint32_t gl){ snprintf(g_accepted,sizeof(g_accepted),"%.*s",(int)gl,g); if(g_accept_rc==0){ char* r=strstr(g_groups,"\"invited\""); if(r){ memmove(r+8,r+9,strlen(r+9)+1); memcpy(r,"\"member\"",8); } } return g_accept_rc; }
+int32_t hal_xprs_group_accept(const char* g,uint32_t gl){ if(g_hk_accept) return g_hk_accept(g,gl); snprintf(g_accepted,sizeof(g_accepted),"%.*s",(int)gl,g); if(g_accept_rc==0){ char* r=strstr(g_groups,"\"invited\""); if(r){ memmove(r+8,r+9,strlen(r+9)+1); memcpy(r,"\"member\"",8); } } return g_accept_rc; }
+/* A folder (XPRS.md 10.2) and a group's picture (6.3.2) are the core's to
+ * mint and sign; single-node tests read back what was asked. */
+static char g_folder_ask[96]; static char g_picture_ask[160];
+const char* mock_folder_ask(void){ return g_folder_ask; }
+const char* mock_picture_ask(void){ return g_picture_ask; }
+int32_t hal_xprs_group_folder(const char* p,uint32_t pl,const char* n,uint32_t nl,char* o,uint32_t cap){ if(g_hk_folder) return g_hk_folder(p,pl,n,nl,o,cap); snprintf(g_folder_ask,sizeof(g_folder_ask),"%.*s:%.*s",(int)pl,p,(int)nl,n); const char* c="X5FOLD"; uint32_t m=strlen(c); if(m>cap) return -1; memcpy(o,c,m); if(m<cap) o[m]=0; return m; }
+int32_t hal_xprs_group_picture(const char* g,uint32_t gl,const char* t,uint32_t tl){ if(g_hk_picture) return g_hk_picture(g,gl,t,tl); snprintf(g_picture_ask,sizeof(g_picture_ask),"%.*s:%.*s",(int)gl,g,(int)tl,t); return 0; }
 int32_t hal_xprs_stations(char* o,uint32_t cap){ const char* s="[{\"title\":\"Heard over the air (2)\",\"items\":[{\"id\":\"X1NEAR\",\"title\":\"X1NEAR\",\"subtitle\":\"BLE - -40 dBm - 3 packets\",\"tags\":[\"seen 20s ago\",\"BLE\",\"peers 2\"]},{\"id\":\"X1TEST\",\"title\":\"X1TEST\",\"subtitle\":\"BLE\",\"tags\":[\"seen 5s ago\",\"BLE\"]}]},{\"title\":\"Heard this hour (1)\",\"items\":[{\"id\":\"X1EARLIER\",\"title\":\"X1EARLIER\",\"subtitle\":\"LAN\",\"tags\":[\"seen 40m ago\",\"LAN\"]}]},{\"title\":\"On Reticulum (1)\",\"items\":[{\"id\":\"X1FAR\",\"title\":\"X1FAR\",\"subtitle\":\"RNS\",\"tags\":[\"seen 3m ago\",\"RNS\"]}]}]"; uint32_t n=strlen(s); if(n>cap) return -(int32_t)n; memcpy(o,s,n); return n; }
 int32_t hal_mesh_devices(char* o,uint32_t cap){ const char* s="[{\"title\":\"Nearby\",\"items\":[{\"id\":\"X1NEAR\",\"title\":\"X1NEAR\",\"subtitle\":\"phone\"}]},{\"title\":\"Multi-hop\",\"items\":[{\"id\":\"X1FAR\",\"title\":\"X1FAR\"}]}]"; uint32_t n=strlen(s); if(n>cap) return -(int32_t)n; memcpy(o,s,n); return n; }
 int32_t hal_people_directory(const char* q,uint32_t ql,char* o,uint32_t cap){ (void)q;(void)ql; const char* s="[{\"kind\":\"xprs\",\"callsign\":\"X1PEER\",\"nick\":\"Peer\",\"live\":true}]"; uint32_t n=strlen(s); if(n>cap) return -2; memcpy(o,s,n); return n; }
