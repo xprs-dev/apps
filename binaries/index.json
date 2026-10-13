@@ -69,6 +69,7 @@
   {"file":"archiver/archiver-0.6.8.wapp","id":"tools.xprs.archiver","version":"0.6.8","size":19166,"title":"Archiver","description":"Archiver - hold other people's posts and files so they survive their device going offline, and answer 'where can I find npub X'."},
   {"file":"archiver/archiver-0.7.5.wapp","id":"tools.xprs.archiver","version":"0.7.5","size":28694,"title":"Archiver","description":"Archiver - hold other people's posts and files so they survive their device going offline, and answer 'where can I find npub X'."},
   {"file":"archiver/archiver-0.7.7.wapp","id":"tools.xprs.archiver","version":"0.7.7","size":28653,"title":"Archiver","description":"Keep posts and files for people whose devices are offline."},
+  {"file":"archiver/archiver-0.7.8.wapp","id":"tools.xprs.archiver","version":"0.7.8","size":28652,"title":"Archive","description":"Keep posts and files for people whose devices are offline."},
   {"file":"atm/atm-0.2.0.wapp","id":"tools.xprs.atm","version":"0.2.0","size":6157,"title":"ATM","description":"Operate a coin: run its blockchain and distribute it."},
   {"file":"atm/atm-0.2.1.wapp","id":"tools.xprs.atm","version":"0.2.1","size":6158,"title":"ATM","description":"Operate a coin: run its blockchain and distribute it."},
   {"file":"atm/atm-0.2.2.wapp","id":"tools.xprs.atm","version":"0.2.2","size":6282,"title":"ATM","description":"Run a coin and hand it out."},

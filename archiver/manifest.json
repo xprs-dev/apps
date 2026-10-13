@@ -1,8 +1,8 @@
 {
   "id": "tools.xprs.archiver",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "kind": "app",
-  "title": "Archiver",
+  "title": "Archive",
   "description": "Keep posts and files for people whose devices are offline.",
   "summary": "This device keeps XPRS packets for you and for the callsigns you follow. It can keep packets from strangers too if you allow it. It also hosts files for other people and remembers who has which file. You choose which archivers you rely on.",
   "icon": "media/icons/archiver.svg",
