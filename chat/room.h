@@ -88,6 +88,7 @@ void room_archived_publish(void);
 /* The conversations whose id or title contains [q], as one people-field
  * section ("Chats") written into [out], or an empty string when none match. */
 void room_search_section(const char *q, char *out, unsigned cap);
+void room_search_messages(const char *q, char *out, unsigned cap);
 
 /* ── Statuses (XPRS.md 27) at the head of the list ──────────────────
  * Chat shows the newest status of each person it talks with, and lets the

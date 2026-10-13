@@ -248,7 +248,7 @@ static __attribute__((unused)) void pf_render_ex(const char *field, const char *
   }
   if (allow_group && want[0] == '#' && want[1]) {
     if (!first_section) pf_cat(o, sz, ",");
-    pf_cat(o, sz, "{\"title\":\"Group\",\"items\":[{\"id\":\"go:"); pf_esc(o, sz, want);
+    pf_cat(o, sz, "{\"title\":\"Group\",\"tab\":\"Groups\",\"items\":[{\"id\":\"go:"); pf_esc(o, sz, want);
     pf_cat(o, sz, "\",\"title\":\""); pf_esc(o, sz, want);
     pf_cat(o, sz, "\",\"subtitle\":\"Open this group\",\"icon\":\"tag\"}]}");
     first_section = 0;
@@ -261,7 +261,7 @@ static __attribute__((unused)) void pf_render_ex(const char *field, const char *
     if (!any && !typed) continue;
     if (!first_section) pf_cat(o, sz, ",");
     first_section = 0;
-    pf_cat(o, sz, pass ? "{\"title\":\"Nearby\",\"items\":[" : "{\"title\":\"On Reticulum\",\"items\":[");
+    pf_cat(o, sz, pass ? "{\"title\":\"Nearby\",\"tab\":\"People\",\"items\":[" : "{\"title\":\"On Reticulum\",\"tab\":\"People\",\"items\":[");
     int first = 1;
     for (int i = 0; i < pf_people_n; i++) {
       if (pf_people[i].local != pass) continue;

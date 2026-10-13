@@ -50,15 +50,17 @@
     "name": "Find",
     "menu": true,
     "popup": true,
+    "appbar": true,
+    "appbar_only": true,
     "icon": "search",
-    "tip": "Open a group or find a station.",
+    "tip": "Search people, messages and groups.",
     "children": [
       {
         "$": "action",
         "name": "rooms_search",
         "label": "Search",
         "icon": "search",
-        "tip": "Type #GROUP to open a group, or a callsign to message a station."
+        "tip": "Search people, messages and groups."
       }
     ]
   },
@@ -68,13 +70,14 @@
     "hidden": true,
     "toolbar": true,
     "search": true,
-    "tip": "Type #GROUP to open a group, or a callsign to message a station.",
+    "tabs": "People,Messages,Groups",
+    "tip": "Type a name, a callsign, a word from a message or #GROUP.",
     "children": [
       {
         "$": "field",
         "name": "searchall",
         "$type": "people",
-        "empty": "Nothing found.\nType #GROUP to open a group, or a callsign.",
+        "empty": "Nothing found.\nTry a callsign, a word from a message or #GROUP.",
         "tip": "Tap a result to open it."
       }
     ]

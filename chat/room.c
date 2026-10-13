@@ -372,39 +372,118 @@ void room_rail(void) {
 /* Search finds the person's own conversations first: the heard-stations
  * table forgets a station after the hour, and "x1me" has to find the X1MEZA
  * chat whether or not X1MEZA is in earshot. Archived ones too, as the
- * archive is still theirs. */
-void room_search_section(const char *q, char *out, unsigned cap) {
-  out[0] = 0;
-  char like[32] = "%"; unsigned j = 1;
-  for (unsigned i = 0; q[i] && j < sizeof(like) - 2; i++) {
+ * archive is still theirs. Groups and one-to-one chats are two sections so the
+ * Search panel's tabs can tell them apart (a section's "tab" is its filter). */
+static int search_like(const char *q, char *like, unsigned cap, int keep_space) {
+  unsigned j = 0;
+  if (cap < 4) return 0;
+  like[j++] = '%';
+  for (unsigned i = 0; q[i] && j < cap - 2; i++) {
     char c = q[i];
-    if (c == ' ' || c == '%' || c == '_') continue;
+    if (c == '%' || c == '_' || (c == ' ' && !keep_space)) continue;
     like[j++] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
   }
-  if (j == 1) return;
+  if (j == 1) return 0;
   like[j++] = '%'; like[j] = 0;
+  return 1;
+}
+
+void room_search_section(const char *q, char *out, unsigned cap) {
+  out[0] = 0;
+  char like[32];
+  if (!search_like(q, like, sizeof(like), 0)) return;
   pj_t p; pj_init(&p); pj_str(&p, like); pj_str(&p, like);
   int n = db_query(g_idx, "SELECT id,title FROM rooms WHERE closed=0 "
                           "AND (upper(id) LIKE ? OR upper(title) LIKE ?) "
-                          "ORDER BY activity_ts DESC LIMIT 12", pj_done(&p), g_q, sizeof(g_q));
+                          "ORDER BY activity_ts DESC LIMIT 24", pj_done(&p), g_q, sizeof(g_q));
   if (n <= 0) return;
-  const char *cur = g_q; char row[200]; int any = 0;
-  s_cpy(out, "{\"title\":\"Chats\",\"items\":[", cap);
-  while (next_object(&cur, row, sizeof(row))) {
-    char id[48], title[80];
-    jstr(row, "id", id, sizeof(id));
-    jstr(row, "title", title, sizeof(title));
-    if (!id[0] || (!g_local_on && s_eq(id, LOCAL))) continue;
-    if (any) s_cat(out, ",", cap);
-    any = 1;
-    s_cat(out, "{\"id\":\"go:", cap); jesc(out, cap, id);
-    s_cat(out, "\",\"title\":\"", cap); jesc(out, cap, title[0] ? title : id);
-    s_cat(out, "\",\"subtitle\":\"Open this chat\"", cap);
-    if (id[0] == '#') s_cat(out, ",\"icon\":\"tag\"", cap);
-    s_cat(out, "}", cap);
+  static const char *head[2] = { "Groups", "Chats" };
+  static const char *tab[2] = { "Groups", "People" };
+  for (int pass = 0; pass < 2; pass++) {
+    const char *cur = g_q; char row[200]; int any = 0;
+    while (next_object(&cur, row, sizeof(row))) {
+      char id[48], title[80];
+      jstr(row, "id", id, sizeof(id));
+      jstr(row, "title", title, sizeof(title));
+      if (!id[0] || (!g_local_on && s_eq(id, LOCAL))) continue;
+      if ((id[0] == '#') != (pass == 0)) continue;
+      if (!any) {
+        if (out[0]) s_cat(out, ",", cap);
+        s_cat(out, "{\"title\":\"", cap); s_cat(out, head[pass], cap);
+        s_cat(out, "\",\"tab\":\"", cap); s_cat(out, tab[pass], cap);
+        s_cat(out, "\",\"items\":[", cap);
+      } else s_cat(out, ",", cap);
+      any = 1;
+      s_cat(out, "{\"id\":\"go:", cap); jesc(out, cap, id);
+      s_cat(out, "\",\"title\":\"", cap); jesc(out, cap, title[0] ? title : id);
+      s_cat(out, "\",\"subtitle\":\"Open this chat\"", cap);
+      if (id[0] == '#') s_cat(out, ",\"icon\":\"tag\"", cap);
+      s_cat(out, "}", cap);
+    }
+    if (any) s_cat(out, "]}", cap);
   }
-  if (!any) { out[0] = 0; return; }
-  s_cat(out, "]}", cap);
+}
+
+/* Messages that contain [q], newest conversations first, a few per room. Each
+ * conversation is its own file, so this opens them one by one through the
+ * same handle cache the rooms use. Blocked senders and messages the person
+ * hid stay out, as they do in the room. Three letters at least: fewer match
+ * everything. A tap opens the conversation.
+ *
+ * Only the ROOM_H_MAX most recent conversations are read. Each one is a file
+ * the host opens (and, over the handle cache, closes again) on the UI isolate:
+ * reading more than the cache holds reopens files on every keystroke and the
+ * page stops answering. A search over all history wants its own index. */
+#define MSG_HITS_MAX 24
+void room_search_messages(const char *q, char *out, unsigned cap) {
+  out[0] = 0;
+  if (!q[0] || !q[1] || !q[2] || g_idx < 0) return;
+  char like[48];
+  if (!search_like(q, like, sizeof(like), 1)) return;
+  static char rid[ROOM_H_MAX][48], rtitle[ROOM_H_MAX][80];
+  int rooms = 0;
+  { int n = db_query(g_idx, "SELECT id,title FROM rooms WHERE closed=0 "
+                            "ORDER BY activity_ts DESC LIMIT 8", 0, g_q, sizeof(g_q));
+    if (n <= 0) return;
+    const char *cur = g_q; char row[200];
+    while (rooms < ROOM_H_MAX && next_object(&cur, row, sizeof(row))) {
+      jstr(row, "id", rid[rooms], sizeof(rid[0]));
+      jstr(row, "title", rtitle[rooms], sizeof(rtitle[0]));
+      if (!rid[rooms][0] || (!g_local_on && s_eq(rid[rooms], LOCAL))) continue;
+      rooms++;
+    }
+  }
+  int hits = 0;
+  for (int r = 0; r < rooms && hits < MSG_HITS_MAX; r++) {
+    int h = room_handle(rid[r]);
+    if (h < 0) continue;
+    pj_t p; pj_init(&p); pj_str(&p, like);
+    int n = db_query(h, "SELECT mid,sender,substr(body,1,120) AS body FROM messages "
+                        "WHERE sys=0 AND upper(body) LIKE ? ORDER BY ts DESC LIMIT 3",
+                     pj_done(&p), g_q, sizeof(g_q));
+    if (n <= 0) continue;
+    const char *cur = g_q; char row[400];
+    while (hits < MSG_HITS_MAX && next_object(&cur, row, sizeof(row))) {
+      char mid[48], sender[16], body[130];
+      jstr(row, "mid", mid, sizeof(mid));
+      jstr(row, "sender", sender, sizeof(sender));
+      jstr(row, "body", body, sizeof(body));
+      if (!body[0] || s_pre(body, "((")) continue;
+      if (sender[0] && is_blocked(sender)) continue;
+      { pj_t hp; pj_init(&hp); pj_str(&hp, mid);
+        if (db_int(g_idx, "SELECT 1 AS n FROM hidden WHERE mid=? LIMIT 1", pj_done(&hp), 0) == 1) continue; }
+      if (!hits) s_cpy(out, "{\"title\":\"Messages\",\"tab\":\"Messages\",\"items\":[", cap);
+      else s_cat(out, ",", cap);
+      hits++;
+      s_cat(out, "{\"id\":\"go:", cap); jesc(out, cap, rid[r]);
+      s_cat(out, "\",\"title\":\"", cap); jesc(out, cap, body);
+      s_cat(out, "\",\"subtitle\":\"", cap);
+      if (sender[0]) { jesc(out, cap, sender); s_cat(out, " in ", cap); }
+      jesc(out, cap, rtitle[r][0] ? rtitle[r] : rid[r]);
+      s_cat(out, "\",\"icon\":\"chat\"}", cap);
+    }
+  }
+  if (hits) s_cat(out, "]}", cap);
 }
 
 void blocked_publish(void) {

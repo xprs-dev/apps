@@ -1481,8 +1481,13 @@ void module_handle_event(void) {
   }
   else if (s_eq(cmd, "searchall_search")) {
     jstr(buf, "searchall_query", g_sa_q, sizeof(g_sa_q));
-    static char chats[4096];
+    static char chats[8192], msgs[6144];
     room_search_section(g_sa_q, chats, sizeof(chats));
+    room_search_messages(g_sa_q, msgs, sizeof(msgs));
+    if (msgs[0]) {
+      if (chats[0]) s_cat(chats, ",", sizeof(chats));
+      s_cat(chats, msgs, sizeof(chats));
+    }
     pf_render_ex("searchall", g_sa_q, 1, chats);
   }
   else if (s_eq(cmd, "searchall_tap")) go_tap(buf, "searchall_id");
