@@ -243,8 +243,8 @@ static void join_offer(const char *call, int force) {
 }
 static void xgroup_room(const char *id, const char *t) {
   int r = room_ensure(id, t);
-  if (r == 1) room_rail();
-  else if (r == 0) room_set_title(id, t);
+  if (r == 1) { room_bump(id); room_rail(); }
+  else if (r == 0) { room_set_title(id, t); room_bump_idle(id); }
 }
 static void xgroups_refresh(void) {
   static char gb[12288];
@@ -1041,6 +1041,26 @@ static void push_group_members(const char *gid) {
   const char *label[2] = { "Members", "Invited" };
   for (int pass = 0; pass < 2; pass++) {
     const char *cur = rb; char obj[128]; int any = 0; char body[3072]; body[0] = 0;
+    /* The admin's way to add somebody is the FIRST row of the panel the
+     * header button opens, worded as what it does. It used to be an icon-only
+     * chip two taps to the right, which nobody found. The row's id names the
+     * group so the tap knows which one. */
+    if (pass == 0 && xgroup_is_admin(gid + 1)) {
+      s_cat(body, "{\"id\":\"inv:", sizeof(body)); jesc(body, sizeof(body), gid);
+      s_cat(body, "\",\"title\":\"Invite someone\",\"icon\":\"person_add\"}", sizeof(body));
+      /* The group's own things are the admin's alone too: a folder is listed
+       * under the group with the group key (10.2) and stops at the fifth
+       * level because every client ignores deeper; the picture is signed
+       * with the group key (6.3.2, 10.1). Rows here for the same reason as
+       * the invite: a chip of their own was not found. */
+      if (xgroup_depth(gid + 1) < 5) {
+        s_cat(body, ",{\"id\":\"fold:", sizeof(body)); jesc(body, sizeof(body), gid);
+        s_cat(body, "\",\"title\":\"New folder\",\"icon\":\"create_new_folder\"}", sizeof(body));
+      }
+      s_cat(body, ",{\"id\":\"pic:", sizeof(body)); jesc(body, sizeof(body), gid);
+      s_cat(body, "\",\"title\":\"Change picture\",\"icon\":\"image\"}", sizeof(body));
+      any = 1;
+    }
     while (next_object(&cur, obj, sizeof(obj))) {
       char st[12] = "", call[16] = "", role[12] = "";
       jstr(obj, "state", st, sizeof(st));
@@ -1062,27 +1082,6 @@ static void push_group_members(const char *gid) {
     first_sec = 0;
     s_cat(o, "{\"title\":\"", sz); s_cat(o, label[pass], sz);
     s_cat(o, "\",\"items\":[", sz); s_cat(o, body, sz); s_cat(o, "]}", sz);
-  }
-  /* The admin, and only the admin, can offer membership (26.3: a grant is
-   * signed with the group's key). Last, as an icon chip: the panel opens on
-   * the members, and three worded chips do not fit its width. The row's id
-   * names the group so the tap knows which one. */
-  if (xgroup_is_admin(gid + 1)) {
-    if (!first_sec) s_cat(o, ",", sz);
-    s_cat(o, "{\"title\":\"Invite\",\"icon\":\"person_add\",\"items\":[{\"id\":\"inv:", sz);
-    jesc(o, sz, gid);
-    s_cat(o, "\",\"title\":\"Invite someone\",\"subtitle\":\"Offer a station "
-             "membership of this group\",\"icon\":\"person_add\"}]}", sz);
-    /* The group's own things, also the admin's alone: its picture is signed
-     * with the group key (6.3.2, 10.1), and so is listing a folder (10.2),
-     * which stops at the fifth level because every client ignores deeper. */
-    s_cat(o, ",{\"title\":\"Manage\",\"icon\":\"tune\",\"items\":[", sz);
-    if (xgroup_depth(gid + 1) < 5) {
-      s_cat(o, "{\"id\":\"fold:", sz); jesc(o, sz, gid);
-      s_cat(o, "\",\"title\":\"New folder\",\"icon\":\"create_new_folder\"},", sz);
-    }
-    s_cat(o, "{\"id\":\"pic:", sz); jesc(o, sz, gid);
-    s_cat(o, "\",\"title\":\"Change picture\",\"icon\":\"image\"}]}", sz);
   }
   s_cat(o, "]}", sz);
   hal_msg_send(o, s_len(o));
@@ -1179,6 +1178,9 @@ static void group_join(const char *gid) {
     if (s_eq(g_xgroup[i].role, "invited") && xgroup_below(g_xgroup[i].call, gid + 1))
       hal_xprs_group_accept(g_xgroup[i].call, s_len(g_xgroup[i].call));
   xgroups_refresh();
+  /* Accepting is the newest thing that happened here: the group goes to the
+   * top of the chat list, where somebody new to the app will look. */
+  room_bump(gid); room_rail();
   if (s_eq(room_open_id(), gid)) push_group_members(gid);
   char t[48]; room_title(gid, t, sizeof(t));
   char m[80] = "Joined "; s_cat(m, t, sizeof(m));

@@ -105,6 +105,8 @@ int  room_set_private(const char *id, int on);
 int  room_is_private(const char *id);
 void room_hide(const char *id, const char *mid);
 void room_set_title(const char *id, const char *title);
+void room_bump(const char *id);
+void room_bump_idle(const char *id);
 unsigned long long room_max_ts(const char *id);
 
 int  is_blocked(const char *call);

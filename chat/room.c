@@ -554,6 +554,26 @@ void room_set_title(const char *id, const char *title) {
   room_rail();
 }
 
+/* A room that just became ours (a group made, an invitation arriving, one
+ * accepted) has no message yet, so its activity is 0 and the rail would sort
+ * it under every old chat, where a new user never looks. Stamp it with now:
+ * it is the newest thing that happened. Never lowers a later stamp. */
+void room_bump(const char *id) {
+  if (!room_known(id)) return;
+  long long now = (long long)hal_time_epoch();
+  pj_t p; pj_init(&p); pj_int(&p, now); pj_str(&p, id); pj_int(&p, now);
+  db_exec(g_idx, "UPDATE rooms SET activity_ts=? WHERE id=? AND activity_ts<?", pj_done(&p));
+}
+
+/* The same for a group room made before this stamp existed: it still has
+ * activity 0 and no message. Once stamped it is never touched again. */
+void room_bump_idle(const char *id) {
+  if (!room_known(id)) return;
+  pj_t p; pj_init(&p); pj_int(&p, (long long)hal_time_epoch()); pj_str(&p, id);
+  db_exec(g_idx, "UPDATE rooms SET activity_ts=? WHERE id=? AND activity_ts=0", pj_done(&p));
+  if (db_int(g_idx, "SELECT changes() AS n", 0, 0) > 0) room_rail();
+}
+
 /* ── THE DOOR ─────────────────────────────────────────────────────── */
 int room_admit(const room_msg_t *m) {
   if (!m->room || !m->mid || !m->mid[0] || !m->body) return 0;

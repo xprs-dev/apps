@@ -951,7 +951,14 @@ TEST(the_admin_invites_from_the_member_panel_and_the_core_signs) {
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5MINE\"}");
   module_handle_event();
   { const char *m = cap_find("ui.people.set");
-    CHECK(m && strstr(m, "room_members") && strstr(m, "inv:#X5MINE") && strstr(m, "Invite someone")); }
+    CHECK(m && strstr(m, "room_members") && strstr(m, "inv:#X5MINE") && strstr(m, "Invite someone"));
+    /* First row of the first section, not a chip of its own to find. */
+    CHECK(m && strstr(m, "\"title\":\"Members\",\"items\":[{\"id\":\"inv:#X5MINE\""));
+    CHECK(m && !strstr(m, "\"title\":\"Invite\",\"icon\""));
+    /* The folder and picture rows sit in the same first section, not behind a chip. */
+    CHECK(m && strstr(m, "\"id\":\"fold:#X5MINE\",\"title\":\"New folder\""));
+    CHECK(m && strstr(m, "\"id\":\"pic:#X5MINE\",\"title\":\"Change picture\""));
+    CHECK(m && !strstr(m, "\"title\":\"Manage\"")); }
   /* The row opens the station picker. */
   cap_clear();
   inbox_set("{\"command\":\"room_members_tap\",\"room_members_id\":\"inv:#X5MINE\"}");
@@ -978,6 +985,27 @@ TEST(the_admin_invites_from_the_member_panel_and_the_core_signs) {
   module_handle_event();
   CHECK(cap_contains("Only the group's admin can invite"));
   mock_set_invite_rc(0);
+  mock_set_groups("[]");
+}
+
+/* Both new and accepted groups have no message yet, so they sorted under
+ * every old chat. A new user never found them. */
+TEST(a_group_that_becomes_ours_goes_to_the_top_of_the_rail) {
+  fresh();
+  mock_set_accept_rc(0);
+  cap_clear();
+  mock_set_groups("[{\"call\":\"X5TOPS\",\"nick\":\"crew\",\"role\":\"invited\"}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  { const char *m = cap_find("ui.rooms.set");
+    const char *first = m ? strstr(m, "\"id\":\"") : 0;
+    CHECK(first && strncmp(first + 6, "#X5TOPS", 7) == 0); }
+  cap_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgjoin:#X5TOPS\",\"prompt_value\":\"\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.rooms.set");
+    const char *first = m ? strstr(m, "\"id\":\"") : 0;
+    CHECK(first && strncmp(first + 6, "#X5TOPS", 7) == 0); }
   mock_set_groups("[]");
 }
 
@@ -1242,6 +1270,7 @@ int main(void) {
   run_a_group_we_belong_to_gets_a_room_the_moment_it_exists();
   run_new_group_asks_for_a_name_and_opens_the_room_the_core_minted();
   run_the_admin_invites_from_the_member_panel_and_the_core_signs();
+  run_a_group_that_becomes_ours_goes_to_the_top_of_the_rail();
   run_an_invitation_gets_a_room_and_a_join_prompt_and_the_core_signs();
   run_a_group_room_learns_its_name_when_it_arrives_after_the_room();
   run_a_closed_group_post_renders_from_either_shape_the_core_delivers();
