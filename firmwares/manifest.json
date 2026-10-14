@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.firmwares",
-  "version":         "0.3.11",
+  "version":         "0.3.17",
   "kind":            "app",
   "title":           "Firmwares",
   "description":     "Flash an XPRS board over USB and set it up.",

@@ -87,7 +87,7 @@
     "name": "WiFi",
     "icon": "wifi",
     "hidden": true,
-    "tip": "The password is sealed to the station's key before it leaves this phone and kept nowhere on it.",
+    "tip": "The password is sealed to the station's key before it leaves this phone and kept nowhere on it. The station keeps a network only once it has joined it, remembers up to ten and joins whichever is in range; none can be removed from here, only on the station's own screen.",
     "children": [
       {
         "$": "group",

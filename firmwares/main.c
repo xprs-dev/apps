@@ -69,6 +69,7 @@ typedef struct {
     char want_call[12];           /* the callsign a call: asked for */
     unsigned long long last_ts;   /* the last ts: we used with it */
     int  ask_pol;                 /* a q:policy is out: observations wanted */
+    int  probe;                   /* heard, not yet known to be ours: asked */
     char now[96];                 /* the one line the Station screen shows */
 } st_t;
 
@@ -89,7 +90,14 @@ static char g_ev[4096];
 static char g_topic[64];
 static char g_buf[4096];
 static char g_out[8192];
-static char g_host[1024];         /* one hal_xprs_station answer */
+static char g_host[1536];         /* one hal_xprs_station answer */
+static char g_heard[16384];       /* one hal_xprs_stations answer: a busy
+                                   * place with Meshtastic and MeshCore nodes
+                                   * heard this hour is well past 4 KB */
+/* Stations that said they are somebody else's, this session: not asked
+ * again every time the page opens. */
+static char g_notmine[8][12];
+static int  g_notmine_w;
 
 static void say(const char *json) { hal_msg_send(json, fw_len(json)); }
 
@@ -139,6 +147,8 @@ static int add(const char *call)
 static void drop(int i)
 {
     if (i < 0 || i >= g_nst) return;
+    if (g_sel == i) g_sel = -1;
+    else if (g_sel > i) g_sel--;
     for (int j = i; j + 1 < g_nst; j++) g_st[j] = g_st[j + 1];
     g_nst--;
     for (unsigned k = 0; k < sizeof g_st[g_nst]; k++) ((char *)&g_st[g_nst])[k] = 0;
@@ -255,6 +265,17 @@ static int host_facts(const st_t *s)
     if (n <= 0) { g_host[0] = 0; return 0; }
     g_host[n] = 0;
     return 1;
+}
+
+/* The station's key, from the core, for one we did not hear ask to be
+ * claimed (owned by cable, or claimed before this phone's list was made):
+ * without it nothing can be sealed to it. Call right after host_facts. */
+static void key_from_core(st_t *s, int have)
+{
+    char k[72];
+    if (s->npub[0] || !have) return;
+    if (fw_json(g_host, "npub", k, sizeof k) && fw_starts(k, "npub1"))
+        fw_cpy(s->npub, k, sizeof s->npub);
 }
 
 static unsigned long long host_num(const char *key)
@@ -839,6 +860,70 @@ static void do_ask(st_t *s)
     listen();
 }
 
+/* A station in earshot that is not on the list may still be ours: one
+ * claimed over a cable, or before this phone kept a list. It never asks to
+ * be claimed, so it is asked whose it is (q:policy, which anybody may ask)
+ * when the page opens, and kept if the answer names us. Only into free
+ * rows, so a probe never pushes a listed station out, and a station that
+ * said it is somebody else's is not asked again this session. */
+static char *find_in(char *hay, const char *needle)
+{
+    for (; *hay; hay++) if (fw_starts(hay, needle)) return hay;
+    return 0;
+}
+
+static int notmine(const char *call)
+{
+    for (int i = 0; i < 8; i++) if (fw_eq(g_notmine[i], call)) return 1;
+    return 0;
+}
+
+static void discover(void)
+{
+    int n = hal_xprs_stations(g_heard, sizeof g_heard - 1);
+    if (n < 0) {
+        static const char m[] = "firmwares: too many stations heard to look for yours";
+        hal_log(2, m, sizeof m - 1);
+    }
+    if (n <= 0) return;
+    g_heard[n] = 0;
+    /* Only the first section: in earshot now. A station heard forty
+     * minutes ago, or only over Reticulum, would not hear the ask. */
+    const char *later = "\"title\":\"Heard this hour";
+    for (char *p = g_heard + 1; *p; p++)
+        if (fw_starts(p, later) || fw_starts(p, "\"title\":\"On Reticulum")) { *p = 0; break; }
+    if (!g_me[0]) who_am_i();
+    for (char *p = g_heard; (p = find_in(p, "{\"id\":\"")) != 0 && g_nst < ST_MAX; ) {
+        p += 7;
+        char call[12];
+        unsigned k = 0;
+        while (p[k] && p[k] != '"' && k < sizeof call - 1) { call[k] = p[k]; k++; }
+        call[k] = 0;
+        char *close = find_in(p, "}");
+        if (!close) break;
+        char save = *close;
+        *close = 0;
+        int station = find_in(p, "\"kind\":\"station\"") != 0;
+        *close = save;
+        p = close;
+        if (!station || !call[0] || notmine(call)) continue;
+        int was = find(call);
+        if (was >= 0) {
+            /* Asked before and never answered (the ask or the answer was
+             * lost): ask again, or it would hold a row unseen for good. */
+            if (g_st[was].probe) do_ask(&g_st[was]);
+            continue;
+        }
+        if (fw_starts(call, g_me) && (call[fw_len(g_me)] == 0 || call[fw_len(g_me)] == '-'))
+            continue;                      /* this phone */
+        int i = add(call);
+        if (i < 0) break;
+        st_t *st = &g_st[i];
+        st->probe = 1;
+        do_ask(st);
+    }
+}
+
 /* ── What the station says ────────────────────────────────────────────── */
 static void take_state(st_t *s, const char *wire)
 {
@@ -1000,6 +1085,31 @@ static void on_identity(const char *row)
 
 /* Heard only while a policy ask is out (listen()): the station's policy or
  * its mail count, as an observation addressed to us. */
+/* Whether a policy's owner: list names this phone. By callsign, or by the
+ * part of it that comes from the key: a station owned over a cable (or by
+ * config.ini's [owners]) knows the key and not the prefix its holder chose,
+ * so it names the owner with a derived X3 (XPRS.md 3, 11.9). A suffix match
+ * is not proof, and needs none: the station checks every command against
+ * the key itself, so a wrong guess costs a 403, never a station. */
+static int owner_is_me(const char *owners)
+{
+    unsigned n = fw_len(g_me);
+    if (n < 3) return 0;
+    for (const char *p = owners; *p; ) {
+        unsigned k = 0;
+        while (p[k] && p[k] != ',') k++;
+        if (k == n && fw_starts(p, g_me)) return 1;
+        if (k == n && p[0] == 'X' && p[1] >= '0' && p[1] <= '9' && g_me[0] == 'X') {
+            unsigned j = 2;
+            while (j < n && p[j] == g_me[j]) j++;
+            if (j == n) return 1;
+        }
+        p += k;
+        if (*p == ',') p++;
+    }
+    return 0;
+}
+
 static void on_observation(const char *row)
 {
     char wire[FW_WIRE_MAX + 1], from[16], v[48], sub[12];
@@ -1018,11 +1128,24 @@ static void on_observation(const char *row)
         if (fw_field(wire, "serve", v, sizeof v)) fw_cpy(s->pol_serve, v, sizeof s->pol_serve);
         /* Who it belongs to, from its own mouth: mine, nobody's, or another's. */
         if (fw_eq(s->pol_owner, "none")) { s->unowned = 1; s->mine = 0; s->theirs = 0; }
-        else if (fw_starts(s->pol_owner, g_me) &&
-                 (s->pol_owner[fw_len(g_me)] == 0 || s->pol_owner[fw_len(g_me)] == ',')) {
+        else if (owner_is_me(s->pol_owner)) {
             s->mine = 1; s->unowned = 0; s->theirs = 0;
         } else { s->theirs = 1; s->mine = 0; s->unowned = 0; }
         s->ask_pol = 0;
+        if (s->probe) {
+            /* Asked because it was heard (discover): kept only if ours.
+             * Somebody else's station is not this list's business. */
+            s->probe = 0;
+            if (s->theirs) {
+                fw_cpy(g_notmine[g_notmine_w], s->call, sizeof g_notmine[0]);
+                g_notmine_w = (g_notmine_w + 1) % 8;
+                drop(i);
+                listen();
+                return;
+            }
+            log_line(s->call, s->mine ? "Found: it is yours" : "Found: it is waiting for an owner");
+        }
+        if (s->mine) key_from_core(s, host_facts(s));
         if (!s->mine) s->asking = 0;          /* nothing more is coming */
         set_now(s, s->mine ? "Yours" : s->unowned ? "Waiting for an owner" : "Somebody else's");
         listen();
@@ -1688,6 +1811,7 @@ static void on_command(void)
     if (!fw_json(g_buf, "command", cmd, sizeof cmd)) return;
     if (fw_eq(cmd, "ready") || fw_eq(cmd, "refresh")) {
         who_am_i();
+        discover();
         push_list();
         if (g_sel >= 0) push_hub();
         /* The page is open: look at the cable (sysfs, or the USB host
@@ -1789,8 +1913,11 @@ static void on_command(void)
         char ssid[40] = "", pass[72] = "";
         fields("ssid", ssid, sizeof ssid);
         fields("wifi_pass", pass, sizeof pass);
+        if (!s->npub[0]) key_from_core(s, host_facts(s));
         if (!s->mine) log_line(s->call, "Claim it first");
         else if (!ssid[0]) log_line(s->call, "Which network?");
+        else if (!s->npub[0])
+            log_line(s->call, "Its key has not been heard yet: a station airs it every 30 minutes");
         else if (pass[0] && (fw_len(pass) < 8 || fw_len(pass) > 63))
             log_line(s->call, "A WiFi password is 8 to 63 characters");
         else if (!pass[0]) {

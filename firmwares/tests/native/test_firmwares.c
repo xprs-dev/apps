@@ -30,6 +30,7 @@ extern int g_send_rc;
 extern uint64_t g_ms, g_epoch;
 extern const char *g_mock_npub;
 extern char g_station_json[1024];
+extern char g_stations_json[2048];
 void cap_clear(void);
 int cap_count(const char *s);
 const char *cap_last(const char *s);
@@ -832,6 +833,89 @@ static void test_flash_refusals(void)
     CHECK(hub && strstr(hub, "\"label\":\"USB\",\"value\":\"none\",\"hint\":\"not on this device\",\"alert\":true"), "a platform without USB says so: %s", hub ? hub : "");
 }
 
+
+static void test_owned_station_is_found(void)
+{
+    /* A station owned by cable never asks to be claimed, so it is found by
+     * asking the stations in earshot whose they are: kept when the answer
+     * names this phone, dropped (and not asked again) when it names
+     * somebody else, and never asked when it was heard only earlier. Its
+     * key comes from the core, and the WiFi is sealed to it. */
+    static const char *OWN_NPUB = "npub1own1qpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jnqp";
+    char before[12];
+    snprintf(before, sizeof before, "%s", g_sel >= 0 ? g_st[g_sel].call : "");
+    cap_clear();
+    snprintf(g_stations_json, sizeof g_stations_json,
+        "[{\"title\":\"Heard over the air (4)\",\"items\":["
+        "{\"id\":\"X3OWN1\",\"title\":\"X3OWN1\",\"subtitle\":\"BLE\",\"tags\":[\"5s\",\"BLE\"],\"kind\":\"station\"},"
+        "{\"id\":\"X3THEM\",\"title\":\"X3THEM\",\"subtitle\":\"LAN\",\"tags\":[\"9s\",\"LAN\"],\"kind\":\"station\"},"
+        "{\"id\":\"X1ME77\",\"title\":\"X1ME77\",\"subtitle\":\"BLE\",\"tags\":[],\"kind\":\"user\"},"
+        "{\"id\":\"X1PAL2\",\"title\":\"X1PAL2\",\"subtitle\":\"BLE\",\"tags\":[],\"kind\":\"user\"}]},"
+        "{\"title\":\"Heard this hour (1)\",\"items\":["
+        "{\"id\":\"X3LATE\",\"title\":\"X3LATE\",\"subtitle\":\"BLE\",\"tags\":[],\"kind\":\"station\"}]}]");
+    int aired = g_aired_n;
+    command("{\"command\":\"refresh\",\"fields\":{}}");
+    int own = 0, them = 0, late = 0, user = 0;
+    for (int i = aired; i < g_aired_n; i++) {
+        if (!strstr(g_aired[i], " q:policy")) continue;
+        if (strstr(g_aired[i], " d:X3OWN1")) own++;
+        if (strstr(g_aired[i], " d:X3THEM")) them++;
+        if (strstr(g_aired[i], " d:X3LATE")) late++;
+        if (strstr(g_aired[i], " d:X1")) user++;
+    }
+    CHECK(own == 1 && them == 1, "the stations in earshot are asked whose they are (%d, %d)", own, them);
+    CHECK(late == 0, "not one heard only earlier this hour");
+    CHECK(user == 0, "and never a person, this phone included");
+    CHECK(subscribed("xprs.observation"), "listening for the answers while asked");
+    CHECK(!cap_last("X3OWN1"), "not listed before it has answered");
+
+    aired = g_aired_n;
+    command("{\"command\":\"refresh\",\"fields\":{}}");
+    int re = 0;
+    for (int k = aired; k < g_aired_n; k++) if (strstr(g_aired[k], " q:policy")) re++;
+    CHECK(re == 2, "a station that has not answered is asked again on the next refresh (%d)", re);
+
+    deliver("xprs.observation", row_to("observation", "X3THEM", "verified", 1,
+            "t:observation f:X3THEM d:X1ME77 s:policy owner:X1OTHER use:listed first:none serve:relay ts:2026-09-10_12:07:00 sig:KKKK"));
+    CHECK(find("X3THEM") < 0, "somebody else's: not kept");
+    CHECK(!owner_is_me("X3ME7") && !owner_is_me("X1ME770") && owner_is_me("X1OTHER,X1ME77")
+          && owner_is_me("X2ME77") && !owner_is_me("CT1ME77"), "owner: read by callsign or key suffix");
+
+    snprintf(g_station_json, sizeof g_station_json,
+             "{\"call\":\"X3OWN1\",\"kind\":\"station\",\"bearer\":\"ble\",\"rssi\":-55,\"agoMs\":3000,\"npub\":\"%s\"}", OWN_NPUB);
+    deliver("xprs.observation", row_to("observation", "X3OWN1", "verified", 1,
+            "t:observation f:X3OWN1 d:X1ME77 s:policy owner:X3ME77 use:all first:none serve:archive ts:2026-09-10_12:07:01 sig:KKKK"));
+    int i = find("X3OWN1");
+    CHECK(i >= 0 && g_st[i].mine, "ours: kept, and mine, though owned by cable it names us X3ME77");
+    CHECK(i >= 0 && strcmp(g_st[i].npub, OWN_NPUB) == 0, "with the key the core holds for it");
+    const char *list = cap_last("\"field\":\"stations\"");
+    CHECK(list && strstr(list, "\"title\":\"Yours\"") && strstr(list, "X3OWN1"), "listed under Yours");
+    CHECK(list && !strstr(list, "X3THEM"), "and the other one is not listed at all");
+
+    aired = g_aired_n;
+    command("{\"command\":\"refresh\",\"fields\":{}}");
+    int again = 0;
+    for (int k = aired; k < g_aired_n; k++) if (strstr(g_aired[k], " q:policy")) again++;
+    CHECK(again == 0, "a refresh asks nobody again: one is listed, one said no (%d)", again);
+
+    g_sealed_n = 0;
+    command("{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"X3OWN1\"}}");
+    command("{\"command\":\"wifi_apply\",\"fields\":{\"ssid\":\"Casa do Mar\",\"wifi_pass\":\"sardinha na brasa 2026\"}}");
+    CHECK(g_sealed_n == 1 && strcmp(g_sealed_to[0], OWN_NPUB) == 0, "its WiFi is sealed to that key");
+    CHECK(strstr(last_aired(), " d:X3OWN1") && strstr(last_aired(), " x:"), "and goes to it: %s", last_aired());
+
+    char id[7];
+    last_id(id);
+    result("X3OWN1", id, "code:500 wifi:up ip:192.168.1.7 ap:on zone:auto m:wrong password");
+    command("{\"command\":\"forget\",\"fields\":{}}");
+    g_stations_json[0] = 0;
+    g_station_json[0] = 0;
+    char tap[200];
+    snprintf(tap, sizeof tap, "{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"%s\"}}", before);
+    command(tap);
+    CHECK(g_sel >= 0 && strcmp(g_st[g_sel].call, before) == 0, "back to the station before");
+}
+
 int main(void)
 {
     module_init();
@@ -852,6 +936,7 @@ int main(void)
     test_import_is_sealed();
     test_stats_from_the_core();
     test_somebody_elses_station();
+    test_owned_station_is_found();
     test_open_network_clears_the_box();
     test_refusal_words();
     test_reset_station_starts_over();

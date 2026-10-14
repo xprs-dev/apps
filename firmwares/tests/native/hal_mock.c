@@ -49,6 +49,16 @@ int32_t hal_xprs_station(const char *call, uint32_t cl, char *out, uint32_t cap)
     return (int32_t)n;
 }
 
+/* ── what the core has heard: hal_xprs_stations ───────────────────────── */
+char g_stations_json[2048];     /* the sections; empty = nothing heard */
+int32_t hal_xprs_stations(char *out, uint32_t cap)
+{
+    uint32_t n = strlen(g_stations_json);
+    if (n > cap) return -(int32_t)n;
+    memcpy(out, g_stations_json, n);
+    return (int32_t)n;
+}
+
 /* ── the air ──────────────────────────────────────────────────────────── */
 char g_aired[64][260];
 int  g_aired_n;

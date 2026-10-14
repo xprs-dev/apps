@@ -1426,12 +1426,14 @@ int32_t hal_xprs_stations(char *out, uint32_t out_cap);
  *   {"call","kind","bearer","bearers":[..],"rssi","lastMs","agoMs",
  *    "lastDirectMs","packets", and when it has said so: "peers","mail",
  *    "uptime","lifetime","fw","count","serve":[..],"hears":[..],"sig",
- *    "readings":{k:v}}
+ *    "readings":{k:v}, "npub"}
  * uptime and lifetime are the qty text as aired ("26h", "38day"); sig is the
  * headline verdict of its signatures (verified, unverified, forged, unsigned).
  * readings holds the latest of each measurement key (weather, telemetry,
  * energy, and a device's state/level/target/volt), as aired with its unit,
- * the newest COMPOSED value per key.
+ * the newest COMPOSED value per key. npub is the station's key when the core
+ * holds one for it (from its t:identity): what hal_encrypt seals to, for a
+ * station this wapp never heard ask to be claimed.
  * Returns the bytes written, 0 when the host has not heard it this hour, or
  * the negated size needed when out_cap is too small. */
 __attribute__((import_module("hal"), import_name("xprs_station")))
