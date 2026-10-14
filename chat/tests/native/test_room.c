@@ -870,10 +870,8 @@ TEST(finding_a_group_opens_the_group_room_and_the_core_decides_posting) {
   CHECK(cap_count("ui.convo.msg") == 1);
 }
 
-TEST(the_member_panel_lists_the_roster_when_a_group_opens) {
+TEST(the_member_panel_lists_the_roster_when_the_people_button_is_tapped) {
   fresh();
-  /* Bug: the members icon showed nobody. Opening a group pushes room_members
-   * from the core roster (members and open invitations). */
   mock_set_roster(
     "[{\"call\":\"X1ARKL\",\"role\":\"admin\",\"state\":\"member\"},"
     " {\"call\":\"X16JK8\",\"role\":\"member\",\"state\":\"member\"},"
@@ -881,10 +879,59 @@ TEST(the_member_panel_lists_the_roster_when_a_group_opens) {
   cap_clear();
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5ROOM\"}");
   module_handle_event();
-  const char *m = cap_find("ui.people.set");
-  CHECK(m && strstr(m, "room_members"));
+  /* Opening the room costs the panel nothing: it is read when asked for. */
+  CHECK(!cap_find("ui.members.set"));
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5ROOM\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"ui.screen.open\",\"name\":\"Group\""));
+  const char *m = cap_find("ui.members.set");
+  CHECK(m && strstr(m, "\"field\":\"members\""));
   CHECK(m && strstr(m, "X1ARKL") && strstr(m, "X16JK8") && strstr(m, "X1WATT"));
-  CHECK(m && strstr(m, "Members") && strstr(m, "Invited"));
+  /* Admins first, the invited last, and the chips count each kind. */
+  CHECK(m && strstr(m, "X1ARKL") < strstr(m, "X16JK8") && strstr(m, "X16JK8") < strstr(m, "X1WATT"));
+  CHECK(m && strstr(m, "\"label\":\"Invited\",\"count\":1"));
+  CHECK(m && strstr(m, "\"total\":3"));
+  mock_set_roster("[]");
+}
+
+/* Hundreds of members: the host asks a page at a time, and search and the
+ * chips are answered here, so a name on a page not yet fetched is found. */
+TEST(a_big_group_is_paged_and_searched_by_the_wapp) {
+  fresh();
+  static char roster[40000];
+  char *w = roster; w += sprintf(w, "[");
+  for (int i = 0; i < 300; i++)
+    w += sprintf(w, "%s{\"call\":\"X1%c%c%02d\",\"role\":\"member\",\"state\":\"member\"}",
+                 i ? "," : "", 'A' + i / 26 % 26, 'A' + i % 26, i % 100);
+  w += sprintf(w, ",{\"call\":\"X1BOSS\",\"role\":\"admin\",\"state\":\"member\"}]");
+  mock_set_roster(roster);
+  inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5ROOM\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.members.set");
+    CHECK(m && strstr(m, "\"total\":301") && strstr(m, "X1BOSS"));
+    CHECK(m && strlen(m) < 6200); }              /* one page, not 300 rows */
+  cap_clear();
+  inbox_set("{\"command\":\"members_page\",\"members_query\":\"\",\"members_filter\":\"\",\"members_offset\":40}");
+  module_handle_event();
+  { const char *m = cap_find("ui.members.set");
+    CHECK(m && strstr(m, "\"offset\":40") && !strstr(m, "X1BOSS") && !strstr(m, "\"actions\"")); }
+  /* The last page is short, and the offset past the end is empty. */
+  cap_clear();
+  inbox_set("{\"command\":\"members_page\",\"members_query\":\"\",\"members_filter\":\"\",\"members_offset\":280}");
+  module_handle_event();
+  { const char *m = cap_find("ui.members.set"); CHECK(m && strstr(m, "\"offset\":280")); }
+  /* A search answers from the whole roster, case-insensitively. */
+  cap_clear();
+  inbox_set("{\"command\":\"members_page\",\"members_query\":\"boss\",\"members_filter\":\"\",\"members_offset\":0}");
+  module_handle_event();
+  { const char *m = cap_find("ui.members.set");
+    CHECK(m && strstr(m, "\"total\":1") && strstr(m, "X1BOSS")); }
+  cap_clear();
+  inbox_set("{\"command\":\"members_page\",\"members_query\":\"\",\"members_filter\":\"admin\",\"members_offset\":0}");
+  module_handle_event();
+  { const char *m = cap_find("ui.members.set");
+    CHECK(m && strstr(m, "\"total\":1") && strstr(m, "X1BOSS")); }
   mock_set_roster("[]");
 }
 
@@ -942,26 +989,21 @@ TEST(the_admin_invites_from_the_member_panel_and_the_core_signs) {
     " {\"call\":\"X5MEMB\",\"nick\":\"memb\",\"role\":\"member\"}]");
   event_push("core.groups", "{}");
   module_handle_event();
-  /* Only the admin is offered the Invite row. */
+  /* Only the admin is offered Invite, New folder and Picture. */
   cap_clear();
-  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5MEMB\"}");
+  inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5MEMB\"}");
   module_handle_event();
-  { const char *m = cap_find("ui.people.set"); CHECK(!m || !strstr(m, "inv:")); }
+  { const char *m = cap_find("ui.members.set");
+    CHECK(m && strstr(m, "\"actions\":[]")); }
   cap_clear();
-  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5MINE\"}");
+  inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5MINE\"}");
   module_handle_event();
-  { const char *m = cap_find("ui.people.set");
-    CHECK(m && strstr(m, "room_members") && strstr(m, "inv:#X5MINE") && strstr(m, "Invite someone"));
-    /* First row of the first section, not a chip of its own to find. */
-    CHECK(m && strstr(m, "\"title\":\"Members\",\"items\":[{\"id\":\"inv:#X5MINE\""));
-    CHECK(m && !strstr(m, "\"title\":\"Invite\",\"icon\""));
-    /* The folder and picture rows sit in the same first section, not behind a chip. */
-    CHECK(m && strstr(m, "\"id\":\"fold:#X5MINE\",\"title\":\"New folder\""));
-    CHECK(m && strstr(m, "\"id\":\"pic:#X5MINE\",\"title\":\"Change picture\""));
-    CHECK(m && !strstr(m, "\"title\":\"Manage\"")); }
-  /* The row opens the station picker. */
+  { const char *m = cap_find("ui.members.set");
+    CHECK(m && strstr(m, "\"id\":\"inv\"") && strstr(m, "\"label\":\"Invite\""));
+    CHECK(m && strstr(m, "\"id\":\"fold\"") && strstr(m, "\"id\":\"pic\"")); }
+  /* The button opens the station picker. */
   cap_clear();
-  inbox_set("{\"command\":\"room_members_tap\",\"room_members_id\":\"inv:#X5MINE\"}");
+  inbox_set("{\"command\":\"members_action\",\"members_id\":\"inv\"}");
   module_handle_event();
   CHECK(cap_contains("\"ui.screen.open\",\"name\":\"Invite\""));
   { const char *m = cap_find("ui.people.set"); CHECK(m && strstr(m, "inviteuser") && strstr(m, "go:X1NEAR")); }
@@ -1266,7 +1308,8 @@ int main(void) {
   run_utf8_in_the_composer_reaches_the_wire_untouched();
   run_a_1to1_reaction_addressed_to_us_is_applied_and_local_still_routes();
   run_finding_a_group_opens_the_group_room_and_the_core_decides_posting();
-  run_the_member_panel_lists_the_roster_when_a_group_opens();
+  run_the_member_panel_lists_the_roster_when_the_people_button_is_tapped();
+  run_a_big_group_is_paged_and_searched_by_the_wapp();
   run_a_group_we_belong_to_gets_a_room_the_moment_it_exists();
   run_new_group_asks_for_a_name_and_opens_the_room_the_core_minted();
   run_the_admin_invites_from_the_member_panel_and_the_core_signs();

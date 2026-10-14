@@ -169,7 +169,7 @@ int32_t hal_xprs_history(const char* q,uint32_t ql,char* o,uint32_t cap){ (void)
 static char g_groups[2048] = "[]";
 void mock_set_groups(const char* json){ snprintf(g_groups,sizeof(g_groups),"%s",json&&json[0]?json:"[]"); }
 int32_t hal_xprs_groups(char* o,uint32_t cap){ if(g_hk_groups) return g_hk_groups(o,cap); uint32_t n=strlen(g_groups); if(n>cap) return -(int32_t)n; memcpy(o,g_groups,n); return n; }
-static char g_roster[2048] = "[]";
+static char g_roster[40000] = "[]";
 void mock_set_roster(const char* json){ snprintf(g_roster,sizeof(g_roster),"%s",json&&json[0]?json:"[]"); }
 int32_t hal_xprs_group_roster(const char* g,uint32_t gl,char* o,uint32_t cap){ if(g_hk_roster) return g_hk_roster(g,gl,o,cap); (void)g;(void)gl; uint32_t n=strlen(g_roster); if(n>cap) return -(int32_t)n; memcpy(o,g_roster,n); return n; }
 /* Minting is the core's; the mock hands back a fixed callsign, adds the group

@@ -1274,6 +1274,48 @@ a wide thumbnail (104x78) instead of the 44 px avatar circle. For rows that
 are THINGS a person has to recognise (a board, a product), not people. The
 image is decoded bounded like every network image in the host.
 
+### A members panel (`$type:"members"`)
+
+A full-size panel to look through and manage the people of one thing: a
+group, a channel, a project. Declare the field on a screen of its own:
+
+```json
+{ "$": "screen", "name": "Group", "hidden": true,
+  "children": [ { "$": "field", "name": "members", "$type": "members" } ] }
+```
+
+The host draws a header, a row of buttons, a search box, filter chips and a
+lazily built list. It holds no roster: a group can have hundreds of people, so
+the wapp keeps the list and answers one page at a time. Open the screen with
+`ui.screen.open` after sending the first page.
+
+Wapp to host, `ui.members.set`:
+
+| key | |
+|---|---|
+| `field` | the field name |
+| `offset` | `0` replaces the rows; a later offset appends when it continues what the host holds |
+| `rows` | this page: `[{id, title, subtitle, icon, tag}]` (`tag` is a small chip, `icon` as in the people rows) |
+| `total` | how many rows match the current query and filter, so the host knows whether to ask for more |
+| `title`, `subtitle` | the header (kept when a page leaves them out) |
+| `actions` | buttons under the header: `[{id, label, icon, primary}]` |
+| `filters` | chips: `[{id, label, count}]`, id `""` is All; shown when there are two or more |
+| `reset` | `true` clears the host's query and filter, set it on the first page of an open |
+
+Host to wapp, commands (`<field>` is the field name):
+
+| command | fields | when |
+|---|---|---|
+| `<field>_page` | `<field>_query`, `<field>_filter`, `<field>_offset` | the panel opens, a query or chip changes (offset 0), or the end of the list scrolls into view |
+| `<field>_tap` | `<field>_id` | a row was tapped |
+| `<field>_action` | `<field>_id` (the action id) | a button was tapped |
+
+Search is debounced (300 ms) and answered by the wapp over its whole list, so
+a name on a page not yet fetched is found. Page 40 rows at a time, keep the
+roster in one buffer between pages, and count with the same test that selects
+the rows. Chat's Group screen (`apps/chat/main.c`, `push_members_page`) is the
+reference.
+
 ### Flashing a board over USB (`hal_flash_*`, permission `device.flash`)
 
 The host owns the cable: the serial port, the ESP ROM loader, the firmware

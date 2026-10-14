@@ -101,6 +101,14 @@
   },
   {
     "$": "screen",
+    "name": "Group",
+    "hidden": true,
+    "children": [
+      { "$": "field", "name": "members", "$type": "members" }
+    ]
+  },
+  {
+    "$": "screen",
     "name": "Invite",
     "hidden": true,
     "toolbar": true,

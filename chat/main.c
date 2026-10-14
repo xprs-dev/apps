@@ -1022,69 +1022,143 @@ static const char *s_find(const char *hay, const char *needle) {
 static void render_people(const char *field, const char *q, int allow_group) {
   pf_render(field, q, allow_group);
 }
-/* The member panel (rooms widget, field "room_members"). The host draws it
- * from whatever we last pushed, so we push it whenever a group room opens --
- * membership decides what a client SHOWS (26.7), and the roster is the core's.
- * Two sections: full members, and open invitations (26.3.1: not members yet).
+/* THE MEMBERS PANEL (the host's reusable `members` field, screen "Group").
+ * A group can have hundreds of members, so nothing here is pushed whole: the
+ * roster is read from the core once into a buffer and the host asks for one
+ * page at a time (members_page: query, filter, offset), drawing them lazily.
+ * Search and the filter chips are answered here for the same reason, a filter
+ * over the rows the host holds would miss everyone on a page not yet fetched.
+ * Membership decides what a client SHOWS (26.7); the roster is the core's.
  * `gid` is "#X5....". */
-static void push_group_members(const char *gid) {
-  if (!xgroup_is(gid)) return;
-  static char rb[4096];
-  int n = hal_xprs_group_roster(gid, s_len(gid), rb, sizeof(rb) - 1);
-  if (n < 0 || n >= (int)sizeof(rb)) return;
-  rb[n < 0 ? 0 : n] = 0;
-  static char o[8192]; const unsigned sz = sizeof(o);
-  s_cpy(o, "{\"type\":\"ui.people.set\",\"field\":\"room_members\",\"sections\":[", sz);
-  int first_sec = 1;
-  /* Two passes over the same flat array: members first, then invited. */
-  const char *want[2] = { "member", "invited" };
-  const char *label[2] = { "Members", "Invited" };
-  for (int pass = 0; pass < 2; pass++) {
-    const char *cur = rb; char obj[128]; int any = 0; char body[3072]; body[0] = 0;
-    /* The admin's way to add somebody is the FIRST row of the panel the
-     * header button opens, worded as what it does. It used to be an icon-only
-     * chip two taps to the right, which nobody found. The row's id names the
-     * group so the tap knows which one. */
-    if (pass == 0 && xgroup_is_admin(gid + 1)) {
-      s_cat(body, "{\"id\":\"inv:", sizeof(body)); jesc(body, sizeof(body), gid);
-      s_cat(body, "\",\"title\":\"Invite someone\",\"icon\":\"person_add\"}", sizeof(body));
-      /* The group's own things are the admin's alone too: a folder is listed
-       * under the group with the group key (10.2) and stops at the fifth
-       * level because every client ignores deeper; the picture is signed
-       * with the group key (6.3.2, 10.1). Rows here for the same reason as
-       * the invite: a chip of their own was not found. */
-      if (xgroup_depth(gid + 1) < 5) {
-        s_cat(body, ",{\"id\":\"fold:", sizeof(body)); jesc(body, sizeof(body), gid);
-        s_cat(body, "\",\"title\":\"New folder\",\"icon\":\"create_new_folder\"}", sizeof(body));
-      }
-      s_cat(body, ",{\"id\":\"pic:", sizeof(body)); jesc(body, sizeof(body), gid);
-      s_cat(body, "\",\"title\":\"Change picture\",\"icon\":\"image\"}", sizeof(body));
-      any = 1;
-    }
+#define MP_PAGE 40
+#define MP_ROSTER 40960   /* about 780 members; a bigger group is cut here */
+static char g_mp_gid[12];       /* the group the panel is open for, or "" */
+static char g_mp_q[24];
+static char g_mp_filter[10];    /* "", "admin" or "invited" */
+static char g_mp_roster[MP_ROSTER];
+static int  g_mp_roster_ok;     /* the buffer holds g_mp_gid's roster */
+
+static int mp_load(const char *gid) {
+  if (g_mp_roster_ok) return 1;
+  int n = hal_xprs_group_roster(gid, s_len(gid), g_mp_roster, sizeof(g_mp_roster) - 1);
+  if (n < 0 || n >= (int)sizeof(g_mp_roster)) { g_mp_roster[0] = 0; return 0; }
+  g_mp_roster[n] = 0;
+  g_mp_roster_ok = 1;
+  return 1;
+}
+
+/* Does this roster entry belong to the page asked for? Same test for the
+ * count and for the rows, so the total always matches what pages through. */
+static int mp_match(const char *call, const char *role, const char *st) {
+  if (g_mp_filter[0]) {
+    if (s_eq(g_mp_filter, "invited") ? !s_eq(st, "invited")
+                                     : !(s_eq(st, "member") && s_eq(role, "admin"))) return 0;
+  }
+  if (g_mp_q[0]) {
+    char hay[16], needle[24];
+    unsigned i = 0;
+    for (; call[i] && i < sizeof(hay) - 1; i++) hay[i] = (call[i] >= 'a' && call[i] <= 'z') ? call[i] - 32 : call[i];
+    hay[i] = 0;
+    for (i = 0; g_mp_q[i] && i < sizeof(needle) - 1; i++)
+      needle[i] = (g_mp_q[i] >= 'a' && g_mp_q[i] <= 'z') ? g_mp_q[i] - 32 : g_mp_q[i];
+    needle[i] = 0;
+    if (!s_find(hay, needle)) return 0;
+  }
+  return 1;
+}
+
+/* Admins first, then moderators, members, and the invited last: four passes
+ * over the same buffer, so the order is stable from one page to the next. */
+static void push_members_page(int offset, int header, int reset) {
+  if (!g_mp_gid[0] || !mp_load(g_mp_gid)) return;
+  static char o[6144]; const unsigned sz = sizeof(o);
+  int total = 0, sent = 0, seen = 0, n_all = 0, n_adm = 0, n_inv = 0;
+  s_cpy(o, "{\"type\":\"ui.members.set\",\"field\":\"members\",\"offset\":", sz);
+  { char nb[12]; u_lltoa((unsigned long long)offset, nb); s_cat(o, nb, sz); }
+  if (reset) s_cat(o, ",\"reset\":true", sz);
+  static char rows[4608]; rows[0] = 0;
+  for (int rank = 0; rank < 4; rank++) {
+    const char *cur = g_mp_roster; char obj[128];
     while (next_object(&cur, obj, sizeof(obj))) {
       char st[12] = "", call[16] = "", role[12] = "";
       jstr(obj, "state", st, sizeof(st));
-      if (!s_eq(st, want[pass])) continue;
       jstr(obj, "call", call, sizeof(call));
       jstr(obj, "role", role, sizeof(role));
       if (!call[0]) continue;
-      if (any) s_cat(body, ",", sizeof(body));
-      any = 1;
-      s_cat(body, "{\"id\":\"go:", sizeof(body)); jesc(body, sizeof(body), call);
-      s_cat(body, "\",\"title\":\"", sizeof(body)); jesc(body, sizeof(body), call);
-      if (is_self_call(call)) s_cat(body, " (you)", sizeof(body));
-      s_cat(body, "\",\"subtitle\":\"", sizeof(body));
-      jesc(body, sizeof(body), role[0] ? role : (pass ? "invited" : "member"));
-      s_cat(body, "\",\"icon\":\"person\"}", sizeof(body));
+      int inv = s_eq(st, "invited");
+      int r = inv ? 3 : s_eq(role, "admin") ? 0 : s_eq(role, "mod") ? 1 : 2;
+      if (r != rank) continue;
+      if (header) {
+        /* The chip counts ignore the query on purpose: they say how many of
+         * each kind the group has, whatever is typed. */
+        n_all += !inv; n_adm += (!inv && s_eq(role, "admin")); n_inv += inv;
+      }
+      if (!mp_match(call, role, st)) continue;
+      total++;
+      if (seen++ < offset || sent >= MP_PAGE) continue;
+      if (sent) s_cat(rows, ",", sizeof(rows));
+      sent++;
+      s_cat(rows, "{\"id\":\"go:", sizeof(rows)); jesc(rows, sizeof(rows), call);
+      s_cat(rows, "\",\"title\":\"", sizeof(rows)); jesc(rows, sizeof(rows), call);
+      if (is_self_call(call)) s_cat(rows, " (you)", sizeof(rows));
+      s_cat(rows, "\",\"subtitle\":\"", sizeof(rows));
+      jesc(rows, sizeof(rows), inv ? "invited" : (role[0] ? role : "member"));
+      s_cat(rows, "\",\"icon\":\"person\"}", sizeof(rows));
     }
-    if (!any) continue;
-    if (!first_sec) s_cat(o, ",", sz);
-    first_sec = 0;
-    s_cat(o, "{\"title\":\"", sz); s_cat(o, label[pass], sz);
-    s_cat(o, "\",\"items\":[", sz); s_cat(o, body, sz); s_cat(o, "]}", sz);
   }
-  s_cat(o, "]}", sz);
+  s_cat(o, ",\"total\":", sz);
+  { char nb[12]; u_lltoa((unsigned long long)total, nb); s_cat(o, nb, sz); }
+  if (header) {
+    char t[48]; room_title(g_mp_gid, t, sizeof(t));
+    s_cat(o, ",\"title\":\"", sz); jesc(o, sz, t); s_cat(o, "\"", sz);
+    char sub[48] = ""; char nb[12];
+    u_lltoa((unsigned long long)n_all, nb); s_cat(sub, nb, sizeof(sub));
+    s_cat(sub, n_all == 1 ? " member" : " members", sizeof(sub));
+    s_cat(o, ",\"subtitle\":\"", sz); s_cat(o, sub, sz); s_cat(o, "\"", sz);
+    /* Only the admin can offer membership (26.3), and the group's own things
+     * are signed with the group key: its picture (6.3.2, 10.1) and listing a
+     * folder (10.2), which stops at the fifth level because every client
+     * ignores deeper. A member gets the list alone. */
+    s_cat(o, ",\"actions\":[", sz);
+    if (xgroup_is_admin(g_mp_gid + 1)) {
+      s_cat(o, "{\"id\":\"inv\",\"label\":\"Invite\",\"icon\":\"person_add\",\"primary\":true}", sz);
+      if (xgroup_depth(g_mp_gid + 1) < 5)
+        s_cat(o, ",{\"id\":\"fold\",\"label\":\"New folder\",\"icon\":\"create_new_folder\"}", sz);
+      s_cat(o, ",{\"id\":\"pic\",\"label\":\"Picture\",\"icon\":\"image\"}", sz);
+    }
+    s_cat(o, "],\"filters\":[{\"id\":\"\",\"label\":\"All\",\"count\":", sz);
+    u_lltoa((unsigned long long)(n_all + n_inv), nb); s_cat(o, nb, sz);
+    /* A chip only for a kind the group has: the core can list its admin as a
+     * plain member, and "Admins 0" would only be wrong. */
+    if (n_adm) {
+      s_cat(o, "},{\"id\":\"admin\",\"label\":\"Admins\",\"count\":", sz);
+      u_lltoa((unsigned long long)n_adm, nb); s_cat(o, nb, sz);
+    }
+    if (n_inv) {
+      s_cat(o, "},{\"id\":\"invited\",\"label\":\"Invited\",\"count\":", sz);
+      u_lltoa((unsigned long long)n_inv, nb); s_cat(o, nb, sz);
+    }
+    s_cat(o, "}]", sz);
+  }
+  s_cat(o, ",\"rows\":[", sz); s_cat(o, rows, sz); s_cat(o, "]}", sz);
   hal_msg_send(o, s_len(o));
+}
+
+/* The core said the roster moved: if the panel is open for this group, it
+ * re-reads and shows the first page again. The call sites were the old side
+ * panel's, they stay the one place a roster change is announced. */
+static void push_group_members(const char *gid) {
+  if (!g_mp_gid[0] || !s_eq(gid, g_mp_gid)) return;
+  g_mp_roster_ok = 0;
+  push_members_page(0, 1, 0);
+}
+
+static void members_open(const char *gid) {
+  if (!xgroup_is(gid)) return;
+  s_cpy(g_mp_gid, gid, sizeof(g_mp_gid));
+  g_mp_q[0] = 0; g_mp_filter[0] = 0; g_mp_roster_ok = 0;
+  push_members_page(0, 1, 1);
+  screen_open("Group");
 }
 
 /* A new closed group (26.1). The name is all the wapp has to say: the core
@@ -1462,21 +1536,34 @@ void module_handle_event(void) {
       "\"confirm\":\"Create\",\"input\":{\"hint\":\"group name\",\"max\":24}}";
     hal_msg_send(pm, sizeof(pm) - 1);
   }
-  else if (s_eq(cmd, "room_members_tap")) {
-    char id[48] = ""; jstr(buf, "room_members_id", id, sizeof(id));
-    if (s_pre(id, "inv:")) invite_open(id + 4);
-    else if (s_pre(id, "fold:") && xgroup_is(id + 5)) {
+  else if (s_eq(cmd, "rooms_members")) {
+    char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
+    members_open(id);
+  }
+  else if (s_eq(cmd, "members_page")) {
+    jstr(buf, "members_query", g_mp_q, sizeof(g_mp_q));
+    jstr(buf, "members_filter", g_mp_filter, sizeof(g_mp_filter));
+    push_members_page(jint(buf, "members_offset"), 0, 0);
+  }
+  else if (s_eq(cmd, "members_tap")) {
+    char id[48] = ""; jstr(buf, "members_id", id, sizeof(id));
+    if (s_pre(id, "go:") && !is_self_call(id + 3)) profile_show(id + 3);
+  }
+  else if (s_eq(cmd, "members_action") && g_mp_gid[0]) {
+    char id[16] = ""; jstr(buf, "members_id", id, sizeof(id));
+    if (s_eq(id, "inv")) invite_open(g_mp_gid);
+    else if (s_eq(id, "fold") && xgroup_is(g_mp_gid)) {
       char pm[400] = "{\"type\":\"ui.prompt\",\"id\":\"xgfold:";
-      jesc(pm, sizeof(pm), id + 5);
+      jesc(pm, sizeof(pm), g_mp_gid);
       s_cat(pm, "\",\"title\":\"New folder\",\"body\":\"A folder for one topic "
                 "inside this group. Its members are invited to it.\","
                 "\"confirm\":\"Create\",\"input\":{\"hint\":\"folder name\",\"max\":24}}",
             sizeof(pm));
       hal_msg_send(pm, s_len(pm));
     }
-    else if (s_pre(id, "pic:") && xgroup_is(id + 4)) {
+    else if (s_eq(id, "pic") && xgroup_is(g_mp_gid)) {
       char pm[96] = "{\"type\":\"ui.pick.picture\",\"id\":\"gpic:";
-      jesc(pm, sizeof(pm), id + 4);
+      jesc(pm, sizeof(pm), g_mp_gid);
       s_cat(pm, "\"}", sizeof(pm));
       hal_msg_send(pm, s_len(pm));
     }

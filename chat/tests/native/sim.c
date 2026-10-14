@@ -547,6 +547,14 @@ static void pump(int ni){
 /* a person on node ni types a host command. */
 static void ui(int ni, const char* cmd){ load(ni); inbox_set(cmd); module_handle_event(); }
 
+/* The header's people button, then a button on the members panel. */
+static void open_members(int ni, const char* id){
+  char c[128]; snprintf(c,sizeof c,"{\"command\":\"rooms_members\",\"rooms_convo\":\"%s\"}",id); ui(ni,c);
+}
+static void members_act(int ni, const char* gid, const char* act){
+  char c[128]; open_members(ni,gid);
+  snprintf(c,sizeof c,"{\"command\":\"members_action\",\"members_id\":\"%s\"}",act); ui(ni,c);
+}
 static void open_room(int ni, const char* id){
   char c[128]; snprintf(c,sizeof c,"{\"command\":\"rooms_open\",\"rooms_convo\":\"%s\"}",id); ui(ni,c);
 }
@@ -926,15 +934,15 @@ static void t_folders(void){
   group_put(g,"X1ANNA","admin"); group_put(g,"X1BOBB","member"); group_put(g,"X1CATE","member");
 
   /* The admin's panel offers a folder and a picture; a member's does not. */
-  cap_clear(); open_room(A,"#X5GULF");
-  CHECK(cap_contains("fold:#X5GULF") && cap_contains("New folder"));
-  CHECK(cap_contains("pic:#X5GULF") && cap_contains("Change picture"));
-  cap_clear(); open_room(B,"#X5GULF");
-  CHECK(cap_contains("room_members") && !cap_contains("fold:#X5GULF") && !cap_contains("pic:#X5GULF"));
+  cap_clear(); open_room(A,"#X5GULF"); open_members(A,"#X5GULF");
+  CHECK(cap_contains("\"id\":\"fold\"") && cap_contains("New folder"));
+  CHECK(cap_contains("\"id\":\"pic\"") && cap_contains("Picture"));
+  cap_clear(); open_room(B,"#X5GULF"); open_members(B,"#X5GULF");
+  CHECK(cap_contains("ui.members.set") && !cap_contains("\"id\":\"fold\"") && !cap_contains("\"id\":\"pic\""));
 
   /* A taps New folder and names it. */
   cap_clear();
-  ui(A,"{\"command\":\"room_members_tap\",\"room_members_id\":\"fold:#X5GULF\"}");
+  members_act(A,"#X5GULF","fold");
   CHECK(cap_contains("\"id\":\"xgfold:#X5GULF\""));
   cap_clear();
   ui(A,"{\"command\":\"prompt\",\"prompt_id\":\"xgfold:#X5GULF\",\"prompt_input\":\"Repairs\"}");
@@ -979,7 +987,7 @@ static void t_folders(void){
   /* The picture: A asks the host for one, the host answers with a token, and
    * the core is asked to sign it as the folder. */
   cap_clear(); open_room(A,"#X5F001");
-  ui(A,"{\"command\":\"room_members_tap\",\"room_members_id\":\"pic:#X5F001\"}");
+  members_act(A,"#X5F001","pic");
   CHECK(cap_contains("\"type\":\"ui.pick.picture\",\"id\":\"gpic:#X5F001\""));
   cap_clear();
   ui(A,"{\"command\":\"picture_picked\",\"picture_id\":\"gpic:#X5F001\","
@@ -996,7 +1004,7 @@ static void t_folders(void){
   /* D is invited to the group later: the offer covers its folder, the prompt
    * names it, and one Join takes both. */
   open_room(A,"#X5GULF");
-  ui(A,"{\"command\":\"room_members_tap\",\"room_members_id\":\"inv:#X5GULF\"}");
+  members_act(A,"#X5GULF","inv");
   ui(A,"{\"command\":\"inviteuser_tap\",\"inviteuser_id\":\"go:X1DAVE\"}");
   CHECK(!strcmp(grp_role(g,"X1DAVE"),"invited") && f && !strcmp(grp_role(f,"X1DAVE"),"invited"));
   cap_clear(); pump(D);
