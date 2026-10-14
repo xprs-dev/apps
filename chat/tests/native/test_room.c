@@ -380,14 +380,52 @@ TEST(a_sent_one_to_one_carries_its_tick_and_the_tick_finds_it_after_restart) {
   CHECK(cap_contains("\"status\":\"delivered\""));
 }
 
+/* A 1:1 is encrypted by default, clear text is a person's exception, and
+ * every bubble says which it was. */
+TEST(a_one_to_one_is_sealed_by_default_and_every_bubble_shows_its_lock) {
+  fresh();
+  /* No history, no choice made: sealed. A group is never sealed (6.3). */
+  CHECK(room_is_private("X1PEER"));
+  CHECK(!room_is_private("#X5GRP"));
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"X1PEER\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"type\":\"ui.convo.upsert\"") && cap_contains("\"private\":true"));
+  /* A message sent now goes out sealed: the bubble carries the lock. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"X1PEER\",\"rooms_input\":\"hello sealed\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.convo.msg");
+    CHECK(m && strstr(m, "hello sealed") && strstr(m, "\"enc\":true") && !strstr(m, "\"plain\":true")); }
+  /* The person clicks the lock: this conversation is now clear text, and the
+   * next bubble says so. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_private\",\"rooms_convo\":\"X1PEER\"}");
+  module_handle_event();
+  CHECK(!room_is_private("X1PEER"));
+  CHECK(cap_contains("\"private\":false"));
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"X1PEER\",\"rooms_input\":\"hello clear\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.convo.msg");
+    CHECK(m && strstr(m, "hello clear") && strstr(m, "\"plain\":true") && !strstr(m, "\"enc\":true")); }
+  /* No message claims the room-level mode as its own: a bubble's lock is what
+   * the wire did, never what the switch says now. */
+  CHECK(!cap_contains("\"private\":true,\"backfill\""));
+  /* And back: the lock returns, for the next message only. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_private\",\"rooms_convo\":\"X1PEER\"}");
+  module_handle_event();
+  CHECK(room_is_private("X1PEER"));
+}
+
 /* XPRS.md 3.2 and 9.11.5: a Meshtastic node is a room like any other, is
  * never sealed to, and the person is told once that the words cross a public
  * channel. The verdicts are the core's (the mock mirrors them). */
 TEST(a_meshtastic_contact_is_a_room_never_sealed_and_says_so_once) {
   fresh();
   CHECK(room_renderable("MTA1B2C3D4"));
-  inbox_set("{\"command\":\"rooms_private\",\"rooms_convo\":\"MTA1B2C3D4\"}");
-  module_handle_event();
+  /* A 1:1 is sealed from its first message, with nothing to switch on. */
   CHECK(room_is_private("MTA1B2C3D4"));
   cap_clear();
   inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"MTA1B2C3D4\",\"rooms_input\":\"sealed?\"}");
@@ -408,6 +446,10 @@ TEST(a_meshtastic_contact_is_a_room_never_sealed_and_says_so_once) {
 
   /* And the sentence names the network the core named, not Meshtastic by
    * habit: the same words to a MeshCore contact say MeshCore. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"MC00C0FFEE\",\"rooms_input\":\"hello core\"}");
+  module_handle_event();
+  CHECK(cap_contains("cannot open a sealed"));   /* sealed first, refused by the core */
   cap_clear();
   inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"MC00C0FFEE\",\"rooms_input\":\"hello core\"}");
   module_handle_event();
@@ -1301,6 +1343,7 @@ int main(void) {
   run_hide_forgets_a_message_for_good();
   run_a_one_to_one_arrives_by_callsign_and_creates_its_room();
   run_a_sent_one_to_one_carries_its_tick_and_the_tick_finds_it_after_restart();
+  run_a_one_to_one_is_sealed_by_default_and_every_bubble_shows_its_lock();
   run_a_meshtastic_contact_is_a_room_never_sealed_and_says_so_once();
   run_a_read_receipt_is_asked_for_on_open_and_survives_the_other_engine();
   run_a_1to1_like_is_a_directed_reaction_65();

@@ -195,7 +195,7 @@ static const char *via_label(const char *via) {
 static void emit_upsert(const char *id, int bump, int select) {
   pj_t p; pj_init(&p); pj_str(&p, id);
   char row[400];
-  if (db_query(g_idx, "SELECT title,unread,private,last_line FROM rooms WHERE id=? LIMIT 1",
+  if (db_query(g_idx, "SELECT title,unread,plain,last_line FROM rooms WHERE id=? LIMIT 1",
                pj_done(&p), row, sizeof(row)) <= 0) return;
   char title[80], last[140];
   jstr(row, "title", title, sizeof(title));
@@ -208,7 +208,8 @@ static void emit_upsert(const char *id, int bump, int select) {
   s_cat(m, "\",\"unread\":", sizeof(m));
   { char nb[16]; u_lltoa((unsigned long long)jint(row, "unread"), nb); s_cat(m, nb, sizeof(m)); }
   s_cat(m, ",\"closed\":false,\"private\":", sizeof(m));
-  s_cat(m, jint(row, "private") ? "true" : "false", sizeof(m));
+  /* A group is never sealed (6.3: no single key); a 1:1 is, unless marked. */
+  s_cat(m, (id[0] != '#' && !jint(row, "plain")) ? "true" : "false", sizeof(m));
   if (bump) s_cat(m, ",\"bump\":true", sizeof(m));
   if (select) s_cat(m, ",\"select\":true", sizeof(m));
   s_cat(m, "}", sizeof(m));
@@ -607,12 +608,11 @@ int room_admit(const room_msg_t *m) {
        * engine paints the bubble now and flushes the read receipt it is owed. */
       if (s_eq(m->dir, "in") && !m->replay && m->room[0] != '#' &&
           s_eq(m->room, g_open)) {
-        int priv = room_is_private(m->room);
         emit_msg(m->room, m->mid, m->dir, m->sender ? m->sender : "",
                  m->ts ? m->ts : hal_time_epoch(), m->body,
                  m->parent ? m->parent : "", m->via ? m->via : "",
                  m->auth ? m->auth : "", m->enc, m->rid ? m->rid : "",
-                 m->status ? m->status : "", m->sys, priv, m->obf);
+                 m->status ? m->status : "", m->sys, 0, m->obf);
         /* The row is already stored (read_sent=0), so flushing acks it now --
          * the page engine is the one that knows it is being read on screen. */
         room_flush_reads(h);
@@ -666,9 +666,8 @@ int room_admit(const room_msg_t *m) {
   /* The row first, then the bubble: the host drops a bubble for a row it
    * holds as closed, and the row says closed:false. */
   emit_upsert(m->room, !m->replay, 0);
-  int priv = (m->room[0] != '#') && room_is_private(m->room);
   emit_msg(m->room, m->mid, m->dir, sender, ts, body, parent, via, auth,
-           m->enc, rid, status, m->sys, priv, m->obf);
+           m->enc, rid, status, m->sys, 0, m->obf);
   if (!m->replay) {
     if (created > 0 || !s_eq(g_top, m->room)) room_rail();
     /* Not for an archived conversation: archiving is how a person says "do
@@ -710,7 +709,6 @@ static void emit_tail(const char *id, int h) {
   }
   if (n == -2) { log1("[chat] open: the newest twelve messages do not fit the reply buffer"); return; }
   if (n <= 0) return;
-  int priv = (id[0] != '#') && room_is_private(id);
   const char *cur = g_q;
   static char row[1400];
   while (next_object(&cur, row, sizeof(row))) {
@@ -722,7 +720,7 @@ static void emit_tail(const char *id, int h) {
     jstr(row, "auth", auth, sizeof(auth)); jstr(row, "rid", rid, sizeof(rid));
     jstr(row, "status", status, sizeof(status));
     emit_msg(id, mid, dir, sender, (unsigned long long)jint(row, "ts"), body, parent, via,
-             auth, (int)jint(row, "enc"), rid, status, (int)jint(row, "sys"), priv,
+             auth, (int)jint(row, "enc"), rid, status, (int)jint(row, "sys"), 0,
              (int)jint(row, "obf"));
   }
   /* Hearts on those bubbles. */
@@ -863,14 +861,18 @@ void room_close(const char *id) {
   unread_publish();
 }
 
+/* A 1:1 is sealed by default: privacy is the rule and clear text is the
+ * person's exception, one conversation at a time. A group has no single key
+ * to seal to (6.3), so it is never private here. */
 int room_is_private(const char *id) {
+  if (id[0] == '#') return 0;
   pj_t p; pj_init(&p); pj_str(&p, id);
-  return db_int(g_idx, "SELECT private AS n FROM rooms WHERE id=? LIMIT 1", pj_done(&p), 0) == 1;
+  return db_int(g_idx, "SELECT plain AS n FROM rooms WHERE id=? LIMIT 1", pj_done(&p), 0) != 1;
 }
 int room_set_private(const char *id, int on) {
   if (id[0] == '#' || room_ensure(id, 0) < 0) return -1;
-  pj_t p; pj_init(&p); pj_int(&p, on ? 1 : 0); pj_str(&p, id);
-  db_exec(g_idx, "UPDATE rooms SET private=? WHERE id=?", pj_done(&p));
+  pj_t p; pj_init(&p); pj_int(&p, on ? 0 : 1); pj_str(&p, id);
+  db_exec(g_idx, "UPDATE rooms SET plain=? WHERE id=?", pj_done(&p));
   emit_upsert(id, 0, 0);
   return on ? 1 : 0;
 }

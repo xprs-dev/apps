@@ -253,6 +253,12 @@ void db_init_index(int h) {
    * Unlike `closed`, a new message does not bring it back. ALTER for older
    * tables; the duplicate-column error is ignored (db_exec never throws). */
   db_exec(h, "ALTER TABLE rooms ADD COLUMN archived INTEGER NOT NULL DEFAULT 0", 0);
+  /* A 1:1 is SEALED unless a person chose clear text for it. The old `private`
+   * column said the opposite (0 = plain), so every conversation made before
+   * this default would have stayed readable on the air; `plain` is 1 only
+   * for a conversation somebody marked so, and every other row, old or new,
+   * is sealed. */
+  db_exec(h, "ALTER TABLE rooms ADD COLUMN plain INTEGER NOT NULL DEFAULT 0", 0);
   /* The people this station talks with: whoever wrote in one of its rooms,
    * and every 1:1. Their statuses (XPRS.md 27) head the conversation list. */
   db_exec(h, "CREATE TABLE IF NOT EXISTS people(call TEXT PRIMARY KEY)", 0);
