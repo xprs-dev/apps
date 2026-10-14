@@ -391,7 +391,7 @@ static int wire_body(const char *wire, char *out, unsigned cap) {
   return 0;
 }
 
-static void xroom_backfill(void) {
+static int xroom_backfill(void) {
   char q[160] = "{\"limit\":60,\"types\":[\"message\"],\"to\":[\"\"]";
   /* From the oldest of the three rooms' newest messages: one ask fills all. */
   uint64_t since = room_max_ts(XROOM_LOCAL);
@@ -409,9 +409,9 @@ static void xroom_backfill(void) {
     char nb[16]; u_itoa((unsigned)(-n), nb);
     s_cat(lg, nb, sizeof(lg)); s_cat(lg, " bytes, buffer is 32767 -- skipped", sizeof(lg));
     log1(lg);
-    return;
+    return 0;
   }
-  if (n <= 0 || n >= (int)sizeof(g_hist)) return;
+  if (n <= 0 || n >= (int)sizeof(g_hist)) return 0;
   g_hist[n] = 0;
 
   /* The archive answers newest first; the room stores in arrival order.
@@ -475,6 +475,7 @@ static void xroom_backfill(void) {
   char nb[16]; u_itoa((unsigned)rows, nb); s_cat(lg, nb, sizeof(lg));
   s_cat(lg, " kept=", sizeof(lg)); u_itoa((unsigned)kept, nb); s_cat(lg, nb, sizeof(lg));
   log1(lg);
+  return kept;
 }
 
 /* ── Sending ──────────────────────────────────────────────────────────── */
@@ -1295,6 +1296,8 @@ static void do_open(const char *buf) {
   }
 }
 
+static int g_catchup_pending;
+
 /* ── module entry points ──────────────────────────────────────────────── */
 void module_init(void) {
   static const char *topics[] = { "xprs.message", "xprs.reaction", "xprs.status.tx",
@@ -1309,12 +1312,25 @@ void module_init(void) {
   room_set_local_enabled(g_chan_local);
   room_init(g_call);
   xgroups_refresh();
-  /* The archive first, so the first frame already holds what was said
-   * while we were not listening; then the view. */
+  /* Only what is already on this device, and only the index: the first frame
+   * waits for this function (the host runs it on the UI isolate), so it draws
+   * the chats as they were left. What was said while we were not listening is
+   * fetched by the first event, which the page sends once that frame is up
+   * (performance.md 8.4: a wapp's cost is what it does per event). */
   g_xroom_fill_at = hal_time_epoch();
-  xroom_backfill();
-  status_backfill();
   room_hydrate();
+  status_publish();
+  g_catchup_pending = 1;
+}
+
+/* The archive catch-up, kept out of module_init. A background engine has no
+ * first frame to wait for, and gets it with its first event. */
+static void catchup_once(void) {
+  g_catchup_pending = 0;
+  g_xroom_fill_at = hal_time_epoch();
+  int kept = xroom_backfill();
+  status_backfill();
+  if (kept > 0) room_hydrate();
   status_publish();
 }
 
@@ -1324,6 +1340,7 @@ int32_t module_tick_interval_ms(void) { return 0; }
 
 void module_handle_event(void) {
   static char buf[4096];
+  if (g_catchup_pending) catchup_once();
   /* What the core routed to us, first: a host command is not a precondition
    * for a packet. */
   drain_core_events();

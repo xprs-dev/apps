@@ -534,7 +534,7 @@ static int32_t hk_picture(const char* g,uint32_t gl,const char* t,uint32_t tl){
 static void load(int ni){
   if(cur==ni) return;
   if(cur>=0) module_destroy();
-  cur=ni; mock_set_root(N[ni].root); mock_kv_ns(ni+1); module_init();
+  cur=ni; mock_set_root(N[ni].root); mock_kv_ns(ni+1); module_init(); module_handle_event();
 }
 /* hand node ni everything the network has queued for it, then let it run. */
 static void pump(int ni){

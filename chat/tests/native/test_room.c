@@ -40,7 +40,7 @@ static void fresh(void) {
   mock_clear_wire();
   system("rm -rf /tmp/chat_native_test");
   cap_clear(); log_clear();
-  module_init();
+  module_init(); module_handle_event();
   cap_clear(); log_clear();
 }
 
@@ -171,7 +171,7 @@ TEST(an_index_that_lost_the_global_room_gets_it_back) {
     db_exec(h, "INSERT OR REPLACE INTO meta(k,v) VALUES('global_gone','1')", 0);
     db_close(h); }
   cap_clear();
-  module_init();
+  module_init(); module_handle_event();
   CHECK(room_known("#GLOBAL"));
 }
 
@@ -241,6 +241,28 @@ TEST(a_message_for_the_open_room_does_not_count) {
   CHECK(cap_contains("\"unread\":1"));
 }
 
+/* The first frame waits for module_init (the host runs it on the UI isolate),
+ * so init draws the chats from the index and leaves the archive catch-up for
+ * the first event, which the page sends once the frame is up. */
+TEST(the_archive_catch_up_waits_for_the_first_event) {
+  fresh();
+  mock_set_history(
+    "[{\"ts\":1700000000,\"bearer\":\"ble\",\"from\":\"X1PEER\",\"to\":\"\",\"type\":\"message\",\"id\":\"h10001\",\"own\":false,\"sig\":\"verified\",\"wire\":\"t:message f:X1PEER ts:2026-09-04_10:00:00 scope:local m:late\"}]");
+  module_destroy(); cap_clear(); log_clear();
+  module_init();
+  CHECK(log_count("backfill: read=") == 0);
+  CHECK(cap_count("ui.convo.msg") == 0);
+  CHECK(cap_contains("\"type\":\"ui.convo.upsert\""));
+  module_handle_event();
+  CHECK(log_count("backfill: read=1 kept=1") == 1);
+  CHECK(cap_count("ui.convo.msg") == 1);
+  /* Once: a second event does not read the archive again. */
+  log_clear();
+  module_handle_event();
+  CHECK(log_count("backfill: read=") == 0);
+  mock_set_history("[]");   /* the next fresh() starts a module that reads it */
+}
+
 TEST(replay_from_the_archive_is_silent) {
   fresh();
   mock_set_history(
@@ -249,7 +271,7 @@ TEST(replay_from_the_archive_is_silent) {
     "{\"ts\":1699999900,\"bearer\":\"ble\",\"from\":\"X1PEER\",\"to\":\"\",\"type\":\"message\",\"id\":\"h00000\",\"own\":false,\"sig\":\"verified\",\"wire\":\"t:message f:X1PEER ts:2026-09-04_09:59:00 m:unscoped\"}]");
   /* A restart reads it in. */
   module_destroy(); cap_clear(); log_clear();
-  module_init();
+  module_init(); module_handle_event();
   /* Three bubbles from three rows: two in Local, the unscoped one in
    * Global (9.11). */
   CHECK(cap_count("ui.convo.msg") == 3);
@@ -286,7 +308,7 @@ TEST(a_backfilled_redaction_keeps_its_bars) {
     "[{\"ts\":1700000100,\"bearer\":\"ble\",\"from\":\"X1PEER\",\"to\":\"\",\"type\":\"message\",\"id\":\"h10001\",\"own\":false,\"sig\":\"verified\",\"wire\":\"t:message f:X1PEER ts:2026-09-04_10:01:00 scope:local xr:AAECAwQFBgcICQoLzz m:meet " BAR3 "\"},"
     "{\"ts\":1700000000,\"bearer\":\"ble\",\"from\":\"X1PEER\",\"to\":\"\",\"type\":\"message\",\"id\":\"h10000\",\"own\":false,\"sig\":\"verified\",\"wire\":\"t:message f:X1PEER ts:2026-09-04_10:00:00 scope:local m:plain one\"}]");
   module_destroy(); cap_clear(); log_clear();
-  module_init();
+  module_init(); module_handle_event();
   CHECK(cap_count("ui.convo.msg") == 2);
   CHECK(cap_count("\"obfuscated\":true") == 1);   /* the redacted one, and only it */
   { int found = 0;
@@ -346,7 +368,7 @@ TEST(a_sent_one_to_one_carries_its_tick_and_the_tick_finds_it_after_restart) {
   const char *m = cap_find("ui.convo.msg");
   char rid[16] = ""; { const char *p = m ? strstr(m, "\"rid\":\"") : 0; if (p) sscanf(p + 7, "%15[^\"]", rid); }
   CHECK(m && strstr(m, "\"status\":\"sent\"") && rid[0] == 'm');
-  module_destroy(); module_init(); cap_clear();
+  module_destroy(); module_init(); module_handle_event(); cap_clear();
   { char ev[128]; snprintf(ev, sizeof(ev), "{\"id\":\"%s\",\"state\":\"delivered\"}", rid);
     event_push("xprs.status.tx", ev); }
   module_handle_event();
@@ -409,7 +431,7 @@ TEST(a_read_receipt_is_asked_for_on_open_and_survives_the_other_engine) {
   CHECK(mock_reads_count() == 0);
 
   /* A DIFFERENT engine opens the thread -- RAM gone, database kept. */
-  module_destroy(); module_init();
+  module_destroy(); module_init(); module_handle_event();
   mock_reads_clear();
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"X1PEER\"}");
   module_handle_event();
@@ -428,7 +450,7 @@ TEST(rooms_survive_a_restart_and_kv_is_cleaned_once) {
   mock_kv_set("groups", "#NEWS;"); mock_kv_set("gseen", "x;"); mock_kv_set("chan", "1");
   local_packet("X1PEER", "iii999", "kept", "local");
   module_destroy(); cap_clear();
-  module_init();
+  module_init(); module_handle_event();
   CHECK(mock_kv_exists("chan"));
   /* fresh() already ran the clean-up on this profile: the keys set after it
    * are untouched, which is the point of doing it once. */
@@ -440,7 +462,7 @@ TEST(rooms_survive_a_restart_and_kv_is_cleaned_once) {
   /* And on a brand-new profile the legacy keys go. */
   module_destroy(); system("rm -rf /tmp/chat_native_test");
   mock_kv_set("recent", "a=1;");
-  module_init();
+  module_init(); module_handle_event();
   CHECK(!mock_kv_exists("recent"));
   CHECK(mock_kv_exists("chan"));
 }
@@ -603,7 +625,7 @@ TEST(delete_empties_a_room_and_a_refill_does_not_bring_it_back) {
   mock_set_history(
     "[{\"ts\":1700000000,\"bearer\":\"ble\",\"from\":\"X1PEER\",\"to\":\"\",\"type\":\"message\",\"id\":\"d00001\",\"own\":false,\"sig\":\"verified\",\"wire\":\"t:message f:X1PEER ts:2026-09-04_10:00:00 scope:local m:old news\"}]");
   module_destroy(); cap_clear(); log_clear();
-  module_init();
+  module_init(); module_handle_event();
   CHECK(cap_count("ui.convo.msg") == 1);
   mock_set_time(1900000000);
   cap_clear();
@@ -673,7 +695,7 @@ TEST(statuses_of_people_we_talk_with_head_the_list) {
   CHECK(!cap_contains("ui.rooms.status"));
   mock_ui_attached(1);
   module_destroy(); cap_clear();
-  module_init();
+  module_init(); module_handle_event();
   CHECK(cap_contains("\"text\":\"later\""));
 }
 
@@ -687,7 +709,7 @@ TEST(people_are_learned_once_from_the_rooms_already_held) {
     db_exec(h, "DELETE FROM people", 0);
     db_exec(h, "DELETE FROM meta WHERE k='people_v1'", 0);
     db_close(h); }
-  module_init();
+  module_init(); module_handle_event();
   CHECK(status_person("X1OLD"));
   CHECK(!status_person("X1NEVER"));
 }
@@ -1202,6 +1224,7 @@ int main(void) {
   run_own_broadcast_and_its_echo_are_one_bubble();
   run_open_repaints_from_the_database_newest_fifty();
   run_a_message_for_the_open_room_does_not_count();
+  run_the_archive_catch_up_waits_for_the_first_event();
   run_replay_from_the_archive_is_silent();
   run_a_backfilled_redaction_keeps_its_bars();
   run_a_blocked_sender_never_enters();
