@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 180">
+  <!-- Rings around the place you are in, nothing on them -->
+  <circle cx="170" cy="96" r="76" fill="none" stroke="#37474F" stroke-width="3"/>
+  <circle cx="170" cy="96" r="52" fill="none" stroke="#455A64" stroke-width="3"/>
+  <circle cx="170" cy="96" r="28" fill="#263238" stroke="#546E7A" stroke-width="3"/>
+  <!-- The sweep -->
+  <path d="M170 96 L170 20 A76 76 0 0 1 236 58 Z" fill="#43A047" fill-opacity="0.18"/>
+  <line x1="170" y1="96" x2="236" y2="58" stroke="#66BB6A" stroke-width="3" stroke-linecap="round"/>
+  <!-- You, and a tick: all clear -->
+  <circle cx="170" cy="96" r="14" fill="#43A047"/>
+  <path d="M163 96 L168 101 L178 90" fill="none" stroke="#FFFFFF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

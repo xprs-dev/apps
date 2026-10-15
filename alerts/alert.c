@@ -185,21 +185,52 @@ int al_state(const al_alert_t *a, unsigned long long now)
     return AL_NOW;
 }
 
+/* "2 days", "5 hours", "20 minutes": a span as a person says it. From a
+ * day and a half on it is days, rounded, so 47 hours reads "2 days". */
+void al_span(char *out, unsigned cap, unsigned long long s)
+{
+    if (cap) out[0] = 0;
+    unsigned long long n;
+    const char *one, *many;
+    if (s >= 129600ULL) { n = (s + 43200ULL) / 86400ULL; one = " day"; many = " days"; }
+    else if (s >= 5400ULL) { n = (s + 1800ULL) / 3600ULL; one = " hour"; many = " hours"; }
+    else { n = (s + 30ULL) / 60ULL; if (!n) n = 1; one = " minute"; many = " minutes"; }
+    al_cat_u(out, n, cap);
+    al_cat(out, n == 1 ? one : many, cap);
+}
+
 void al_left(char *out, unsigned cap, unsigned long long now,
              unsigned long long until)
 {
     if (cap) out[0] = 0;
     if (!until || !now) return;
     if (now >= until) { al_cpy(out, "ended", cap); return; }
-    unsigned long long s = until - now;
-    unsigned long long n;
-    const char *unit;
-    if (s >= 2ULL * 86400ULL) { n = s / 86400ULL; unit = " days left"; }
-    else if (s >= 2ULL * 3600ULL) { n = s / 3600ULL; unit = " hours left"; }
-    else if (s >= 120ULL) { n = s / 60ULL; unit = " minutes left"; }
-    else { al_cpy(out, "ending now", cap); return; }
-    al_cat_u(out, n, cap);
-    al_cat(out, unit, cap);
+    al_span(out, cap, until - now);
+    al_cat(out, " left", cap);
+}
+
+/* "Thu 17 Oct, 15:16" in the reader's own zone: [offset_min] east of UTC. */
+void al_when(char *out, unsigned cap, unsigned long long epoch, int offset_min)
+{
+    if (cap) out[0] = 0;
+    if (!epoch) return;
+    long long t = (long long)epoch + (long long)offset_min * 60;
+    if (t < 0) return;
+    static const char *const wd[7] = { "Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed" };
+    static const char *const mo[12] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    char st[24];
+    al_stamp(st, sizeof st, (unsigned long long)t);
+    int month = (st[5] - '0') * 10 + (st[6] - '0');
+    al_cpy(out, wd[(t / 86400) % 7], cap);
+    al_cat(out, " ", cap);
+    char d[3] = { st[8] == '0' ? st[9] : st[8], st[8] == '0' ? 0 : st[9], 0 };
+    al_cat(out, d, cap);
+    al_cat(out, " ", cap);
+    if (month >= 1 && month <= 12) al_cat(out, mo[month - 1], cap);
+    al_cat(out, ", ", cap);
+    char hm[6] = { st[11], st[12], ':', st[14], st[15], 0 };
+    al_cat(out, hm, cap);
 }
 
 void al_deg(char *out, unsigned cap, long v)

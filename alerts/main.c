@@ -8,8 +8,11 @@
  * ends or is withdrawn. Nothing here is a new packet or a new key.
  *
  *   Nearby   what stands now, what is planned, and what this phone posted
- *   Post     type, how bad, what, a message, for how long, optionally where
- *   Alert    one of them; Withdraw when it is ours
+ *   Post     one question per full screen, every answer a tile: warning or
+ *            notice, what it is, how bad, the message, for how long, where;
+ *            then a review where any tile leads back to its question
+ *   Alert    one of them: the facts as tiles, the message at reading size,
+ *            and Withdraw when it is ours
  *
  * The wapp builds the words and hands them to the core (hal_xprs_send),
  * which signs and airs them; it never learns which bearer carried anything
@@ -28,6 +31,7 @@
 #define AL_MAX     32             /* rows kept; a place has a handful */
 #define GONE_MAX   32             /* withdrawals heard, applied as rows come */
 #define SEEN_MAX   48             /* ids already announced, persisted */
+#define KEEP_MAX   48             /* warnings and notices kept in kv */
 
 static al_alert_t g_al[AL_MAX];
 static int  g_nal;
@@ -73,11 +77,23 @@ static void seen_save(void)
     hal_kv_set("seen", 4, v, al_len(v));
 }
 
+/* Written once per batch, never per id: the archive read at start used to
+ * rewrite the whole list once for each alert it found, and on a first start
+ * that was most of the 1.8 s the page waited before its first frame. */
+static int g_seen_dirty;
+
 static void seen_add(const char *id)
 {
     if (seen(id)) return;
     al_cpy(g_seen[g_seen_w], id, sizeof g_seen[0]);
     g_seen_w = (g_seen_w + 1) % SEEN_MAX;
+    g_seen_dirty = 1;
+}
+
+static void seen_flush(void)
+{
+    if (!g_seen_dirty) return;
+    g_seen_dirty = 0;
     seen_save();
 }
 
@@ -110,19 +126,6 @@ static void log_host(const char *text)
     hal_log(1, l, al_len(l));
 }
 
-static void one_line(const char *field, const char *title, const char *text)
-{
-    char m[400] = "{\"type\":\"ui.field.set\",\"field\":\"";
-    al_cat(m, field, sizeof m);
-    if (!text || !text[0]) { al_cat(m, "\",\"value\":[]}", sizeof m); say(m); return; }
-    al_cat(m, "\",\"value\":[{\"title\":\"\",\"items\":[{\"label\":\"", sizeof m);
-    al_jesc(m, title, sizeof m);
-    al_cat(m, "\",\"value\":\"", sizeof m);
-    al_jesc(m, text, sizeof m);
-    al_cat(m, "\"}]}]}", sizeof m);
-    say(m);
-}
-
 static void flag_hidden(const char *name, int hidden)
 {
     char m[120] = "{\"type\":\"ui.field.set\",\"field\":\"";
@@ -141,21 +144,186 @@ static void screen_open(const char *name, const char *title)
     say(m);
 }
 
+static int zone(void) { return (int)hal_time_utc_offset(); }
+
+/* "until Thu 22 Oct" for a choice of how long: the day is what matters. */
+static void until_words(char *out, unsigned cap, unsigned long long t)
+{
+    char w[32];
+    al_when(w, sizeof w, t, zone());
+    for (char *c = w; *c; c++) if (*c == ',') { *c = 0; break; }
+    al_cpy(out, "until ", cap);
+    al_cat(out, w, cap);
+    /* A year on is the same day and month: say which year. */
+    if (t > now_s() + 300ULL * 86400ULL) {
+        char st[24];
+        al_stamp(st, sizeof st, t);
+        st[4] = 0;
+        al_cat(out, " ", cap);
+        al_cat(out, st, cap);
+    }
+}
+
+/* The words of sections 24 and 25, as a person says them, with the one line
+ * the Post screens show under each. */
+typedef struct { const char *word, *name, *hint, *group; } kind_t;
+static const kind_t k_warning[] = {
+    { "fire",      "Fire",        "Flames or smoke nearby",       "Heat" },
+    { "flood",     "Flood",       "Rising or standing water",     "Water" },
+    { "storm",     "Storm",       "Thunder and lightning",        "Weather" },
+    { "wind",      "Wind",        "Strong gusts, falling branches", "Weather" },
+    { "snow",      "Snow",        "Heavy snow, ways blocked",     "Weather" },
+    { "ice",       "Ice",         "Slippery ground or roads",     "Weather" },
+    { "quake",     "Earthquake",  "Shaking felt, more may come",  "Ground" },
+    { "landslide", "Landslide",   "Ground or rocks moving",       "Ground" },
+    { "tsunami",   "Tsunami",     "Get to high ground",           "Water" },
+    { "chemical",  "Chemical",    "A spill, a leak, fumes",       "Toxic" },
+    { "radiation", "Radiation",   "A radiological hazard",        "Toxic" },
+    { "outage",    "Outage",      "No power, water or network",   "Services" },
+    { "road",      "Road",        "A dangerous road or crossing", "Travel" },
+    { "crowd",     "Crowd",       "A dangerous crush of people",  "People" },
+    { "animal",    "Animal",      "A dangerous animal about",     "Wildlife" },
+    { "other",     "Other",       "Say what it is in the message", "Anything else" },
+};
+static const kind_t k_info[] = {
+    { "closure",   "Closure",     "A gate, path or road is shut", "Travel" },
+    { "works",     "Works",       "Roadworks or building works",  "Travel" },
+    { "traffic",   "Traffic",     "A queue or a jam",             "Travel" },
+    { "slow",      "Slow going",  "Moving, but slowly",           "Travel" },
+    { "stopped",   "Stopped car", "A vehicle stopped on the way", "Travel" },
+    { "debris",    "Debris",      "Something lying in the way",   "Travel" },
+    { "rain",      "Rain",        "Heavy rain, standing water",   "Weather" },
+    { "fog",       "Fog",         "Hard to see far",              "Weather" },
+    { "wind",      "Wind",        "Gusty, hold on to things",     "Weather" },
+    { "snow",      "Snow",        "Snow on paths and roads",      "Weather" },
+    { "ice",       "Ice",         "Slippery in places",           "Weather" },
+    { "animal",    "Animals",     "Animals on the path or road",  "Wildlife" },
+    { "crowd",     "Crowd",       "Busy, expect to wait",         "People" },
+    { "event",     "Event",       "Something is on here",         "People" },
+    { "other",     "Other",       "Say what it is in the message", "Anything else" },
+};
+#define N_WARNING (int)(sizeof k_warning / sizeof k_warning[0])
+#define N_INFO    (int)(sizeof k_info / sizeof k_info[0])
+
+static const kind_t *kind_of(const char *type, const char *word)
+{
+    const kind_t *t = al_eq(type, "warning") ? k_warning : k_info;
+    int n = al_eq(type, "warning") ? N_WARNING : N_INFO;
+    for (int i = 0; i < n; i++) if (al_eq(t[i].word, word)) return &t[i];
+    return 0;
+}
+
+typedef struct { const char *word, *name, *hint, *level; int alert; } sev_t;
+static const sev_t k_sev[] = {
+    { "watch",   "Watch",   "May affect you: be ready", "Level 1", 0 },
+    { "warning", "Warning", "Will affect you: act now", "Level 2", 0 },
+    { "danger",  "Danger",  "Life-threatening: leave",  "Level 3", 1 },
+};
+
+static const sev_t *sev_of(const char *word)
+{
+    for (int i = 0; i < 3; i++) if (al_eq(k_sev[i].word, word)) return &k_sev[i];
+    return 0;
+}
+
+typedef struct { const char *word, *name, *hint; } choice_t;
+static const choice_t k_for[] = {
+    { "1d", "1 day", "" }, { "2d", "2 days", "" }, { "1w", "1 week", "" },
+    { "1m", "1 month", "" }, { "6m", "6 months", "" }, { "1y", "1 year", "" },
+};
+static const choice_t k_where[] = {
+    { "none", "Not marked", "Nearby is enough" },
+    { "spot", "Right here", "This exact spot" },
+    { "100m", "100 m",      "A street, a car park" },
+    { "500m", "500 m",      "A neighbourhood" },
+    { "1km",  "1 km",       "A village" },
+    { "5km",  "5 km",       "A whole town" },
+};
+
 /* "Flood", "Works": the kind as a person says it. */
 static void kind_words(const al_alert_t *a, char *out, unsigned cap)
 {
-    al_cpy(out, a->kind[0] ? a->kind : (al_eq(a->type, "warning") ? "warning" : "notice"), cap);
+    const kind_t *k = kind_of(a->type, a->kind);
+    if (k) { al_cpy(out, k->name, cap); return; }
+    al_cpy(out, a->kind[0] ? a->kind : (al_eq(a->type, "warning") ? "Warning" : "Notice"), cap);
     out[0] = al_up(out[0]);
 }
 
+/* "Danger: flood", "Notice: closure": what the row and the notification
+ * lead with. */
 static void title_of(const al_alert_t *a, char *out, unsigned cap)
 {
-    kind_words(a, out, cap);
-    if (al_eq(a->type, "warning") && a->sev[0]) {
-        al_cat(out, " (", cap);
-        al_cat(out, a->sev, cap);
-        al_cat(out, ")", cap);
+    char k[24];
+    kind_words(a, k, sizeof k);
+    const sev_t *s = al_eq(a->type, "warning") ? sev_of(a->sev) : 0;
+    al_cpy(out, s ? s->name : (al_eq(a->type, "warning") ? "Warning" : "Notice"), cap);
+    al_cat(out, ": ", cap);
+    if (k[0] >= 'A' && k[0] <= 'Z') k[0] = (char)(k[0] + 32);
+    al_cat(out, k, cap);
+}
+
+/* The row's icon: what kind of alert it is at a glance, one icon per
+ * meaning (the host offers no hazard sign, so these are its nearest). */
+static const char *icon_of(const al_alert_t *a, int state)
+{
+    if (state == AL_PLANNED) return "schedule";
+    if (!al_eq(a->type, "warning")) return "info";
+    if (al_eq(a->sev, "danger")) return "block";
+    if (al_eq(a->sev, "warning")) return "campaign";
+    return "visibility";
+}
+
+/* ── Tiles ────────────────────────────────────────────────────────────── */
+static int g_tiles_first;
+
+static void tiles_begin(const char *field)
+{
+    al_cpy(g_out, "{\"type\":\"ui.stats.set\",\"field\":\"", sizeof g_out);
+    al_cat(g_out, field, sizeof g_out);
+    al_cat(g_out, "\",\"tiles\":[", sizeof g_out);
+    g_tiles_first = 1;
+}
+
+static void tile(const char *id, const char *label, const char *value,
+                 const char *hint, int alert, int tap)
+{
+    if (!g_tiles_first) al_cat(g_out, ",", sizeof g_out);
+    g_tiles_first = 0;
+    al_cat(g_out, "{\"id\":\"", sizeof g_out);
+    al_jesc(g_out, id, sizeof g_out);
+    al_cat(g_out, "\",\"label\":\"", sizeof g_out);
+    al_jesc(g_out, label, sizeof g_out);
+    al_cat(g_out, "\",\"value\":\"", sizeof g_out);
+    al_jesc(g_out, value, sizeof g_out);
+    al_cat(g_out, "\"", sizeof g_out);
+    if (hint && hint[0]) {
+        al_cat(g_out, ",\"hint\":\"", sizeof g_out);
+        al_jesc(g_out, hint, sizeof g_out);
+        al_cat(g_out, "\"", sizeof g_out);
     }
+    if (alert) al_cat(g_out, ",\"alert\":true", sizeof g_out);
+    if (tap) al_cat(g_out, ",\"tap\":true", sizeof g_out);
+    al_cat(g_out, "}", sizeof g_out);
+}
+
+static void tiles_end(void)
+{
+    al_cat(g_out, "]}", sizeof g_out);
+    say(g_out);
+}
+
+/* One details card with one text in it: the message, at reading size, under
+ * a small label saying what it is. */
+static void message_card(const char *field, const char *title, const char *text)
+{
+    char m[600] = "{\"type\":\"ui.field.set\",\"field\":\"";
+    al_cat(m, field, sizeof m);
+    al_cat(m, "\",\"value\":[{\"title\":\"\",\"items\":[{\"label\":\"", sizeof m);
+    al_jesc(m, title, sizeof m);
+    al_cat(m, "\",\"value\":\"", sizeof m);
+    al_jesc(m, text, sizeof m);
+    al_cat(m, "\"}]}]}", sizeof m);
+    say(m);
 }
 
 /* ── The list ─────────────────────────────────────────────────────────── */
@@ -165,22 +333,33 @@ static int find(const char *id)
     return -1;
 }
 
-static void item(const al_alert_t *a, unsigned long long now, int *first)
+/* A row: what it is, the message, and two facts as chips. */
+static void item(const al_alert_t *a, unsigned long long now, int state, int *first)
 {
-    char title[48], sub[240] = "", left[24], tags[120] = "";
+    char title[48], sub[200] = "", left[32], tags[160] = "";
     title_of(a, title, sizeof title);
-    if (a->m[0]) { al_cat(sub, a->m, sizeof sub); al_cat(sub, ". ", sizeof sub); }
-    al_cat(sub, a->mine ? "Posted by you" : "From ", sizeof sub);
-    if (!a->mine) al_cat(sub, a->from, sizeof sub);
-    al_left(left, sizeof left, now, a->until);
-    if (left[0]) { al_cat(sub, ", ", sizeof sub); al_cat(sub, left, sizeof sub); }
-    al_cat(tags, al_eq(a->type, "warning") ? "\"warning\"" : "\"notice\"", sizeof tags);
-    if (al_eq(a->scope, "local")) al_cat(tags, ",\"here only\"", sizeof tags);
-    if (a->pos[0]) al_cat(tags, ",\"has a place\"", sizeof tags);
+    al_cpy(sub, a->m[0] ? a->m : "No message", sizeof sub);
+    if (state == AL_PLANNED) {
+        char w[32];
+        al_when(w, sizeof w, a->since, zone());
+        al_cpy(left, "from ", sizeof left);
+        al_cat(left, w, sizeof left);
+    } else {
+        al_left(left, sizeof left, now, a->until);
+    }
+    if (left[0]) { al_cat(tags, "\"", sizeof tags); al_jesc(tags, left, sizeof tags); al_cat(tags, "\"", sizeof tags); }
+    if (!a->mine) {
+        if (tags[0]) al_cat(tags, ",", sizeof tags);
+        al_cat(tags, "\"by ", sizeof tags);
+        al_jesc(tags, a->from, sizeof tags);
+        al_cat(tags, "\"", sizeof tags);
+    }
     if (!*first) al_cat(g_out, ",", sizeof g_out);
     *first = 0;
     al_cat(g_out, "{\"id\":\"", sizeof g_out);
     al_jesc(g_out, a->id, sizeof g_out);
+    al_cat(g_out, "\",\"icon\":\"", sizeof g_out);
+    al_cat(g_out, icon_of(a, state), sizeof g_out);
     al_cat(g_out, "\",\"title\":\"", sizeof g_out);
     al_jesc(g_out, title, sizeof g_out);
     al_cat(g_out, "\",\"subtitle\":\"", sizeof g_out);
@@ -191,7 +370,7 @@ static void item(const al_alert_t *a, unsigned long long now, int *first)
 }
 
 /* Newest first: the rows in ts order, by selection, which for 32 is
- * nothing. */
+ * nothing. Sections with nothing in them are left out. */
 static void push_list(void)
 {
     const unsigned long long now = now_s();
@@ -199,7 +378,7 @@ static void push_list(void)
     static const char *const titles[3] = {
         "{\"title\":\"Now\",\"items\":[",
         "{\"title\":\"Planned\",\"items\":[",
-        "{\"title\":\"Posted by you\",\"items\":["
+        "{\"title\":\"Yours\",\"items\":["
     };
     int any = 0;
     for (int pass = 0; pass < 3; pass++) {
@@ -223,7 +402,7 @@ static void push_list(void)
                 al_cat(g_out, titles[pass], sizeof g_out);
                 any = 1;
             }
-            item(&g_al[best], now, &first);
+            item(&g_al[best], now, al_state(&g_al[best], now), &first);
         }
         if (!first) al_cat(g_out, "]}", sizeof g_out);
     }
@@ -231,41 +410,45 @@ static void push_list(void)
     say(g_out);
 }
 
+/* One alert: the facts as tiles, the message as the one thing to read. */
 static void push_alert(void)
 {
     if (g_sel < 0 || g_sel >= g_nal) return;
     const al_alert_t *a = &g_al[g_sel];
     const unsigned long long now = now_s();
-    char t[48], v[64];
-    al_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"alert_now\",\"value\":[{\"title\":\"\",\"items\":[", sizeof g_out);
-    int first = 1;
-    #define ROW(label, value) do { \
-        if (!(value)[0]) break; \
-        if (!first) al_cat(g_out, ",", sizeof g_out); \
-        first = 0; \
-        al_cat(g_out, "{\"label\":\"", sizeof g_out); \
-        al_jesc(g_out, label, sizeof g_out); \
-        al_cat(g_out, "\",\"value\":\"", sizeof g_out); \
-        al_jesc(g_out, value, sizeof g_out); \
-        al_cat(g_out, "\"}", sizeof g_out); } while (0)
-    title_of(a, t, sizeof t);
-    ROW("What", t);
-    ROW("Message", a->m);
-    ROW("From", a->mine ? "you" : a->from);
-    al_stamp(v, sizeof v, a->ts);
-    if (a->ts) ROW("Posted (UTC)", v);
-    if (a->since) { al_stamp(v, sizeof v, a->since); ROW("Starts (UTC)", v); }
-    if (a->until) { al_stamp(v, sizeof v, a->until); ROW("Ends (UTC)", v); }
-    al_left(v, sizeof v, now, a->until);
-    ROW("Left", v);
-    ROW("Where", a->pos);
-    ROW("Area", a->rad);
-    ROW("Reach", al_eq(a->scope, "local") ? "here only" : "wider");
-    ROW("Id", a->id);
-    if (a->withdrawn) ROW("State", "withdrawn");
-    #undef ROW
-    al_cat(g_out, "]}]}", sizeof g_out);
-    say(g_out);
+    const int st = al_state(a, now);
+    char v[48], h[64];
+    tiles_begin("a_hub");
+    if (al_eq(a->type, "warning")) {
+        const sev_t *s = sev_of(a->sev);
+        tile("sev", "How bad", s ? s->name : "Warning", s ? s->hint : "", s && s->alert, 0);
+    } else {
+        tile("sev", "Type", "Notice", "Worth knowing, not a hazard", 0, 0);
+    }
+    kind_words(a, v, sizeof v);
+    const kind_t *k = kind_of(a->type, a->kind);
+    tile("kind", "What", v, k ? k->hint : "", 0, 0);
+    if (a->withdrawn) {
+        tile("left", "State", "Withdrawn", "Its author said it is over", 0, 0);
+    } else if (st == AL_PLANNED) {
+        al_when(h, sizeof h, a->since, zone());
+        tile("left", "Starts", h, "", 0, 0);
+    } else if (a->until && now) {
+        if (now >= a->until) al_cpy(v, "Ended", sizeof v);
+        else al_span(v, sizeof v, a->until - now);
+        al_cpy(h, "until ", sizeof h);
+        al_when(h + 6, sizeof h - 6, a->until, zone());
+        tile("left", "Left", v, h, 0, 0);
+    }
+    al_cpy(h, "posted ", sizeof h);
+    al_when(h + 7, sizeof h - 7, a->ts, zone());
+    tile("from", "From", a->mine ? "You" : a->from, a->ts ? h : "", 0, 0);
+    if (a->pos[0]) {
+        al_cpy(v, a->rad[0] ? a->rad : "a spot", sizeof v);
+        tile("where", "Area", v, a->pos, 0, 0);
+    }
+    tiles_end();
+    message_card("a_msg", "Message", a->m[0] ? a->m : "No message: the tiles below say it all.");
     flag_hidden("withdraw", !(a->mine && !a->withdrawn));
 }
 
@@ -273,6 +456,69 @@ static void redraw(void)
 {
     push_list();
     if (g_sel >= 0) push_alert();
+}
+
+/* ── What this wapp keeps ──────────────────────────────────────────────
+ *
+ * Every warning, notice and withdrawal it has taken, as the wire and the id,
+ * in a ring of kv slots. A start reads these instead of the archive: the
+ * archive has no index on the packet type, so asking it for the newest
+ * warnings walks every row it holds, newest first, looking for rare ones,
+ * on the UI isolate. On the C61 (156,000 packets) that was 2.2 s before the
+ * first frame, while the screen said "All clear" over alerts that stood.
+ * The archive is read once, on the very first start; after that this wapp
+ * hears every alert as it arrives (it runs headless), so the ring is the
+ * whole story.
+ */
+static int g_keep_w = -1;          /* next slot; -1 until restored */
+static int g_restoring;
+
+static void keep_key(char *k, int i)
+{
+    k[0] = 'w';
+    k[1] = (char)('0' + i / 10);
+    k[2] = (char)('0' + i % 10);
+    k[3] = 0;
+}
+
+static void keep(const char *id, const char *wire)
+{
+    if (g_restoring || g_keep_w < 0) return;
+    char k[4], v[AL_WIRE_MAX + 16];
+    keep_key(k, g_keep_w);
+    al_cpy(v, id, sizeof v);
+    al_cat(v, " ", sizeof v);
+    al_cat(v, wire, sizeof v);
+    hal_kv_set(k, 3, v, al_len(v));
+    g_keep_w = (g_keep_w + 1) % KEEP_MAX;
+    char n[4] = { (char)('0' + g_keep_w / 10), (char)('0' + g_keep_w % 10), 0, 0 };
+    hal_kv_set("wn", 2, n, 2);
+}
+
+static int take(const char *wire, const char *id, int may_announce);
+
+/* 1 when the ring was there to read: not the first start. */
+static int restore(void)
+{
+    char n[4];
+    uint32_t got = hal_kv_get("wn", 2, n, sizeof n - 1);
+    if (got != 2) { g_keep_w = 0; return 0; }
+    g_keep_w = (n[0] - '0') * 10 + (n[1] - '0');
+    if (g_keep_w < 0 || g_keep_w >= KEEP_MAX) g_keep_w = 0;
+    g_restoring = 1;
+    /* Oldest first, so a withdrawal kept after its alert finds it. */
+    for (int j = 0; j < KEEP_MAX; j++) {
+        int i = (g_keep_w + j) % KEEP_MAX;
+        char k[4], v[AL_WIRE_MAX + 16];
+        keep_key(k, i);
+        uint32_t l = hal_kv_get(k, 3, v, sizeof v - 1);
+        if (l < 8 || l >= sizeof v) continue;
+        v[l] = 0;
+        v[6] = 0;                         /* "<id> <wire>" */
+        take(v + 7, v, 0);
+    }
+    g_restoring = 0;
+    return 1;
 }
 
 /* ── What arrives ─────────────────────────────────────────────────────── */
@@ -319,6 +565,7 @@ static int take(const char *wire, const char *id, int may_announce)
         al_cpy(g_gone[g_gone_w].id, a.id, sizeof g_gone[0].id);
         al_cpy(g_gone[g_gone_w].from, a.from, sizeof g_gone[0].from);
         g_gone_w = (g_gone_w + 1) % GONE_MAX;
+        keep("------", wire);
         int i = find(a.id);
         if (i >= 0 && al_eq(g_al[i].from, a.from) && !g_al[i].withdrawn) {
             g_al[i].withdrawn = 1;
@@ -347,6 +594,7 @@ static int take(const char *wire, const char *id, int may_announce)
         g_nal++;
     }
     g_al[slot] = a;
+    keep(a.id, wire);
     if (!a.mine && !seen(a.id)) {
         if (may_announce && al_state(&a, now_s()) != AL_GONE) announce(&a);
         seen_add(a.id);
@@ -367,6 +615,7 @@ static void on_packet(const char *row)
     if (!al_json(row, "wire", wire, sizeof wire)) return;
     al_json(row, "id", id, sizeof id);
     if (take(wire, id, 1)) redraw();
+    seen_flush();
 }
 
 /* What the archive holds, newest first: withdrawals before the alerts they
@@ -388,6 +637,7 @@ static void backfill(void)
         al_json(g_obj, "id", id, sizeof id);
         take(wire, id, 1);
     }
+    seen_flush();
 }
 
 static void drain_events(void)
@@ -409,37 +659,85 @@ static int fields(const char *key, char *out, unsigned cap)
     return al_json(g_buf, key, out, cap);
 }
 
-/* The wire for the Post screen as it stands, or a reason in [why]. */
+/*
+ * The alert being written. One question per screen, so nothing is a
+ * dropdown and every answer is a tap; the screens are opened in turn and the
+ * answers are kept here until Post. The panel's own arrow abandons it.
+ */
+static struct {
+    char type[8], kind[12], sev[8], dur[4], where[8];
+    char text[200];
+    char step[12];               /* the screen showing, for Back */
+} g_draft;
+
+static void draft_reset(void)
+{
+    for (unsigned i = 0; i < sizeof g_draft; i++) ((char *)&g_draft)[i] = 0;
+}
+
+static void push_type(void)
+{
+    tiles_begin("p_type");
+    tile("warning", "Hazard", "Warning", "Fire, flood, a storm...", 1, 1);
+    tile("info", "Good to know", "Notice", "A closure, works, a queue...", 0, 1);
+    tiles_end();
+}
+
+static void open_step(const char *step)
+{
+    al_cpy(g_draft.step, step, sizeof g_draft.step);
+    if (al_eq(step, "Kind")) {
+        int warn = al_eq(g_draft.type, "warning");
+        tiles_begin("p_kind");
+        const kind_t *t = warn ? k_warning : k_info;
+        for (int i = 0, n = warn ? N_WARNING : N_INFO; i < n; i++)
+            tile(t[i].word, t[i].group, t[i].name, t[i].hint, 0, 1);
+        tiles_end();
+        screen_open("Kind", warn ? "What is the hazard?" : "What is it about?");
+    } else if (al_eq(step, "Severity")) {
+        tiles_begin("p_sev");
+        for (int i = 0; i < 3; i++)
+            tile(k_sev[i].word, k_sev[i].level, k_sev[i].name, k_sev[i].hint, k_sev[i].alert, 1);
+        tiles_end();
+        screen_open("Severity", "How bad is it?");
+    } else if (al_eq(step, "Message")) {
+        char m[300] = "{\"type\":\"ui.field.set\",\"field\":\"a_text\",\"value\":\"";
+        al_jesc(m, g_draft.text, sizeof m);
+        al_cat(m, "\"}", sizeof m);
+        say(m);
+        screen_open("Message", "The message");
+    } else if (al_eq(step, "Duration")) {
+        const unsigned long long now = now_s();
+        tiles_begin("p_for");
+        for (int i = 0; i < 6; i++) {
+            char h[48];
+            until_words(h, sizeof h, now + al_duration(k_for[i].word));
+            tile(k_for[i].word, "For", k_for[i].name, now ? h : "", 0, 1);
+        }
+        tiles_end();
+        screen_open("Duration", "For how long?");
+    } else if (al_eq(step, "Place")) {
+        tiles_begin("p_where");
+        for (int i = 0; i < 6; i++)
+            tile(k_where[i].word, i < 2 ? "Position" : "Around me", k_where[i].name,
+                 k_where[i].hint, 0, 1);
+        tiles_end();
+        screen_open("Place", "Where is it?");
+    }
+}
+
+/* The wire for the draft, or a reason in [why]. */
 static int compose(char *wire, unsigned cap, char *why, unsigned wcap)
 {
-    char type[12] = "", sev[12] = "", kind[16] = "", text[200] = "";
-    char dur[8] = "", here[8] = "", rad[12] = "";
-    fields("a_type", type, sizeof type);
-    fields("a_sev", sev, sizeof sev);
-    fields("a_kind", kind, sizeof kind);
-    fields("a_text", text, sizeof text);
-    fields("a_for", dur, sizeof dur);
-    fields("a_here", here, sizeof here);
-    fields("a_rad", rad, sizeof rad);
-    if (!type[0]) al_cpy(type, "warning", sizeof type);
-    if (!sev[0]) al_cpy(sev, "watch", sizeof sev);
-    if (!kind[0]) al_cpy(kind, "other", sizeof kind);
-    if (!dur[0]) al_cpy(dur, "1d", sizeof dur);
-    if (al_eq(rad, "spot")) rad[0] = 0;
-    if (!al_kind_ok(type, kind)) {
-        al_cpy(why, al_eq(type, "warning")
-               ? "That is a notice, not a hazard: pick Notice as the type, or another What."
-               : "That is a hazard: pick Warning as the type, or another What.", wcap);
-        return -2;
-    }
+    if (!g_draft.type[0] || !g_draft.kind[0]) { al_cpy(why, "Pick what it is first.", wcap); return -2; }
     const unsigned long long now = now_s();
-    const unsigned long long life = al_duration(dur);
-    if (!now || !life) { al_cpy(why, "This phone does not know the time yet.", wcap); return -2; }
-    char pos[28] = "";
-    if (al_eq(here, "true")) {
+    const unsigned long long life = al_duration(g_draft.dur[0] ? g_draft.dur : "1d");
+    if (!now) { al_cpy(why, "This phone does not know the time yet.", wcap); return -2; }
+    char pos[28] = "", rad[12] = "";
+    if (g_draft.where[0] && !al_eq(g_draft.where, "none")) {
         int32_t lat = hal_sensor_gps_lat(), lon = hal_sensor_gps_lon();
         if (lat == (int32_t)0x80000000 || lon == (int32_t)0x80000000) {
-            al_cpy(why, "No position yet. Try again in a moment, or turn off Mark where I am.", wcap);
+            al_cpy(why, "This phone has no position yet. Wait a moment, or pick Not marked.", wcap);
             return -2;
         }
         char d[16];
@@ -447,13 +745,87 @@ static int compose(char *wire, unsigned cap, char *why, unsigned wcap)
         al_cat(pos, ",", sizeof pos);
         al_deg(d, sizeof d, lon);
         al_cat(pos, d, sizeof pos);
-    } else {
-        rad[0] = 0;
+        if (!al_eq(g_draft.where, "spot")) al_cpy(rad, g_draft.where, sizeof rad);
     }
-    int n = al_build(wire, cap, g_me, type, kind, sev, pos, rad, now, now + life, text);
-    if (n == -1) al_cpy(why, "The message is too long for one packet. Shorten it.", wcap);
+    int n = al_build(wire, cap, g_me, g_draft.type, g_draft.kind,
+                     g_draft.sev[0] ? g_draft.sev : "watch", pos, rad, now, now + life,
+                     g_draft.text);
+    if (n == -1) al_cpy(why, "The message is too long to send with this alert. Shorten it.", wcap);
     else if (n < 0) al_cpy(why, "The message has a character that cannot be sent.", wcap);
     return n;
+}
+
+/* Everything chosen, as tiles that lead back to their question. */
+static void open_review(void)
+{
+    al_cpy(g_draft.step, "Review", sizeof g_draft.step);
+    int warn = al_eq(g_draft.type, "warning");
+    const kind_t *k = kind_of(g_draft.type, g_draft.kind);
+    tiles_begin("p_review");
+    if (warn) {
+        /* A warning says its type by how bad it is: "Danger" is a warning. */
+        const sev_t *s = sev_of(g_draft.sev);
+        tile("Severity", "Warning", s ? s->name : "Watch", s ? s->hint : "", s && s->alert, 1);
+    } else {
+        tile("Type", "Type", "Notice", "Not a hazard", 0, 1);
+    }
+    tile("Kind", k ? k->group : "What", k ? k->name : g_draft.kind, k ? k->hint : "", 0, 1);
+    const unsigned long long now = now_s();
+    for (int i = 0; i < 6; i++)
+        if (al_eq(k_for[i].word, g_draft.dur)) {
+            char h[48];
+            until_words(h, sizeof h, now + al_duration(g_draft.dur));
+            tile("Duration", "For", k_for[i].name, now ? h : "", 0, 1);
+        }
+    for (int i = 0; i < 6; i++)
+        if (al_eq(k_where[i].word, g_draft.where))
+            tile("Place", i < 2 ? "Position" : "Around me", k_where[i].name, k_where[i].hint, 0, 1);
+    tiles_end();
+    char wire[AL_WIRE_MAX + 1], why[120] = "";
+    int n = compose(wire, sizeof wire, why, sizeof why);
+    if (n < 0) message_card("p_msg", "Not ready yet", why);
+    else message_card("p_msg", "Message", g_draft.text[0] ? g_draft.text : "No message: the tiles below say it all.");
+    flag_hidden("post", n < 0);
+    screen_open("Review", "Check and post");
+}
+
+/* The next question after [step], skipping what does not apply. */
+static void next_after(const char *step)
+{
+    if (al_eq(step, "Post")) open_step("Kind");
+    else if (al_eq(step, "Kind")) open_step(al_eq(g_draft.type, "warning") ? "Severity" : "Message");
+    else if (al_eq(step, "Severity")) open_step("Message");
+    else if (al_eq(step, "Message")) open_step("Duration");
+    else if (al_eq(step, "Duration")) open_step("Place");
+    else open_review();
+}
+
+/* An answer changed from the review goes straight back to the review. */
+static int g_from_review;
+
+static void answered(const char *step)
+{
+    if (g_from_review) { g_from_review = 0; open_review(); return; }
+    next_after(step);
+}
+
+static void open_type(void)
+{
+    al_cpy(g_draft.step, "Type", sizeof g_draft.step);
+    push_type();
+    screen_open("New alert", "New alert");
+}
+
+static void step_back(void)
+{
+    const char *s = g_draft.step;
+    g_from_review = 0;
+    if (al_eq(s, "Kind")) { open_type(); return; }
+    if (al_eq(s, "Severity")) open_step("Kind");
+    else if (al_eq(s, "Message")) open_step(al_eq(g_draft.type, "warning") ? "Severity" : "Kind");
+    else if (al_eq(s, "Duration")) open_step("Message");
+    else if (al_eq(s, "Place")) open_step("Duration");
+    else if (al_eq(s, "Review")) open_step("Place");
 }
 
 static void do_post(void)
@@ -461,11 +833,11 @@ static void do_post(void)
     char wire[AL_WIRE_MAX + 1], why[120] = "";
     who_am_i();
     int n = compose(wire, sizeof wire, why, sizeof why);
-    if (n < 0) { one_line("post_now", "Not posted", why); return; }
+    if (n < 0) { message_card("p_msg", "Not ready yet", why); return; }
     int rc = hal_xprs_send(wire, (uint32_t)n);
     if (rc != 0) {
-        one_line("post_now", "Not posted", rc == -2 ? "This phone may not send that."
-                                                    : "This phone could not send it.");
+        message_card("p_msg", "Not posted", rc == -2 ? "This phone may not send that."
+                                                     : "This phone could not send it.");
         return;
     }
     /* Our own row at once, keyed on the id the copy that comes back will
@@ -473,8 +845,10 @@ static void do_post(void)
     char id[7];
     al_id(wire, (unsigned)n, id);
     take(wire, id, 0);
-    one_line("post_now", "Posted", "It is on the Nearby tab. Stations you own nearby keep it and give it to whoever arrives.");
     log_host("posted an alert");
+    draft_reset();
+    say("{\"type\":\"ui.field.set\",\"field\":\"a_text\",\"value\":\"\"}");
+    say("{\"type\":\"ui.screen.close\"}");
     push_list();
 }
 
@@ -486,37 +860,100 @@ static void do_withdraw(void)
     char wire[AL_WIRE_MAX + 1];
     int n = al_build_withdraw(wire, sizeof wire, g_me, a->type, a->id, now_s(), a->until);
     if (n < 0 || hal_xprs_send(wire, (uint32_t)n) != 0) {
-        one_line("alert_now", "Not withdrawn", "This phone could not send it.");
+        message_card("a_msg", "Not withdrawn", "This phone could not send it. Try again.");
         return;
     }
     take(wire, "", 0);                    /* marks ours withdrawn */
     log_host("withdrew an alert");
-    redraw();
+    g_sel = -1;
+    say("{\"type\":\"ui.screen.close\"}");
+    push_list();
 }
 
 static void on_command(void)
 {
-    char cmd[40] = "";
-    if (!al_json(g_buf, "command", cmd, sizeof cmd)) return;
+    char cmd[40] = "", id[16] = "";
+    /* Buttons on the screen send a command; the + in the title bar sends
+     * an action. Same names, either way. */
+    if (!al_json(g_buf, "command", cmd, sizeof cmd) &&
+        !al_json(g_buf, "action", cmd, sizeof cmd)) return;
     if (al_eq(cmd, "ready") || al_eq(cmd, "refresh")) {
         who_am_i();
         push_list();
+        push_type();
+        return;
+    }
+    if (al_eq(cmd, "screen_closed")) {
+        /* The panel's arrow: an alert being written is abandoned, an alert
+         * being read is put down. */
+        g_sel = -1;
+        g_from_review = 0;
+        draft_reset();
         return;
     }
     if (al_eq(cmd, "alerts_tap")) {
-        char id[8];
         if (!fields("alerts_id", id, sizeof id)) return;
         g_sel = find(id);
         if (g_sel < 0) return;
         char t[48];
         title_of(&g_al[g_sel], t, sizeof t);
-        screen_open("Alert", t);
         push_alert();
+        screen_open("Alert", t);
         return;
     }
+    if (al_eq(cmd, "p_type_tap")) {
+        if (!fields("p_type_id", id, sizeof id)) return;
+        if (!al_eq(id, "warning") && !al_eq(id, "info")) return;
+        int changed = !al_eq(g_draft.type, id);
+        if (changed) { g_draft.kind[0] = 0; g_draft.sev[0] = 0; }
+        al_cpy(g_draft.type, id, sizeof g_draft.type);
+        if (g_from_review && changed) g_from_review = 0;   /* the rest no longer fits */
+        answered("Post");
+        return;
+    }
+    if (al_eq(cmd, "p_kind_tap")) {
+        if (!fields("p_kind_id", id, sizeof id) || !kind_of(g_draft.type, id)) return;
+        al_cpy(g_draft.kind, id, sizeof g_draft.kind);
+        answered("Kind");
+        return;
+    }
+    if (al_eq(cmd, "p_sev_tap")) {
+        if (!fields("p_sev_id", id, sizeof id) || !sev_of(id)) return;
+        al_cpy(g_draft.sev, id, sizeof g_draft.sev);
+        answered("Severity");
+        return;
+    }
+    if (al_eq(cmd, "p_next")) {
+        fields("a_text", g_draft.text, sizeof g_draft.text);
+        answered("Message");
+        return;
+    }
+    if (al_eq(cmd, "p_for_tap")) {
+        if (!fields("p_for_id", id, sizeof id) || !al_duration(id)) return;
+        al_cpy(g_draft.dur, id, sizeof g_draft.dur);
+        answered("Duration");
+        return;
+    }
+    if (al_eq(cmd, "p_where_tap")) {
+        if (!fields("p_where_id", id, sizeof id)) return;
+        int ok = 0;
+        for (int i = 0; i < 6; i++) if (al_eq(k_where[i].word, id)) ok = 1;
+        if (!ok) return;
+        al_cpy(g_draft.where, id, sizeof g_draft.where);
+        answered("Place");
+        return;
+    }
+    if (al_eq(cmd, "p_review_tap")) {
+        /* A tile names the question it answers. */
+        if (!fields("p_review_id", id, sizeof id)) return;
+        g_from_review = 1;
+        if (al_eq(id, "Type")) { g_from_review = 0; open_type(); return; }
+        open_step(id);
+        return;
+    }
+    if (al_eq(cmd, "p_back")) { step_back(); return; }
     if (al_eq(cmd, "post")) { do_post(); return; }
     if (al_eq(cmd, "withdraw")) { do_withdraw(); return; }
-    if (al_eq(cmd, "back")) { g_sel = -1; say("{\"type\":\"ui.screen.close\"}"); return; }
 }
 
 /* ── Entry points ─────────────────────────────────────────────────────── */
@@ -529,8 +966,9 @@ int32_t module_init(void)
     hal_event_subscribe(i, sizeof i - 1);
     who_am_i();
     seen_load();
-    backfill();
+    if (!restore()) backfill();         /* the archive, once, ever */
     push_list();
+    push_type();                        /* + opens New alert without asking */
     return 0;
 }
 

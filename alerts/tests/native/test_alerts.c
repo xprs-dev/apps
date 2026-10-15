@@ -92,12 +92,44 @@ static void test_subscribes_both_topics(void)
     CHECK(w && i, "not subscribed to xprs.warning and xprs.info");
 }
 
+/* The Post screens, one answer each, as a person taps through them. */
+static void tap(const char *field, const char *id)
+{
+    char c[300];
+    snprintf(c, sizeof c, "{\"command\":\"%s_tap\",\"fields\":{\"%s_id\":\"%s\"}}", field, field, id);
+    command(c);
+}
+
+static void write_msg(const char *text)
+{
+    char c[600];
+    snprintf(c, sizeof c, "{\"command\":\"p_next\",\"fields\":{\"a_text\":\"%s\"}}", text);
+    command(c);
+}
+
 static void test_post_a_warning(void)
 {
     mock_reset(); mock_kv_clear(); restart();
-    command("{\"command\":\"post\",\"fields\":{\"a_type\":\"warning\",\"a_sev\":\"danger\","
-            "\"a_kind\":\"flood\",\"a_text\":\"the lower car park floods\",\"a_for\":\"1w\","
-            "\"a_here\":false,\"a_rad\":\"spot\"}}");
+    /* The + opens New alert by itself: its tiles must already be there. */
+    CHECK(strstr(said_last("\"p_type\""), "\"Warning\"") != 0, "no type tiles: %s", said_last("p_type"));
+    tap("p_type", "warning");
+    CHECK(strstr(said_last("ui.screen.open"), "\"Kind\"") != 0, "not asked what it is");
+    CHECK(strstr(said_last("\"p_kind\""), "\"Flood\"") != 0, "no flood tile");
+    tap("p_kind", "flood");
+    CHECK(strstr(said_last("ui.screen.open"), "\"Severity\"") != 0, "not asked how bad");
+    tap("p_sev", "danger");
+    CHECK(strstr(said_last("ui.screen.open"), "\"Message\"") != 0, "not asked the message");
+    write_msg("the lower car park floods");
+    CHECK(strstr(said_last("ui.screen.open"), "\"Duration\"") != 0, "not asked how long");
+    CHECK(strstr(said_last("\"p_for\""), "until ") != 0, "no end time on the tiles: %s", said_last("p_for"));
+    CHECK(strstr(said_last("\"p_for\""), "2027") != 0, "a year on does not say which year");
+    tap("p_for", "1w");
+    CHECK(strstr(said_last("ui.screen.open"), "\"Place\"") != 0, "not asked where");
+    tap("p_where", "none");
+    CHECK(strstr(said_last("ui.screen.open"), "\"Review\"") != 0, "no review");
+    CHECK(strstr(said_last("post__hidden"), "false") != 0, "Post hidden on a good draft");
+    CHECK(g_aired_n == 0, "aired before Post was pressed");
+    command("{\"command\":\"post\"}");
     CHECK(g_aired_n == 1, "aired %d wires", g_aired_n);
     const char *w = g_aired[0];
     CHECK(!strncmp(w, "t:warning f:X1ME77 kind:flood sev:danger scope:local ts:", 56),
@@ -108,50 +140,79 @@ static void test_post_a_warning(void)
     CHECK(al_epoch(until) - al_epoch(ts) == 7ULL * 86400ULL, "until is not a week on: %s", w);
     CHECK(strlen(w) + 65 <= 250, "does not fit signed: %zu", strlen(w));
     CHECK(!strstr(w, "pos:"), "a position without being asked: %s", w);
-    CHECK(strstr(said_last("ui.people.set"), "Posted by you") != 0,
-          "own alert not shown at once: %s", said_last("ui.people.set"));
+    CHECK(strstr(w, " m:the lower car park floods") != 0, "message lost: %s", w);
+    const char *l = said_last("ui.people.set");
+    CHECK(strstr(l, "\"Yours\"") && strstr(l, "Danger: flood") && strstr(l, "\"block\""),
+          "own alert not shown at once, as itself: %s", l);
+    CHECK(strstr(said_last("ui.screen"), "ui.screen.close") != 0, "the review stayed open");
     CHECK(said_count("\"notify\"") == 0, "announced its own alert");
 }
 
-static void test_wrong_type_is_refused(void)
+static void test_notice_skips_how_bad(void)
 {
     mock_reset(); mock_kv_clear(); restart();
-    command("{\"command\":\"post\",\"fields\":{\"a_type\":\"info\",\"a_kind\":\"fire\","
-            "\"a_text\":\"x\",\"a_for\":\"1d\"}}");
-    CHECK(g_aired_n == 0, "a fire went out as a notice");
-    CHECK(strstr(said_last("post_now"), "Not posted") != 0, "no reason shown");
-    command("{\"command\":\"post\",\"fields\":{\"a_type\":\"warning\",\"a_sev\":\"watch\","
-            "\"a_kind\":\"works\",\"a_text\":\"x\",\"a_for\":\"1d\"}}");
-    CHECK(g_aired_n == 0, "works went out as a hazard");
+    tap("p_type", "info");
+    tap("p_kind", "fire");                 /* a hazard is not a notice */
+    CHECK(!strstr(said_last("ui.screen.open"), "Severity") && !strstr(said_last("ui.screen.open"), "Message"),
+          "a fire was taken as a notice");
+    tap("p_kind", "closure");
+    CHECK(strstr(said_last("ui.screen.open"), "\"Message\"") != 0, "a notice was asked how bad");
+}
+
+static void test_review_changes_one_answer(void)
+{
+    mock_reset(); mock_kv_clear(); restart();
+    tap("p_type", "info"); tap("p_kind", "works"); write_msg("east path");
+    tap("p_for", "1d"); tap("p_where", "none");
+    tap("p_review", "Duration");
+    CHECK(strstr(said_last("ui.screen.open"), "\"Duration\"") != 0, "the tile did not lead to its question");
+    tap("p_for", "1m");
+    CHECK(strstr(said_last("ui.screen.open"), "\"Review\"") != 0, "did not come back to the review");
+    CHECK(strstr(said_last("\"p_review\""), "1 month") != 0, "the change is not shown");
+    command("{\"command\":\"post\"}");
+    char ts[24], until[24];
+    al_field(g_aired[0], "ts", ts, sizeof ts);
+    al_field(g_aired[0], "until", until, sizeof until);
+    CHECK(al_epoch(until) - al_epoch(ts) == 30ULL * 86400ULL, "a month was not posted: %s", g_aired[0]);
 }
 
 static void test_too_long_is_refused(void)
 {
     mock_reset(); mock_kv_clear(); restart();
-    char cmd[1024], text[300];
-    memset(text, 'a', 200);
-    text[200] = 0;
-    snprintf(cmd, sizeof cmd, "{\"command\":\"post\",\"fields\":{\"a_type\":\"info\","
-             "\"a_kind\":\"fog\",\"a_text\":\"%s\",\"a_for\":\"1d\"}}", text);
-    command(cmd);
+    g_lat = 387071234; g_lon = -91355432;
+    tap("p_type", "warning"); tap("p_kind", "landslide"); tap("p_sev", "warning");
+    write_msg("rocks are coming down onto the coastal path past the second bend");
+    tap("p_for", "6m"); tap("p_where", "500m");
+    g_lat = g_lon = (int32_t)0x80000000;
+    CHECK(strstr(said_last("post__hidden"), "true") != 0, "Post offered for a packet too long to sign");
+    CHECK(strstr(said_last("\"p_msg\""), "too long") != 0, "no reason: %s", said_last("p_msg"));
+    command("{\"command\":\"post\"}");
     CHECK(g_aired_n == 0, "a packet too long to sign went out");
-    CHECK(strstr(said_last("post_now"), "too long") != 0, "no reason: %s", said_last("post_now"));
 }
 
 static void test_post_with_a_place(void)
 {
     mock_reset(); mock_kv_clear(); restart();
-    command("{\"command\":\"post\",\"fields\":{\"a_type\":\"info\",\"a_kind\":\"fog\","
-            "\"a_text\":\"\",\"a_for\":\"2d\",\"a_here\":true,\"a_rad\":\"500m\"}}");
-    CHECK(g_aired_n == 0, "posted a place it does not have");
+    tap("p_type", "info"); tap("p_kind", "fog"); write_msg("");
+    tap("p_for", "2d"); tap("p_where", "500m");
+    CHECK(strstr(said_last("post__hidden"), "true") != 0, "offered to post a place it does not have");
     g_lat = 387071234; g_lon = -91355432;
-    command("{\"command\":\"post\",\"fields\":{\"a_type\":\"info\",\"a_kind\":\"fog\","
-            "\"a_text\":\"\",\"a_for\":\"2d\",\"a_here\":true,\"a_rad\":\"500m\"}}");
+    tap("p_review", "Place"); tap("p_where", "500m");
+    command("{\"command\":\"post\"}");
     g_lat = g_lon = (int32_t)0x80000000;
     CHECK(g_aired_n == 1, "aired %d", g_aired_n);
     CHECK(strstr(g_aired[0], " pos:38.7071,-9.1355 rad:500m kind:fog scope:local ") != 0,
           "place: %s", g_aired[0]);
     CHECK(!strstr(g_aired[0], " m:"), "an empty m: went out: %s", g_aired[0]);
+}
+
+static void test_closing_abandons_the_draft(void)
+{
+    mock_reset(); mock_kv_clear(); restart();
+    tap("p_type", "warning"); tap("p_kind", "fire");
+    command("{\"command\":\"screen_closed\"}");
+    command("{\"command\":\"post\"}");
+    CHECK(g_aired_n == 0, "an abandoned draft was posted");
 }
 
 #define HEARD_FLOOD "t:warning f:X1QZ3N kind:flood sev:warning scope:local " \
@@ -173,6 +234,27 @@ static void test_announced_once(void)
     restart();
     CHECK(said_count("\"notify\"") == 0, "announced again after a restart");
     CHECK(strstr(said_last("ui.people.set"), "\"Now\"") != 0, "not listed after a restart");
+}
+
+/* A start after the first reads what the wapp kept, not the archive: the
+ * archive walks every row for a rare type, on the UI isolate. */
+extern int g_history_calls;
+static void test_restart_does_not_read_the_archive(void)
+{
+    mock_reset(); mock_kv_clear(); restart();
+    heard("xprs.warning", "a1b2c3", HEARD_FLOOD);
+    heard("xprs.warning", "eeeeee", "t:warning f:X1QZ3N scope:local ts:2026-08-16_11:00:00 "
+          "until:2026-08-23_10:00:00 r:a1b2c3 remove:warning");
+    heard("xprs.info", "0d0e0f", "t:info f:X1RD89 kind:fog scope:local "
+          "ts:2026-08-16_10:00:00 until:2026-08-18_10:00:00 m:fog on the hill");
+    g_history_calls = 0;
+    strcpy(g_history, "[]");
+    restart();
+    CHECK(g_history_calls == 0, "the archive was read on a second start");
+    const char *l = said_last("ui.people.set");
+    CHECK(strstr(l, "fog on the hill") != 0, "a kept alert was lost: %s", l);
+    CHECK(!strstr(l, "car park"), "a kept withdrawal was lost: %s", l);
+    CHECK(said_count("\"notify\"") == 0, "a kept alert was announced again");
 }
 
 static void test_ended_is_hidden(void)
@@ -221,8 +303,9 @@ static void test_withdrawn_by_author_only(void)
 static void test_withdraw_own(void)
 {
     mock_reset(); mock_kv_clear(); restart();
-    command("{\"command\":\"post\",\"fields\":{\"a_type\":\"info\",\"a_kind\":\"closure\","
-            "\"a_text\":\"east gate closed\",\"a_for\":\"1m\"}}");
+    tap("p_type", "info"); tap("p_kind", "closure"); write_msg("east gate closed");
+    tap("p_for", "1m"); tap("p_where", "none");
+    command("{\"command\":\"post\"}");
     CHECK(g_aired_n == 1, "not posted");
     char id[7];
     al_id(g_aired[0], strlen(g_aired[0]), id);
@@ -232,6 +315,9 @@ static void test_withdraw_own(void)
     snprintf(cmd, sizeof cmd, "{\"command\":\"alerts_tap\",\"fields\":{\"alerts_id\":\"%s\"}}", id);
     command(cmd);
     CHECK(strstr(said_last("withdraw__hidden"), "false") != 0, "withdraw not offered on our own");
+    CHECK(strstr(said_last("\"a_msg\""), "east gate closed") != 0, "the message is not shown");
+    CHECK(strstr(said_last("\"a_hub\""), "1 month") || strstr(said_last("\"a_hub\""), "30 days"),
+          "time left not shown: %s", said_last("a_hub"));
     command("{\"command\":\"withdraw\"}");
     CHECK(g_aired_n == 2, "no withdrawal aired");
     char want[80];
@@ -249,6 +335,13 @@ static void test_time_round_trip(void)
     }
     CHECK(al_epoch("2026-08-08_14:26:40") == 1786199200ULL, "a known stamp");
     CHECK(al_epoch("not a time") == 0, "nonsense read as a time");
+    char w[32];
+    al_when(w, sizeof w, 1786199200ULL, 120);          /* 2026-08-08 14:26:40 UTC */
+    CHECK(!strcmp(w, "Sat 8 Aug, 16:26"), "local time: %s", w);
+    al_span(w, sizeof w, 47ULL * 3600ULL);
+    CHECK(!strcmp(w, "2 days"), "47 hours read as %s", w);
+    al_span(w, sizeof w, 3600ULL);
+    CHECK(!strcmp(w, "60 minutes"), "an hour read as %s", w);
 }
 
 int main(void)
@@ -256,10 +349,13 @@ int main(void)
     printf("alerts native tests\n");
     test_subscribes_both_topics();
     test_post_a_warning();
-    test_wrong_type_is_refused();
+    test_notice_skips_how_bad();
+    test_review_changes_one_answer();
     test_too_long_is_refused();
     test_post_with_a_place();
+    test_closing_abandons_the_draft();
     test_announced_once();
+    test_restart_does_not_read_the_archive();
     test_ended_is_hidden();
     test_planned();
     test_withdrawn_by_author_only();

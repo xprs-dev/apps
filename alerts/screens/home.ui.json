@@ -2,105 +2,192 @@
   {
     "$": "screen",
     "name": "Nearby",
-    "icon": "campaign",
+    "icon": "radar",
     "children": [
       {
         "$": "field",
         "name": "alerts",
         "$type": "people",
-        "empty_title": "No alerts here",
-        "empty": "An alert is a warning or a notice about this place: a flooded car park, a closed gate, a storm on its way.\n\nAlerts posted nearby show up here, and a station keeps its owner's alerts and gives each one to whoever arrives, once.\n\nTo post one, open the Post tab."
+        "empty_art": "media/art/clear.svg",
+        "empty_title": "All clear here",
+        "empty": "Nobody nearby has posted a warning or a notice.\n\nWhen somebody does, it shows up here and you are told, even with the app closed. A station keeps its owner's alerts and gives them to everybody who arrives, so you hear about them when you get there.\n\nTo post one yourself, tap + at the top."
       }
     ]
   },
   {
     "$": "screen",
-    "name": "Post",
-    "icon": "add_alert",
-    "tip": "Goes out over Bluetooth and the local network only, never further. A station you own keeps it and gives it to everybody who arrives until it ends.",
+    "name": "New alert",
+    "icon": "add",
+    "menu": true,
+    "appbar": true,
     "children": [
       {
-        "$": "group",
-        "name": "Alert",
-        "children": [
-          { "$": "field", "name": "a_type", "$type": "enum", "label": "Type", "default": "warning",
-            "children": [
-              { "$": "option", "name": "warning", "label": "Warning: a hazard" },
-              { "$": "option", "name": "info", "label": "Notice: worth knowing" }
-            ] },
-          { "$": "field", "name": "a_sev", "$type": "enum", "label": "How bad (warnings)", "default": "watch",
-            "children": [
-              { "$": "option", "name": "watch", "label": "Watch: may affect you, be ready" },
-              { "$": "option", "name": "warning", "label": "Warning: will affect you, act now" },
-              { "$": "option", "name": "danger", "label": "Danger: life-threatening, leave" }
-            ] },
-          { "$": "field", "name": "a_kind", "$type": "enum", "label": "What", "default": "other",
-            "children": [
-              { "$": "option", "name": "other", "label": "Other" },
-              { "$": "option", "name": "fire", "label": "Fire (warning)" },
-              { "$": "option", "name": "flood", "label": "Flood (warning)" },
-              { "$": "option", "name": "storm", "label": "Storm (warning)" },
-              { "$": "option", "name": "wind", "label": "Wind" },
-              { "$": "option", "name": "snow", "label": "Snow" },
-              { "$": "option", "name": "ice", "label": "Ice" },
-              { "$": "option", "name": "quake", "label": "Earthquake (warning)" },
-              { "$": "option", "name": "tsunami", "label": "Tsunami (warning)" },
-              { "$": "option", "name": "landslide", "label": "Landslide (warning)" },
-              { "$": "option", "name": "chemical", "label": "Chemical (warning)" },
-              { "$": "option", "name": "radiation", "label": "Radiation (warning)" },
-              { "$": "option", "name": "outage", "label": "Outage (warning)" },
-              { "$": "option", "name": "road", "label": "Road (warning)" },
-              { "$": "option", "name": "crowd", "label": "Crowd" },
-              { "$": "option", "name": "animal", "label": "Animal" },
-              { "$": "option", "name": "traffic", "label": "Traffic (notice)" },
-              { "$": "option", "name": "stopped", "label": "Stopped vehicle (notice)" },
-              { "$": "option", "name": "slow", "label": "Slow traffic (notice)" },
-              { "$": "option", "name": "works", "label": "Works (notice)" },
-              { "$": "option", "name": "closure", "label": "Closure (notice)" },
-              { "$": "option", "name": "rain", "label": "Rain (notice)" },
-              { "$": "option", "name": "fog", "label": "Fog (notice)" },
-              { "$": "option", "name": "debris", "label": "Debris (notice)" },
-              { "$": "option", "name": "event", "label": "Event (notice)" }
-            ] },
-          { "$": "field", "name": "a_text", "$type": "string", "label": "Message", "hint": "the lower car park floods at high tide", "max": 120 },
-          { "$": "field", "name": "a_for", "$type": "enum", "label": "For", "default": "1d",
-            "children": [
-              { "$": "option", "name": "1d", "label": "1 day" },
-              { "$": "option", "name": "2d", "label": "2 days" },
-              { "$": "option", "name": "1w", "label": "1 week" },
-              { "$": "option", "name": "1m", "label": "1 month" },
-              { "$": "option", "name": "6m", "label": "6 months" },
-              { "$": "option", "name": "1y", "label": "1 year" }
-            ] },
-          { "$": "field", "name": "a_here", "$type": "bool", "label": "Mark where I am", "default": false,
-            "tip": "Adds this phone's position, so others see where it is." },
-          { "$": "field", "name": "a_rad", "$type": "enum", "label": "Area around it", "default": "spot",
-            "children": [
-              { "$": "option", "name": "spot", "label": "Just the spot" },
-              { "$": "option", "name": "100m", "label": "100 m" },
-              { "$": "option", "name": "500m", "label": "500 m" },
-              { "$": "option", "name": "1km", "label": "1 km" },
-              { "$": "option", "name": "5km", "label": "5 km" }
-            ] }
-        ]
+        "$": "field",
+        "name": "p_type",
+        "$type": "stats"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Kind",
+    "icon": "category",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "p_kind",
+        "$type": "stats"
       },
-      { "$": "action", "name": "post", "label": "Post", "style": "primary", "icon": "campaign",
-        "confirm": true, "confirm-label": "Post this alert?",
-        "confirm-text": "Everybody nearby sees it, and a station you own keeps it until it ends or you withdraw it." },
-      { "$": "field", "name": "post_now", "$type": "details", "empty": "" }
+      {
+        "$": "action",
+        "name": "p_back",
+        "label": "Back"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Severity",
+    "icon": "category",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "p_sev",
+        "$type": "stats"
+      },
+      {
+        "$": "action",
+        "name": "p_back",
+        "label": "Back"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Message",
+    "icon": "description",
+    "hidden": true,
+    "tip": "A few words people need to know. What, how bad and how long are already on the alert.",
+    "children": [
+      {
+        "$": "field",
+        "name": "a_text",
+        "$type": "string",
+        "label": "Message",
+        "hint": "the lower car park floods at high tide",
+        "max": 70
+      },
+      {
+        "$": "action",
+        "name": "p_next",
+        "label": "Next",
+        "style": "primary",
+        "icon": "check"
+      },
+      {
+        "$": "action",
+        "name": "p_back",
+        "label": "Back"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Duration",
+    "icon": "schedule",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "p_for",
+        "$type": "stats"
+      },
+      {
+        "$": "action",
+        "name": "p_back",
+        "label": "Back"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Place",
+    "icon": "map",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "p_where",
+        "$type": "stats"
+      },
+      {
+        "$": "action",
+        "name": "p_back",
+        "label": "Back"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Review",
+    "icon": "visibility",
+    "hidden": true,
+    "tip": "Tap a tile to change it.",
+    "children": [
+      {
+        "$": "field",
+        "name": "p_msg",
+        "$type": "details",
+        "empty": ""
+      },
+      {
+        "$": "field",
+        "name": "p_review",
+        "$type": "stats"
+      },
+      {
+        "$": "action",
+        "name": "post",
+        "label": "Post alert",
+        "style": "primary",
+        "icon": "campaign"
+      },
+      {
+        "$": "action",
+        "name": "p_back",
+        "label": "Back"
+      }
     ]
   },
   {
     "$": "screen",
     "name": "Alert",
-    "icon": "campaign",
+    "icon": "info",
     "hidden": true,
     "children": [
-      { "$": "field", "name": "alert_now", "$type": "details", "empty": "" },
-      { "$": "action", "name": "withdraw", "label": "Withdraw", "style": "danger", "icon": "delete",
-        "confirm": true, "confirm-label": "Withdraw this alert?",
-        "confirm-text": "Everybody nearby is told it is over, and your stations stop giving it." },
-      { "$": "action", "name": "back", "label": "Back", "icon": "close" }
+      {
+        "$": "field",
+        "name": "a_msg",
+        "$type": "details",
+        "empty": ""
+      },
+      {
+        "$": "field",
+        "name": "a_hub",
+        "$type": "stats"
+      },
+      {
+        "$": "action",
+        "name": "withdraw",
+        "label": "Withdraw",
+        "style": "danger",
+        "icon": "delete",
+        "confirm": true,
+        "confirm-label": "Withdraw this alert?",
+        "confirm-text": "Everybody nearby is told it is over, and your stations stop giving it."
+      }
     ]
   }
 ]

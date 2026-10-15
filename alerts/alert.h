@@ -70,6 +70,12 @@ int al_parse(const char *wire, al_alert_t *a);
  * then nothing is gone by time. */
 int al_state(const al_alert_t *a, unsigned long long now);
 
+/* "2 days", "5 hours", "20 minutes". */
+void al_span(char *out, unsigned cap, unsigned long long seconds);
+
+/* "Thu 17 Oct, 15:16": [epoch] in the zone [offset_min] east of UTC. */
+void al_when(char *out, unsigned cap, unsigned long long epoch, int offset_min);
+
 /* "3 days left", "2 hours left", "ended": the time to [until] from [now]. */
 void al_left(char *out, unsigned cap, unsigned long long now,
              unsigned long long until);

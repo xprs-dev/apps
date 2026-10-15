@@ -16,6 +16,8 @@ void hal_log(int32_t level, const char *m, uint32_t n) { (void)level; (void)m; (
 /* ── time and place ───────────────────────────────────────────────────── */
 uint64_t g_now = 1786960000ULL;          /* 2026-08-17 */
 uint64_t hal_time_epoch(void) { return g_now; }
+int32_t g_offset = 120;                  /* CEST */
+int32_t hal_time_utc_offset(void) { return g_offset; }
 int32_t g_lat = (int32_t)0x80000000, g_lon = (int32_t)0x80000000;
 int32_t hal_sensor_gps_lat(void) { return g_lat; }
 int32_t hal_sensor_gps_lon(void) { return g_lon; }
@@ -105,9 +107,11 @@ void mock_event(const char *topic, const char *json)
 
 /* ── the archive ──────────────────────────────────────────────────────── */
 char g_history[8192] = "[]";
+int g_history_calls;
 int32_t hal_xprs_history(const char *q, uint32_t ql, char *out, uint32_t cap)
 {
     (void)q; (void)ql;
+    g_history_calls++;
     uint32_t n = strlen(g_history);
     if (n > cap) return -(int32_t)n;
     memcpy(out, g_history, n);
