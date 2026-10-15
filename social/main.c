@@ -29,6 +29,7 @@
 /* ── String helpers ──────────────────────────────────────────────────── */
 static unsigned str_len(const char *s) { unsigned n = 0; while (s[n]) n++; return n; }
 static int str_eq(const char *a, const char *b) { while (*a && *b && *a == *b) { a++; b++; } return *a == *b; }
+static int str_cmp(const char *a, const char *b) { while (*a && *a == *b) { a++; b++; } return (unsigned char)*a - (unsigned char)*b; }
 static void str_copy(char *d, const char *s, unsigned m) { unsigned i = 0; while (i < m - 1 && s[i]) { d[i] = s[i]; i++; } d[i] = '\0'; }
 static void str_cat(char *d, const char *s, unsigned m) { unsigned l = str_len(d); unsigned i = 0; while (l + i < m - 1 && s[i]) { d[l + i] = s[i]; i++; } d[l + i] = '\0'; }
 
@@ -219,6 +220,114 @@ typedef struct {
 static group_t g_grp[PART_MAX];
 static int g_ngrp = 0;
 
+
+/* ── Corrections and withdrawals (XPRS.md 7.8) ───────────────────────────
+ *
+ * A status is corrected by a status that names it in edit:, and withdrawn by
+ * one that names it in r: with remove:status. Neither is a post of its own,
+ * and neither counts unless its signature verified (an edit that can be forged
+ * is a way to put words in a signed mouth). The feed shows the newest valid
+ * version in place, says `edited`, and keeps the original in the archive for
+ * the history.
+ *
+ * The spool is read newest first, so a correction is met before the post it
+ * corrects: they are collected first, then applied as posts are drawn. Only the
+ * newest version of each post is held here; the history reads the spool. */
+#define ED_MAX    24
+#define DRAWN_MAX 128
+typedef struct {
+    char root[20];                      /* the original's identifier        */
+    char person[CALL_MAX];              /* who wrote the correction         */
+    char ts[24];                        /* its epoch, as text               */
+    char vid[20];                       /* its own identifier               */
+    int  del;                           /* withdrawn: no words survive      */
+    char text[1100];                    /* JSON-escaped, as the feed wants  */
+} ed_t;
+static ed_t g_ed[ED_MAX];
+static int  g_ned = 0;
+
+/* Posts drawn so far, so a correction that arrives live can be checked against
+ * its original (same author, later) and re-sent with the original's thread. */
+typedef struct { char mid[20]; char person[CALL_MAX]; char ts[24]; char parent[20]; } drawn_t;
+static drawn_t g_drawn[DRAWN_MAX];
+static int g_ndrawn = 0;
+
+static unsigned long long num(const char *s) {
+    unsigned long long v = 0;
+    while (*s >= '0' && *s <= '9') v = v * 10 + (unsigned long long)(*s++ - '0');
+    return v;
+}
+
+static void person_of(const char *from, char *out, unsigned cap) {
+    unsigned o = 0;
+    for (const char *p = from; *p && *p != '-' && o < cap - 1; p++) out[o++] = uc(*p);
+    out[o] = '\0';
+}
+
+static int sig_verified(const char *row) {
+    char sig[16] = "";
+    json_raw(row, "sig", sig, sizeof(sig));
+    return str_eq(sig, "verified");
+}
+
+static drawn_t *drawn_find(const char *mid) {
+    for (int i = 0; i < g_ndrawn && i < DRAWN_MAX; i++)
+        if (str_eq(g_drawn[i].mid, mid)) return &g_drawn[i];
+    return 0;
+}
+
+static void drawn_note(const char *mid, const char *person, const char *ts, const char *parent) {
+    drawn_t *d = drawn_find(mid);
+    if (!d) { d = &g_drawn[g_ndrawn % DRAWN_MAX]; g_ndrawn++; }
+    str_copy(d->mid, mid, sizeof(d->mid));
+    str_copy(d->person, person, sizeof(d->person));
+    str_copy(d->ts, ts, sizeof(d->ts));
+    str_copy(d->parent, parent, sizeof(d->parent));
+}
+
+/* Remember a correction ([del] 0) or a withdrawal ([del] 1) of [root]. Newest
+ * wins, a tie going to the smaller identifier; a withdrawal is final. Returns
+ * 1 when this changed what is known. */
+static int ed_note(const char *root, const char *person, const char *ts,
+                   const char *vid, const char *text, int del) {
+    ed_t *e = 0;
+    for (int i = 0; i < g_ned && i < ED_MAX; i++)
+        if (str_eq(g_ed[i].root, root) && str_eq(g_ed[i].person, person)) { e = &g_ed[i]; break; }
+    if (e) {
+        if (e->del) return 0;
+        if (!del) {
+            unsigned long long a = num(ts), b = num(e->ts);
+            if (a < b || (a == b && str_len(vid) && str_cmp(vid, e->vid) >= 0)) return 0;
+        }
+    } else {
+        e = &g_ed[g_ned % ED_MAX];
+        g_ned++;
+    }
+    str_copy(e->root, root, sizeof(e->root));
+    str_copy(e->person, person, sizeof(e->person));
+    str_copy(e->ts, ts, sizeof(e->ts));
+    str_copy(e->vid, vid, sizeof(e->vid));
+    e->del = del;
+    if (del) e->text[0] = '\0';
+    else str_copy(e->text, text, sizeof(e->text));
+    return 1;
+}
+
+/* What the post [mid] by [person], written at epoch [ots], shows now. */
+static void ed_apply(const char *mid, const char *person, const char *ots,
+                     char *body, unsigned cap, int *edited, int *deleted) {
+    for (int i = 0; i < g_ned && i < ED_MAX; i++) {
+        const ed_t *e = &g_ed[i];
+        if (!str_eq(e->root, mid) || !str_eq(e->person, person)) continue;
+        if (e->del) { *deleted = 1; body[0] = '\0'; return; }
+        unsigned long long now = hal_time_epoch();
+        if (num(e->ts) > num(ots) && (!now || num(e->ts) <= now + 300ULL)) {
+            str_copy(body, e->text, cap);
+            *edited = 1;
+        }
+    }
+}
+
 /* ── Seen ring ───────────────────────────────────────────────────────── */
 static int seen(const char *id) {
     for (int i = 0; i < g_nseen && i < SEEN_MAX; i++)
@@ -360,9 +469,12 @@ static void epoch_from_ts(const char *ts, char *out, unsigned cap) {
     out[o] = '\0';
 }
 
+static void stamp_of(unsigned long long e, char *out, unsigned cap);
 static void stamp_now(char *out, unsigned cap) {
+    stamp_of(hal_time_epoch(), out, cap);
+}
+static void stamp_of(unsigned long long e, char *out, unsigned cap) {
     if (cap < 20) { out[0] = '\0'; return; }
-    unsigned long long e = hal_time_epoch();
     long z = (long)(e / 86400ULL);
     unsigned s = (unsigned)(e % 86400ULL);
     z += 719468;
@@ -552,7 +664,8 @@ static void notify_about(const char *tag, const char *who, const char *what,
 static void feed_append(const char *field, const char *from, const char *body,
                         const char *mid, const char *parent, const char *ts,
                         const char *sig, const char *bearer, int own,
-                        const char *source) {
+                        const char *source, int edited, int deleted) {
+    if (str_eq(field, "activity") && !deleted) drawn_note(mid, from, ts, parent);
     str_copy(g_msg, "{\"type\":\"ui.chat.append\",\"field\":\"", sizeof(g_msg));
     str_cat(g_msg, field, sizeof(g_msg));
     str_cat(g_msg, "\",\"message\":{\"dir\":\"", sizeof(g_msg));
@@ -572,6 +685,10 @@ static void feed_append(const char *field, const char *from, const char *body,
     str_cat(g_msg, "\",\"pop\":0,\"source\":\"", sizeof(g_msg));
     str_cat(g_msg, source, sizeof(g_msg));
     str_cat(g_msg, "\"", sizeof(g_msg));
+    /* 7.8: the host shows `edited` beside the time and a place saying the post
+     * was deleted. A post it never held is not drawn as a deleted one. */
+    if (edited) str_cat(g_msg, ",\"edited\":true", sizeof(g_msg));
+    if (deleted) str_cat(g_msg, ",\"deleted\":true", sizeof(g_msg));
     /* Whether the archive could check the signature is part of the post: a
      * callsign is a label, so "who said this" is the signature's answer. */
     if (sig[0]) {
@@ -599,6 +716,117 @@ static group_t *group_for(const char *from, const char *ts, int total) {
     return g;
 }
 
+
+
+/* Tell the host a post it holds now reads differently: send the same post
+ * again with the newest valid words and the flags (it replaces them in place).
+ * A withdrawal is sent even for a post not drawn this session, because the
+ * host may hold it from an earlier one. */
+static void revise(const char *root) {
+    drawn_t *d = drawn_find(root);
+    const ed_t *e = 0;
+    for (int i = 0; i < g_ned && i < ED_MAX; i++) {
+        if (!str_eq(g_ed[i].root, root)) continue;
+        /* A post drawn here belongs to its author: only theirs counts. */
+        if (d && !str_eq(g_ed[i].person, d->person)) continue;
+        e = &g_ed[i];
+        break;
+    }
+    if (!e) return;
+    if (e->del) {
+        /* The author is named so the host can check it holds THEIR post. */
+        feed_append("activity", e->person, "", root, "", "1", "", "", 0, "xprs", 0, 1);
+        return;
+    }
+    if (!d) return;
+    char body[1100] = "";
+    int edited = 0, deleted = 0;
+    ed_apply(root, d->person, d->ts, body, sizeof(body), &edited, &deleted);
+    if (!edited) return;
+    feed_append("activity", d->person, body, root, d->parent, d->ts, "", "",
+                str_eq(d->person, my_call()), "xprs", 1, 0);
+}
+
+/* The words of a correction, once whole. A correction is split like any
+ * status (6.6) and repeats its head in every part, so it is gathered the way a
+ * long post is. Returns 1 with the text when complete. */
+static int edit_text(const char *wire, const char *person, char *out, unsigned cap) {
+    char nfield[12] = "";
+    if (wire_key(wire, "n", nfield, sizeof(nfield)) && nfield[0]) {
+        int idx = 0, tot = 0; const char *p = nfield;
+        while (*p >= '0' && *p <= '9') idx = idx * 10 + (*p++ - '0');
+        if (*p == '/') { p++; while (*p >= '0' && *p <= '9') tot = tot * 10 + (*p++ - '0'); }
+        if (idx >= 1 && idx <= 9 && tot >= 1 && tot <= 9) {
+            char pts[24] = ""; wire_key(wire, "ts", pts, sizeof(pts));
+            group_t *g = group_for(person, pts, tot);
+            char words[1100] = ""; wire_body(wire, words, sizeof(words));
+            if (!g->part[idx - 1][0]) { str_copy(g->part[idx - 1], words, sizeof(g->part[0])); g->have++; }
+            if (g->have < g->total) return 0;
+            out[0] = '\0';
+            for (int i = 0; i < g->total; i++) str_cat(out, g->part[i], cap);
+            add_file_ref(wire, out, cap);
+            return out[0] ? 1 : 0;
+        }
+    }
+    return status_text(wire, out, cap);
+}
+
+/* A correction or a withdrawal met in the spool or on the air: remember it if
+ * it verified. Returns 1 when [row] was one (whether or not it counted), so
+ * the caller does not draw it as a post. */
+static int note_version(const char *row, int *changed, char *root_out) {
+    char wire[1100] = "", from[CALL_MAX] = "", id[20] = "", target[20] = "", root[20] = "";
+    json_raw(row, "wire", wire, sizeof(wire));
+    json_raw(row, "from", from, sizeof(from));
+    json_raw(row, "id", id, sizeof(id));
+    int gone = wire_key(wire, "remove", target, sizeof(target));
+    int fix = wire_key(wire, "edit", root, sizeof(root)) && root[0];
+    if (!gone && !fix) return 0;
+    *changed = 0;
+    if (!sig_verified(row) || !from[0]) return 1;
+    char person[CALL_MAX]; person_of(from, person, sizeof(person));
+    char wts[24] = "", ets[24] = "";
+    wire_key(wire, "ts", wts, sizeof(wts));
+    epoch_from_ts(wts, ets, sizeof(ets));
+    if (gone) {
+        if (!str_eq(target, "status")) return 1;
+        char r[20] = "";
+        if (!wire_key(wire, "r", r, sizeof(r)) || !r[0]) return 1;
+        *changed = ed_note(r, person, ets, id, "", 1);
+        str_copy(root_out, r, 20);
+        return 1;
+    }
+    char text[1100];
+    if (!edit_text(wire, person, text, sizeof(text))) return 1;
+    *changed = ed_note(root, person, ets, id, text, 0);
+    str_copy(root_out, root, 20);
+    return 1;
+}
+
+/* Everything in [g_hist] that corrects or withdraws, before any post is drawn.
+ * A withdrawal is also told to the host for every post it names: the original
+ * may be gone from the spool by now, and the host's own copy still holds the
+ * words. */
+static void collect_versions(const char *field) {
+    unsigned pos = 0;
+    int base = g_ngrp;
+    (void)base;
+    while (next_obj(g_hist, &pos, g_row, sizeof(g_row))) {
+        char type[24] = "";
+        json_raw(g_row, "type", type, sizeof(type));
+        if (!str_eq(type, "status")) continue;
+        int changed = 0; char root[20] = "";
+        note_version(g_row, &changed, root);
+    }
+    g_ngrp = 0;                       /* the pieces were only for the above */
+    if (!str_eq(field, "activity")) return;
+    for (int i = 0; i < g_ned && i < ED_MAX; i++) {
+        if (!g_ed[i].del) continue;
+        feed_append(field, g_ed[i].person, "", g_ed[i].root, "", "1", "", "", 0,
+                    "xprs", 0, 1);
+    }
+}
+
 /* Read the spool and push anything new into [field].
  *
  * Every status goes out once. A post from a followed callsign is labelled
@@ -611,6 +839,7 @@ static void feed_from_spool(const char *field, const char *query,
     int n = hal_xprs_history(query, str_len(query), g_hist, sizeof(g_hist) - 1);
     if (n <= 0) return;                 /* negative = our buffer is too small */
     g_hist[n] = '\0';
+    collect_versions(field);
 
     /* The spool is newest first; walk it backwards is not possible in one
      * pass over a flat string, so collect ids first and emit oldest-last —
@@ -651,6 +880,10 @@ static void feed_from_spool(const char *field, const char *query,
         json_raw(g_row, "own", own, sizeof(own));
         json_raw(g_row, "wire", wire, sizeof(wire));
         if (!id[0] || !wire[0]) continue;
+        {   /* A correction or a withdrawal is a version, never a post (7.8). */
+            char x[12] = "";
+            if (wire_key(wire, "edit", x, sizeof(x)) || wire_key(wire, "remove", x, sizeof(x))) continue;
+        }
 
         /* The bare callsign is the person (section 3.1). */
         char person[CALL_MAX]; unsigned o = 0;
@@ -661,6 +894,9 @@ static void feed_from_spool(const char *field, const char *query,
 
         char body[1100] = "";
         if (!status_text(wire, body, sizeof(body))) continue;
+        int edited = 0, deleted = 0;
+        ed_apply(id, person, ts, body, sizeof(body), &edited, &deleted);
+        if (deleted && !str_eq(field, "activity")) continue;
         if (match[0] && !contains_ci(body, match) && !contains_ci(person, match)) continue;
 
         /* r: names the status this one replies to (section 27). */
@@ -685,9 +921,12 @@ static void feed_from_spool(const char *field, const char *query,
                 char whole[2200] = "";
                 for (int i = 0; i < g->total; i++) str_cat(whole, g->part[i], sizeof(whole));
                 add_file_ref(wire, whole, sizeof(whole));
+                int wed = 0, wdel = 0;
+                ed_apply(id, person, ts, whole, sizeof(whole), &wed, &wdel);
+                if (wdel && !str_eq(field, "activity")) continue;
                 mark_seen(id);
                 if (str_eq(own, "true")) { mark_mine(id); mark_mine(parent); }
-                feed_append(field, person, whole, id, parent, ts, sig, bearer, str_eq(own, "true"), source);
+                feed_append(field, person, whole, id, parent, ts, sig, bearer, str_eq(own, "true"), source, wed, wdel);
                 continue;
             }
         }
@@ -695,7 +934,7 @@ static void feed_from_spool(const char *field, const char *query,
         if (seen(id)) continue;
         mark_seen(id);
         if (str_eq(own, "true")) { mark_mine(id); mark_mine(parent); }
-        feed_append(field, person, body, id, parent, ts, sig, bearer, str_eq(own, "true"), source);
+        feed_append(field, person, body, id, parent, ts, sig, bearer, str_eq(own, "true"), source, edited, deleted);
     }
 }
 
@@ -750,6 +989,13 @@ static void row_from_event(const char *row, int live, int draw) {
         return;
     }
     if (!str_eq(type, "status")) return;
+    {   /* 7.8: a correction or a withdrawal, never a post of its own. */
+        int changed = 0; char root[20] = "";
+        if (note_version(row, &changed, root)) {
+            if (changed && draw) revise(root);
+            return;
+        }
+    }
     if (seen(id)) return;
 
     char wts[24] = "", ts[24] = "", sig[16] = "", bearer[12] = "", body[1100] = "";
@@ -766,9 +1012,13 @@ static void row_from_event(const char *row, int live, int draw) {
     /* Ours: this post, and the conversation it was an answer in. Somebody who
      * replies to either is replying to us. */
     if (ours) { mark_mine(id); mark_mine(parent); }
-    if (draw)
+    /* A correction that was heard first is applied now (7.8.1); a post that
+     * was already withdrawn is not drawn at all. */
+    int edited = 0, deleted = 0;
+    ed_apply(id, person, ts, body, sizeof(body), &edited, &deleted);
+    if (draw && !deleted)
         feed_append("activity", person, body, id, parent, ts, sig, bearer, ours,
-                    followed(person) ? "following" : "xprs");
+                    followed(person) ? "following" : "xprs", edited, 0);
 
     /* Somebody answered in a conversation we are part of. */
     /* The thread is the parent's: opening it shows what was said and the
@@ -937,6 +1187,118 @@ static void drain_core_events(void) {
     mine_save();
 }
 
+
+/* ── The versions of one post, back to the original ──────────────────────
+ * Read from the spool at the moment it is asked for: the feed holds only the
+ * newest version, and the archive keeps every one (7.8.1). */
+#define HV_MAX 12
+typedef struct {
+    char ets[24];                       /* epoch of the version, as text    */
+    char wts[24];                       /* its ts: on the wire              */
+    int  orig;
+    int  total, have;
+    char part[9][260];
+} hv_t;
+static hv_t g_hv[HV_MAX];
+static int  g_nhv;
+
+static hv_t *hv_for(const char *wts, int orig, int total) {
+    for (int i = 0; i < g_nhv; i++)
+        if (g_hv[i].orig == orig && str_eq(g_hv[i].wts, wts)) return &g_hv[i];
+    if (g_nhv >= HV_MAX) return 0;
+    hv_t *h = &g_hv[g_nhv++];
+    str_copy(h->wts, wts, sizeof(h->wts));
+    epoch_from_ts(wts, h->ets, sizeof(h->ets));
+    h->orig = orig;
+    h->total = total;
+    h->have = 0;
+    for (int i = 0; i < 9; i++) h->part[i][0] = '\0';
+    return h;
+}
+
+static void push_history(const char *mid) {
+    drawn_t *d = drawn_find(mid);
+    if (!mid[0] || !d) return;
+    char who[CALL_MAX];
+    str_copy(who, d->person, sizeof(who));
+    char q[96];
+    str_copy(q, "{\"limit\":200,\"types\":[\"status\"],\"from\":\"", sizeof(q));
+    str_cat(q, who, sizeof(q));
+    str_cat(q, "\"}", sizeof(q));
+    int n = hal_xprs_history(q, str_len(q), g_hist, sizeof(g_hist) - 1);
+    if (n <= 0) return;
+    g_hist[n] = '\0';
+    g_nhv = 0;
+    unsigned pos = 0;
+    while (next_obj(g_hist, &pos, g_row, sizeof(g_row))) {
+        char from[CALL_MAX] = "", wire[1100] = "", id[20] = "", person[CALL_MAX];
+        json_raw(g_row, "from", from, sizeof(from));
+        json_raw(g_row, "wire", wire, sizeof(wire));
+        json_raw(g_row, "id", id, sizeof(id));
+        person_of(from, person, sizeof(person));
+        if (!str_eq(person, who) || !wire[0]) continue;
+        char x[20] = "", wts[24] = "", ets[24] = "";
+        wire_key(wire, "ts", wts, sizeof(wts));
+        epoch_from_ts(wts, ets, sizeof(ets));
+        int is_edit = wire_key(wire, "edit", x, sizeof(x)) && str_eq(x, mid);
+        int is_orig = 0;
+        if (!is_edit) {
+            char y[12] = "";
+            if (wire_key(wire, "edit", y, sizeof(y)) || wire_key(wire, "remove", y, sizeof(y))) continue;
+            is_orig = str_eq(id, mid) || str_eq(ets, d->ts);
+            if (!is_orig) continue;
+        } else if (num(ets) <= num(d->ts)) {
+            continue;                    /* not later than the original: discarded */
+        }
+        int idx = 1, tot = 1;
+        char nf[12] = "";
+        if (wire_key(wire, "n", nf, sizeof(nf)) && nf[0]) {
+            idx = 0; tot = 0; const char *p = nf;
+            while (*p >= '0' && *p <= '9') idx = idx * 10 + (*p++ - '0');
+            if (*p == '/') { p++; while (*p >= '0' && *p <= '9') tot = tot * 10 + (*p++ - '0'); }
+            if (idx < 1 || idx > 9 || tot < 1 || tot > 9) continue;
+        }
+        hv_t *h = hv_for(wts, is_orig, tot);
+        if (!h) continue;
+        char words[1100] = ""; wire_body(wire, words, sizeof(words));
+        if (!h->part[idx - 1][0]) { str_copy(h->part[idx - 1], words, sizeof(h->part[0])); h->have++; }
+    }
+
+    str_copy(g_msg, "{\"type\":\"ui.convo.history\",\"id\":\"activity\",\"mid\":\"", sizeof(g_msg));
+    str_cat(g_msg, mid, sizeof(g_msg));
+    str_cat(g_msg, "\",\"versions\":[", sizeof(g_msg));
+    int first = 1;
+    const int off = hal_time_utc_offset();
+    int used[HV_MAX] = { 0 };
+    for (;;) {
+        int best = -1;
+        for (int i = 0; i < g_nhv; i++) {
+            if (used[i] || g_hv[i].have < g_hv[i].total) continue;
+            if (best < 0 || num(g_hv[i].ets) < num(g_hv[best].ets)) best = i;
+        }
+        if (best < 0 || str_len(g_msg) > 13000) break;
+        used[best] = 1;
+        const hv_t *h = &g_hv[best];
+        char st[24];
+        stamp_of((unsigned long long)((long long)num(h->ets) + (long long)off * 60), st, sizeof(st));
+        if (!first) str_cat(g_msg, ",", sizeof(g_msg));
+        first = 0;
+        str_cat(g_msg, "{\"text\":\"", sizeof(g_msg));
+        for (int i = 0; i < h->total; i++) str_cat(g_msg, h->part[i], sizeof(g_msg));
+        str_cat(g_msg, "\",\"date\":\"", sizeof(g_msg));
+        char date[12]; str_copy(date, st, sizeof(date)); date[10] = '\0';
+        str_cat(g_msg, date, sizeof(g_msg));
+        str_cat(g_msg, "\",\"time\":\"", sizeof(g_msg));
+        char clock[8] = { st[11], st[12], ':', st[14], st[15], 0 };
+        str_cat(g_msg, clock, sizeof(g_msg));
+        str_cat(g_msg, "\",\"by\":\"", sizeof(g_msg));
+        str_cat(g_msg, who, sizeof(g_msg));
+        str_cat(g_msg, "\",\"role\":\"author\"}", sizeof(g_msg));
+    }
+    str_cat(g_msg, "]}", sizeof(g_msg));
+    send_msg(g_msg);
+}
+
 /* No clock: a feed changes when a packet is spooled, and the core says so. */
 int32_t module_tick(void) {
     return 0;
@@ -999,7 +1361,7 @@ int32_t module_handle_event(void) {
                 /* `text` is still the escaped form the host sent us, which is
                  * what feed_append wants. */
                 feed_append("activity", my_call(), text, mid, "", ts,
-                            "verified", "", 1, "xprs");
+                            "verified", "", 1, "xprs", 0, 0);
             } else {
                 hal_log(4, "[social] post refused by the core", 33);
                 notify_about("", "", "Could not post", "app", "");
@@ -1086,11 +1448,69 @@ int32_t module_handle_event(void) {
                 mark_mine(rid);
                 mark_mine(mid);      /* we are in this conversation now */
                 feed_append("activity", my_call(), esc, rid, mid, ts,
-                            "verified", "", 1, "xprs");
+                            "verified", "", 1, "xprs", 0, 0);
             } else {
                 hal_log(4, "[social] reply refused by the core", 34);
             }
         }
+
+    } else if (str_eq(cmd, "activity_edit")) {
+        /* XPRS.md 7.8.1: correct one of OUR posts. The core builds
+         * `edit:<id>` (and splits and signs it); the new words show at once,
+         * keyed on the original. The original stays in the archive. */
+        char mid[24] = "", esc[1100] = "", text[1100] = "";
+        json_raw(buf, "activity_mid", mid, sizeof(mid));
+        json_raw(buf, "activity_input", esc, sizeof(esc));
+        str_copy(text, esc, sizeof(text));
+        unescape(text);
+        drawn_t *d = drawn_find(mid);
+        if (mid[0] && text[0] && d && str_eq(d->person, my_call())) {
+            char vid[24] = "";
+            if (hal_xprs_status_edit(text, str_len(text), mid, str_len(mid),
+                                     d->parent, str_len(d->parent),
+                                     vid, sizeof(vid) - 1) == 0 && vid[0]) {
+                char ets[24]; epoch_now(ets, sizeof(ets));
+                if (num(ets) <= num(d->ts)) {          /* the same second */
+                    unsigned long long t = num(d->ts) + 1;
+                    int n = 0; char tmp[24];
+                    while (t) { tmp[n++] = (char)('0' + (int)(t % 10)); t /= 10; }
+                    int o = 0; while (n) ets[o++] = tmp[--n];
+                    ets[o] = '\0';
+                }
+                ed_note(mid, my_call(), ets, vid, esc, 0);
+                revise(mid);
+            } else {
+                hal_log(4, "[social] edit refused by the core", 33);
+            }
+        }
+
+    } else if (str_eq(cmd, "activity_unsend")) {
+        /* XPRS.md 7.8.2: `r:<id> remove:status`. A withdrawal asks every
+         * holder to destroy the words of every version, and cannot itself be
+         * withdrawn. */
+        char mid[24] = "";
+        json_raw(buf, "activity_mid", mid, sizeof(mid));
+        drawn_t *d = drawn_find(mid);
+        if (mid[0] && d && str_eq(d->person, my_call())) {
+            char ts[24]; stamp_now(ts, sizeof(ts));
+            char wire[160];
+            str_copy(wire, "t:status f:", sizeof(wire));
+            str_cat(wire, my_call(), sizeof(wire));
+            str_cat(wire, " ts:", sizeof(wire)); str_cat(wire, ts, sizeof(wire));
+            str_cat(wire, " r:", sizeof(wire)); str_cat(wire, mid, sizeof(wire));
+            str_cat(wire, " remove:status", sizeof(wire));
+            if (hal_xprs_send(wire, str_len(wire)) == 0) {
+                ed_note(mid, my_call(), "1", "", "", 1);
+                revise(mid);
+            } else {
+                hal_log(4, "[social] withdrawal refused by the core", 38);
+            }
+        }
+
+    } else if (str_eq(cmd, "activity_history")) {
+        char mid[24] = "";
+        json_raw(buf, "activity_mid", mid, sizeof(mid));
+        push_history(mid);
 
     } else if (str_eq(cmd, "activity_repost")) {
         /* Still honest: section 27 has no repost packet. */

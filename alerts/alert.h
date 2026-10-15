@@ -30,8 +30,11 @@ typedef struct {
     char scope[12];
     char m[160];
     unsigned long long ts, since, until;   /* epochs; until 0 = unstated */
+    char edit[7];                 /* edit:<id> of the packet, empty for an original */
     int  withdrawn;
     int  mine;
+    int  edited;                  /* a later version of the author's is shown */
+    unsigned long long ts0;       /* when the original was written */
 } al_alert_t;
 
 /* What a row of the list is right now. */
@@ -53,6 +56,14 @@ int al_build(char *out, unsigned cap, const char *me, const char *type,
              const char *kind, const char *sev, const char *pos,
              const char *rad, unsigned long long now,
              unsigned long long until, const char *m);
+
+/* The same alert as a correction of [edit], the original's identifier (7.8.1):
+ * the packet repeats whole with edit:<id> added, and its twelve bytes count
+ * against the limit. -1 when it would not fit signed, -2 for a bad word. */
+int al_build_edit(char *out, unsigned cap, const char *me, const char *type,
+                  const char *kind, const char *sev, const char *pos,
+                  const char *rad, unsigned long long now,
+                  unsigned long long until, const char *m, const char *edit);
 
 /* t:<type> f:<me> scope:local ts: until: r:<id> remove:<type> (25.2, 25.3). */
 int al_build_withdraw(char *out, unsigned cap, const char *me,

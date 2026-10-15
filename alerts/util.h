@@ -7,6 +7,7 @@
 
 unsigned al_len(const char *s);
 int      al_eq(const char *a, const char *b);
+int      al_cmp(const char *a, const char *b);
 int      al_starts(const char *s, const char *prefix);
 void     al_cpy(char *d, const char *s, unsigned cap);
 void     al_cat(char *d, const char *s, unsigned cap);

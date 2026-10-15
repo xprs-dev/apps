@@ -86,12 +86,13 @@ static void stamps(char *out, unsigned cap, unsigned long long now,
     al_cat(out, ts, cap);
 }
 
-int al_build(char *out, unsigned cap, const char *me, const char *type,
-             const char *kind, const char *sev, const char *pos,
-             const char *rad, unsigned long long now,
-             unsigned long long until, const char *m)
+static int build(char *out, unsigned cap, const char *me, const char *type,
+                 const char *kind, const char *sev, const char *pos,
+                 const char *rad, unsigned long long now,
+                 unsigned long long until, const char *m, const char *edit)
 {
     if (cap) out[0] = 0;
+    if (edit && edit[0] && al_len(edit) != 6) return -2;
     if (!al_kind_ok(type, kind)) return -2;
     int warn = al_eq(type, "warning");
     if (warn && !al_sev_ok(sev)) return -2;
@@ -110,6 +111,7 @@ int al_build(char *out, unsigned cap, const char *me, const char *type,
     al_cat(w, kind, sizeof w);
     if (warn) { al_cat(w, " sev:", sizeof w); al_cat(w, sev, sizeof w); }
     stamps(w, sizeof w, now, until);
+    if (edit && edit[0]) { al_cat(w, " edit:", sizeof w); al_cat(w, edit, sizeof w); }
     /* m: is last and runs to the end (section 4); an empty one is left out
      * rather than sent as "m:". */
     unsigned ml = al_len(m);
@@ -122,6 +124,23 @@ int al_build(char *out, unsigned cap, const char *me, const char *type,
     if (n > AL_WIRE_UNSIGNED || n + 1 > cap) return -1;
     al_cpy(out, w, cap);
     return (int)n;
+}
+
+int al_build(char *out, unsigned cap, const char *me, const char *type,
+             const char *kind, const char *sev, const char *pos,
+             const char *rad, unsigned long long now,
+             unsigned long long until, const char *m)
+{
+    return build(out, cap, me, type, kind, sev, pos, rad, now, until, m, 0);
+}
+
+int al_build_edit(char *out, unsigned cap, const char *me, const char *type,
+                  const char *kind, const char *sev, const char *pos,
+                  const char *rad, unsigned long long now,
+                  unsigned long long until, const char *m, const char *edit)
+{
+    if (!edit || al_len(edit) != 6) return -2;
+    return build(out, cap, me, type, kind, sev, pos, rad, now, until, m, edit);
 }
 
 int al_build_withdraw(char *out, unsigned cap, const char *me,
@@ -168,6 +187,8 @@ int al_parse(const char *wire, al_alert_t *a)
     al_field(wire, "pos", a->pos, sizeof a->pos);
     al_field(wire, "rad", a->rad, sizeof a->rad);
     al_field(wire, "scope", a->scope, sizeof a->scope);
+    if (al_field(wire, "edit", a->edit, sizeof a->edit) && al_len(a->edit) != 6)
+        a->edit[0] = 0;
     al_field(wire, "m", a->m, sizeof a->m);
     return 1;
 }

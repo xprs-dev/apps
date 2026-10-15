@@ -156,6 +156,13 @@
       },
       {
         "$": "action",
+        "name": "save",
+        "label": "Save edit",
+        "style": "primary",
+        "icon": "save"
+      },
+      {
+        "$": "action",
         "name": "p_back",
         "label": "Back"
       }
@@ -180,6 +187,18 @@
       },
       {
         "$": "action",
+        "name": "edit",
+        "label": "Edit",
+        "icon": "edit"
+      },
+      {
+        "$": "action",
+        "name": "history",
+        "label": "Edit history",
+        "icon": "history"
+      },
+      {
+        "$": "action",
         "name": "withdraw",
         "label": "Withdraw",
         "style": "danger",
@@ -187,6 +206,20 @@
         "confirm": true,
         "confirm-label": "Withdraw this alert?",
         "confirm-text": "Everybody nearby is told it is over, and your stations stop giving it."
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "History",
+    "icon": "history",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "a_hist",
+        "$type": "details",
+        "empty": ""
       }
     ]
   }

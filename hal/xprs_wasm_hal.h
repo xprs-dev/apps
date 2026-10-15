@@ -1589,6 +1589,19 @@ int32_t hal_xprs_status(const char *text, uint32_t text_len,
                         const char *reply_to, uint32_t reply_to_len,
                         char *id_out, uint32_t id_cap);
 
+/* Correct a status this station posted (XPRS.md 7.8.1). Exactly
+ * hal_xprs_status, plus `orig`, the section 5 identifier of the ORIGINAL it
+ * corrects (never an earlier edit), and `reply_to`, the parent when the status
+ * was a reply (an edit repeats the whole packet, so a reply stays one; NULL/0
+ * otherwise): the core builds `edit:<orig>`, splits long text, signs and airs
+ * it as a packet of its own. The id written to `id_out` is the EDIT's. 0 composed, -1 nothing to publish. A status is withdrawn by a
+ * wire through hal_xprs_send (`r:<orig> remove:status`, section 7.8.2). */
+__attribute__((import_module("hal"), import_name("xprs_status_edit")))
+int32_t hal_xprs_status_edit(const char *text, uint32_t text_len,
+                             const char *orig, uint32_t orig_len,
+                             const char *reply_to, uint32_t reply_to_len,
+                             char *id_out, uint32_t id_cap);
+
 /* Air one caller-composed XPRS wire. The host validates section 4 syntax,
  * signs it when it speaks as this station and carries no sig:, applies the
  * scope rules (13.11) and spools its own copy. 0 queued, -1 invalid,

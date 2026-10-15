@@ -42,6 +42,19 @@ static int  g_gone_w;
 static char g_seen[SEEN_MAX][7];
 static int  g_seen_w;
 
+/* Every version of an alert heard, the original included (XPRS.md 7.8.1). The
+ * row shows the newest valid one; this keeps the rest, oldest to newest, for
+ * the history. A withdrawal clears their words (7.8.2). */
+#define VER_MAX 64
+typedef struct {
+    char id[7], root[7], from[16], type[8];
+    unsigned long long ts, until;
+    char kind[12], sev[8], pos[28], rad[12];
+    char m[160];
+} ver_t;
+static ver_t g_ver[VER_MAX];
+static int   g_ver_w;
+
 static char g_ev[4096];
 static char g_topic[64];
 static char g_buf[4096];
@@ -348,6 +361,10 @@ static void item(const al_alert_t *a, unsigned long long now, int state, int *fi
         al_left(left, sizeof left, now, a->until);
     }
     if (left[0]) { al_cat(tags, "\"", sizeof tags); al_jesc(tags, left, sizeof tags); al_cat(tags, "\"", sizeof tags); }
+    if (a->edited) {
+        if (tags[0]) al_cat(tags, ",", sizeof tags);
+        al_cat(tags, "\"edited\"", sizeof tags);
+    }
     if (!a->mine) {
         if (tags[0]) al_cat(tags, ",", sizeof tags);
         al_cat(tags, "\"by ", sizeof tags);
@@ -443,6 +460,7 @@ static void push_alert(void)
     al_cpy(h, "posted ", sizeof h);
     al_when(h + 7, sizeof h - 7, a->ts, zone());
     tile("from", "From", a->mine ? "You" : a->from, a->ts ? h : "", 0, 0);
+    if (a->edited) tile("edited", "Edited", "Yes", "", 0, 0);
     if (a->pos[0]) {
         al_cpy(v, a->rad[0] ? a->rad : "a spot", sizeof v);
         tile("where", "Area", v, a->pos, 0, 0);
@@ -450,6 +468,8 @@ static void push_alert(void)
     tiles_end();
     message_card("a_msg", "Message", a->m[0] ? a->m : "No message: the tiles below say it all.");
     flag_hidden("withdraw", !(a->mine && !a->withdrawn));
+    flag_hidden("edit", !(a->mine && st != AL_GONE));
+    flag_hidden("history", !a->edited);
 }
 
 static void redraw(void)
@@ -525,8 +545,80 @@ static int restore(void)
 static void apply_gone(al_alert_t *a)
 {
     for (int g = 0; g < GONE_MAX; g++)
-        if (g_gone[g].id[0] && al_eq(g_gone[g].id, a->id) && al_eq(g_gone[g].from, a->from))
+        if (g_gone[g].id[0] && al_eq(g_gone[g].id, a->id) && al_eq(g_gone[g].from, a->from)) {
             a->withdrawn = 1;
+            a->m[0] = 0;
+        }
+}
+
+static int ver_has(const char *id)
+{
+    for (int i = 0; i < VER_MAX; i++) if (g_ver[i].id[0] && al_eq(g_ver[i].id, id)) return 1;
+    return 0;
+}
+
+static void ver_add(const al_alert_t *a, const char *id, const char *root)
+{
+    ver_t *v = &g_ver[g_ver_w];
+    g_ver_w = (g_ver_w + 1) % VER_MAX;
+    al_cpy(v->id, id, sizeof v->id);
+    al_cpy(v->root, root, sizeof v->root);
+    al_cpy(v->from, a->from, sizeof v->from);
+    al_cpy(v->type, a->type, sizeof v->type);
+    v->ts = a->ts;
+    v->until = a->until;
+    al_cpy(v->kind, a->kind, sizeof v->kind);
+    al_cpy(v->sev, a->sev, sizeof v->sev);
+    al_cpy(v->pos, a->pos, sizeof v->pos);
+    al_cpy(v->rad, a->rad, sizeof v->rad);
+    al_cpy(v->m, a->m, sizeof v->m);
+}
+
+/* Is [v] a correction the row [a] accepts? Its author's, of its type, no
+ * earlier than the original and not from the future (7.8.1). */
+static int ver_valid(const al_alert_t *a, const ver_t *v)
+{
+    if (al_eq(v->id, v->root)) return 1;
+    if (!al_eq(v->from, a->from) || !al_eq(v->type, a->type)) return 0;
+    if (v->ts <= a->ts0) return 0;
+    const unsigned long long now = now_s();
+    if (now && v->ts > now + 300ULL) return 0;
+    return 1;
+}
+
+/* Put the newest valid version on the row. 1 when the row changed. */
+static int resolve(int i)
+{
+    al_alert_t *a = &g_al[i];
+    const ver_t *best = 0;
+    int others = 0;
+    for (int k = 0; k < VER_MAX; k++) {
+        const ver_t *v = &g_ver[k];
+        if (!v->id[0] || !al_eq(v->root, a->id) || !ver_valid(a, v)) continue;
+        if (!al_eq(v->id, v->root)) others++;
+        /* Newest ts wins, a tie going to the smaller identifier. */
+        if (!best || v->ts > best->ts || (v->ts == best->ts && al_cmp(v->id, best->id) < 0))
+            best = v;
+    }
+    if (!best) return 0;
+    const int was = a->edited;
+    a->edited = others > 0;
+    if (a->withdrawn) return was != a->edited;
+    al_cpy(a->kind, best->kind, sizeof a->kind);
+    al_cpy(a->sev, best->sev, sizeof a->sev);
+    al_cpy(a->pos, best->pos, sizeof a->pos);
+    al_cpy(a->rad, best->rad, sizeof a->rad);
+    al_cpy(a->m, best->m, sizeof a->m);
+    a->until = best->until;
+    return 1;
+}
+
+/* A withdrawal destroys the words of every version (7.8.2). */
+static void ver_destroy(const char *root, const char *from)
+{
+    for (int k = 0; k < VER_MAX; k++)
+        if (g_ver[k].id[0] && al_eq(g_ver[k].root, root) && al_eq(g_ver[k].from, from))
+            g_ver[k].m[0] = 0;
 }
 
 static void announce(const al_alert_t *a)
@@ -566,17 +658,31 @@ static int take(const char *wire, const char *id, int may_announce)
         al_cpy(g_gone[g_gone_w].from, a.from, sizeof g_gone[0].from);
         g_gone_w = (g_gone_w + 1) % GONE_MAX;
         keep("------", wire);
+        ver_destroy(a.id, a.from);
         int i = find(a.id);
         if (i >= 0 && al_eq(g_al[i].from, a.from) && !g_al[i].withdrawn) {
             g_al[i].withdrawn = 1;
+            g_al[i].m[0] = 0;
             return 1;
         }
         return 0;
     }
     if (!id || al_len(id) != 6) return 0;
+    if (a.edit[0]) {
+        /* 7.8.1: a correction of an alert, kept with the others. It may come
+         * before its original; the row picks it up when that arrives. */
+        if (ver_has(id) || !al_eq(a.scope, "local")) return 0;
+        for (int g = 0; g < GONE_MAX; g++)
+            if (al_eq(g_gone[g].id, a.edit) && al_eq(g_gone[g].from, a.from)) a.m[0] = 0;
+        ver_add(&a, id, a.edit);
+        keep(id, wire);
+        int i = find(a.edit);
+        return i >= 0 && al_eq(g_al[i].from, a.from) && resolve(i);
+    }
     if (find(id) >= 0) return 0;          /* a copy: the id is the same */
     al_cpy(a.id, id, sizeof a.id);
     a.mine = g_me[0] && al_eq(a.from, g_me);
+    a.ts0 = a.ts;
     apply_gone(&a);
     int slot = g_nal;
     if (g_nal >= AL_MAX) {
@@ -594,6 +700,8 @@ static int take(const char *wire, const char *id, int may_announce)
         g_nal++;
     }
     g_al[slot] = a;
+    if (!ver_has(a.id)) ver_add(&a, a.id, a.id);
+    resolve(slot);
     keep(a.id, wire);
     if (!a.mine && !seen(a.id)) {
         if (may_announce && al_state(&a, now_s()) != AL_GONE) announce(&a);
@@ -668,6 +776,7 @@ static struct {
     char type[8], kind[12], sev[8], dur[4], where[8];
     char text[200];
     char step[12];               /* the screen showing, for Back */
+    char edit[7];                /* the alert being corrected, empty for a new one */
 } g_draft;
 
 static void draft_reset(void)
@@ -730,10 +839,28 @@ static void open_step(const char *step)
 static int compose(char *wire, unsigned cap, char *why, unsigned wcap)
 {
     if (!g_draft.type[0] || !g_draft.kind[0]) { al_cpy(why, "Pick what it is first.", wcap); return -2; }
-    const unsigned long long now = now_s();
+    unsigned long long now = now_s();
     const unsigned long long life = al_duration(g_draft.dur[0] ? g_draft.dur : "1d");
     if (!now) { al_cpy(why, "This phone does not know the time yet.", wcap); return -2; }
     char pos[28] = "", rad[12] = "";
+    unsigned long long until = now + life;
+    const int ei = g_draft.edit[0] ? find(g_draft.edit) : -1;
+    if (g_draft.edit[0]) {
+        if (ei < 0) { al_cpy(why, "That alert is no longer here.", wcap); return -2; }
+        /* A correction is later than the original and than any earlier
+         * correction of it, even inside the same second (7.8.1). */
+        unsigned long long last = g_al[ei].ts0;
+        for (int k = 0; k < VER_MAX; k++)
+            if (g_ver[k].id[0] && al_eq(g_ver[k].root, g_draft.edit) && g_ver[k].ts > last)
+                last = g_ver[k].ts;
+        if (now <= last) now = last + 1;
+        if (!g_draft.dur[0]) until = g_al[ei].until;
+        if (!g_draft.where[0]) {
+            al_cpy(pos, g_al[ei].pos, sizeof pos);
+            al_cpy(rad, g_al[ei].rad, sizeof rad);
+        }
+        if (until <= now) { al_cpy(why, "It has ended. Pick a new duration.", wcap); return -2; }
+    }
     if (g_draft.where[0] && !al_eq(g_draft.where, "none")) {
         int32_t lat = hal_sensor_gps_lat(), lon = hal_sensor_gps_lon();
         if (lat == (int32_t)0x80000000 || lon == (int32_t)0x80000000) {
@@ -747,9 +874,12 @@ static int compose(char *wire, unsigned cap, char *why, unsigned wcap)
         al_cat(pos, d, sizeof pos);
         if (!al_eq(g_draft.where, "spot")) al_cpy(rad, g_draft.where, sizeof rad);
     }
-    int n = al_build(wire, cap, g_me, g_draft.type, g_draft.kind,
-                     g_draft.sev[0] ? g_draft.sev : "watch", pos, rad, now, now + life,
-                     g_draft.text);
+    const char *sev = g_draft.sev[0] ? g_draft.sev : "watch";
+    int n = g_draft.edit[0]
+          ? al_build_edit(wire, cap, g_me, g_draft.type, g_draft.kind, sev, pos, rad,
+                          now, until, g_draft.text, g_draft.edit)
+          : al_build(wire, cap, g_me, g_draft.type, g_draft.kind, sev, pos, rad,
+                     now, until, g_draft.text);
     if (n == -1) al_cpy(why, "The message is too long to send with this alert. Shorten it.", wcap);
     else if (n < 0) al_cpy(why, "The message has a character that cannot be sent.", wcap);
     return n;
@@ -766,27 +896,45 @@ static void open_review(void)
         /* A warning says its type by how bad it is: "Danger" is a warning. */
         const sev_t *s = sev_of(g_draft.sev);
         tile("Severity", "Warning", s ? s->name : "Watch", s ? s->hint : "", s && s->alert, 1);
-    } else {
+    } else if (!g_draft.edit[0]) {
         tile("Type", "Type", "Notice", "Not a hazard", 0, 1);
     }
     tile("Kind", k ? k->group : "What", k ? k->name : g_draft.kind, k ? k->hint : "", 0, 1);
+    if (g_draft.edit[0]) {
+        /* The words are one more thing to change, and there is no step
+         * before the review that shows them. */
+        tile("Message", "Message", g_draft.text[0] ? "Written" : "None", "", 0, 1);
+    }
     const unsigned long long now = now_s();
+    int shown = 0;
     for (int i = 0; i < 6; i++)
         if (al_eq(k_for[i].word, g_draft.dur)) {
             char h[48];
             until_words(h, sizeof h, now + al_duration(g_draft.dur));
             tile("Duration", "For", k_for[i].name, now ? h : "", 0, 1);
+            shown = 1;
         }
+    if (!shown && g_draft.edit[0]) {
+        const int ei = find(g_draft.edit);
+        char h[48] = "";
+        if (ei >= 0 && g_al[ei].until) until_words(h, sizeof h, g_al[ei].until);
+        tile("Duration", "For", "Unchanged", h, 0, 1);
+    }
+    shown = 0;
     for (int i = 0; i < 6; i++)
-        if (al_eq(k_where[i].word, g_draft.where))
+        if (al_eq(k_where[i].word, g_draft.where)) {
             tile("Place", i < 2 ? "Position" : "Around me", k_where[i].name, k_where[i].hint, 0, 1);
+            shown = 1;
+        }
+    if (!shown && g_draft.edit[0]) tile("Place", "Position", "Unchanged", "", 0, 1);
     tiles_end();
     char wire[AL_WIRE_MAX + 1], why[120] = "";
     int n = compose(wire, sizeof wire, why, sizeof why);
     if (n < 0) message_card("p_msg", "Not ready yet", why);
     else message_card("p_msg", "Message", g_draft.text[0] ? g_draft.text : "No message: the tiles below say it all.");
-    flag_hidden("post", n < 0);
-    screen_open("Review", "Check and post");
+    flag_hidden("post", n < 0 || g_draft.edit[0]);
+    flag_hidden("save", n < 0 || !g_draft.edit[0]);
+    screen_open("Review", g_draft.edit[0] ? "Check and save" : "Check and post");
 }
 
 /* The next question after [step], skipping what does not apply. */
@@ -852,6 +1000,103 @@ static void do_post(void)
     push_list();
 }
 
+/* Correct the alert on screen (7.8.1): the wizard, filled in with what it
+ * says now, opening on the review so each tile leads to its question. */
+static void start_edit(void)
+{
+    if (g_sel < 0 || g_sel >= g_nal) return;
+    const al_alert_t *a = &g_al[g_sel];
+    if (!a->mine || a->withdrawn || al_state(a, now_s()) == AL_GONE) return;
+    draft_reset();
+    al_cpy(g_draft.type, a->type, sizeof g_draft.type);
+    al_cpy(g_draft.kind, a->kind, sizeof g_draft.kind);
+    al_cpy(g_draft.sev, a->sev, sizeof g_draft.sev);
+    al_cpy(g_draft.text, a->m, sizeof g_draft.text);
+    al_cpy(g_draft.edit, a->id, sizeof g_draft.edit);
+    say("{\"type\":\"ui.field.set\",\"field\":\"a_text\",\"value\":\"\"}");
+    g_from_review = 1;
+    open_review();
+}
+
+static void do_save_edit(void)
+{
+    char wire[AL_WIRE_MAX + 1], why[120] = "";
+    who_am_i();
+    int n = compose(wire, sizeof wire, why, sizeof why);
+    if (n < 0) { message_card("p_msg", "Not ready yet", why); return; }
+    if (hal_xprs_send(wire, (uint32_t)n) != 0) {
+        message_card("p_msg", "Not saved", "This phone could not send it. Try again.");
+        return;
+    }
+    char id[7];
+    al_id(wire, (unsigned)n, id);
+    const int sel = find(g_draft.edit);
+    take(wire, id, 0);
+    log_host("edited an alert");
+    draft_reset();
+    g_from_review = 0;
+    say("{\"type\":\"ui.field.set\",\"field\":\"a_text\",\"value\":\"\"}");
+    g_sel = sel;
+    push_list();
+    if (g_sel >= 0) {
+        /* Back on the alert, which now says edited. */
+        char t[48];
+        title_of(&g_al[g_sel], t, sizeof t);
+        push_alert();
+        screen_open("Alert", t);
+    } else {
+        say("{\"type\":\"ui.screen.close\"}");
+    }
+}
+
+/* Every version, the original first, each with when and who. */
+static int g_hist_open;
+
+static void open_history(void)
+{
+    if (g_sel < 0 || g_sel >= g_nal) return;
+    const al_alert_t *a = &g_al[g_sel];
+    int used[VER_MAX] = { 0 };
+    char m[8192] = "{\"type\":\"ui.field.set\",\"field\":\"a_hist\",\"value\":[{\"title\":\"\",\"items\":[";
+    int first = 1;
+    for (;;) {
+        int best = -1;
+        for (int k = 0; k < VER_MAX; k++) {
+            const ver_t *v = &g_ver[k];
+            if (used[k] || !v->id[0] || !al_eq(v->root, a->id) || !ver_valid(a, v)) continue;
+            if (best < 0 || v->ts < g_ver[best].ts ||
+                (v->ts == g_ver[best].ts && al_cmp(v->id, g_ver[best].id) < 0)) best = k;
+        }
+        if (best < 0) break;
+        used[best] = 1;
+        const ver_t *v = &g_ver[best];
+        char label[96], w[32], txt[260] = "";
+        al_when(w, sizeof w, v->ts, zone());
+        al_cpy(label, al_eq(v->id, v->root) ? "Original" : "Edit", sizeof label);
+        al_cat(label, " - ", sizeof label);
+        al_cat(label, w, sizeof label);
+        al_cat(label, " - ", sizeof label);
+        al_cat(label, v->from, sizeof label);
+        if (a->withdrawn) al_cpy(txt, "Deleted by its author.", sizeof txt);
+        else {
+            al_cpy(txt, v->kind, sizeof txt);
+            if (v->sev[0] && al_eq(v->type, "warning")) { al_cat(txt, ", ", sizeof txt); al_cat(txt, v->sev, sizeof txt); }
+            if (v->m[0]) { al_cat(txt, ": ", sizeof txt); al_cat(txt, v->m, sizeof txt); }
+        }
+        if (!first) al_cat(m, ",", sizeof m);
+        first = 0;
+        al_cat(m, "{\"label\":\"", sizeof m);
+        al_jesc(m, label, sizeof m);
+        al_cat(m, "\",\"value\":\"", sizeof m);
+        al_jesc(m, txt, sizeof m);
+        al_cat(m, "\"}", sizeof m);
+    }
+    al_cat(m, "]}]}", sizeof m);
+    say(m);
+    g_hist_open = 1;
+    screen_open("History", "Edit history");
+}
+
 static void do_withdraw(void)
 {
     if (g_sel < 0 || g_sel >= g_nal) return;
@@ -884,9 +1129,25 @@ static void on_command(void)
         return;
     }
     if (al_eq(cmd, "screen_closed")) {
+        /* Closing the history puts the alert it came from back in front. */
+        if (g_hist_open) {
+            g_hist_open = 0;
+            if (g_sel >= 0 && g_sel < g_nal) {
+                char t[48];
+                title_of(&g_al[g_sel], t, sizeof t);
+                push_alert();
+                screen_open("Alert", t);
+            }
+            return;
+        }
         /* The panel's arrow: an alert being written is abandoned, an alert
          * being read is put down. */
-        g_sel = -1;
+        if (g_draft.edit[0]) {
+            /* Abandoning a correction leaves the alert on screen. */
+            g_sel = find(g_draft.edit);
+        } else {
+            g_sel = -1;
+        }
         g_from_review = 0;
         draft_reset();
         return;
@@ -954,6 +1215,9 @@ static void on_command(void)
     if (al_eq(cmd, "p_back")) { step_back(); return; }
     if (al_eq(cmd, "post")) { do_post(); return; }
     if (al_eq(cmd, "withdraw")) { do_withdraw(); return; }
+    if (al_eq(cmd, "edit")) { start_edit(); return; }
+    if (al_eq(cmd, "save")) { do_save_edit(); return; }
+    if (al_eq(cmd, "history")) { open_history(); return; }
 }
 
 /* ── Entry points ─────────────────────────────────────────────────────── */

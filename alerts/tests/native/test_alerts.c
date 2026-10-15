@@ -59,6 +59,9 @@ static void restart(void)
     g_sel = -1;
     memset(g_gone, 0, sizeof g_gone);
     g_gone_w = 0;
+    memset(g_ver, 0, sizeof g_ver);
+    g_ver_w = 0;
+    g_hist_open = 0;
     memset(g_seen, 0, sizeof g_seen);
     g_seen_w = 0;
     g_said_n = 0;
@@ -344,6 +347,104 @@ static void test_time_round_trip(void)
     CHECK(!strcmp(w, "60 minutes"), "an hour read as %s", w);
 }
 
+#define EDIT_FLOOD(ts, sev, who, m) "t:warning f:" who " kind:flood sev:" sev " scope:local " \
+        "ts:" ts " until:2026-08-23_10:00:00 edit:a1b2c3 sig:abc m:" m
+
+static void test_edit_by_author_only(void)
+{
+    mock_reset(); mock_kv_clear(); restart();
+    heard("xprs.warning", "a1b2c3", HEARD_FLOOD);
+    /* A stranger's correction, and the author's own on a different type,
+     * change nothing (7.8.1). */
+    heard("xprs.warning", "e00001", EDIT_FLOOD("2026-08-16_12:00:00", "danger", "X1EVIL", "gone"));
+    CHECK(strstr(said_last("ui.people.set"), "car park") != 0, "a stranger edited it");
+    heard("xprs.warning", "e00002", EDIT_FLOOD("2026-08-16_12:00:00", "danger", "X1QZ3N", "lower car park floods"));
+    CHECK(strstr(said_last("ui.people.set"), "lower car park floods") != 0, "the edit is not shown");
+    CHECK(strstr(said_last("ui.people.set"), "edited") != 0, "no edited mark on the row");
+    CHECK(g_nal == 1, "an edit became a second alert");
+    /* An edit not later than the original is discarded. */
+    heard("xprs.warning", "e00003", EDIT_FLOOD("2026-08-16_09:00:00", "watch", "X1QZ3N", "earlier"));
+    CHECK(strstr(said_last("ui.people.set"), "earlier") == 0, "an earlier edit won");
+    /* The newest wins, whatever the order it arrived in. */
+    heard("xprs.warning", "e00005", EDIT_FLOOD("2026-08-16_14:00:00", "danger", "X1QZ3N", "third"));
+    heard("xprs.warning", "e00004", EDIT_FLOOD("2026-08-16_13:00:00", "danger", "X1QZ3N", "second"));
+    CHECK(strstr(said_last("ui.people.set"), "third") != 0, "the newest edit is not shown");
+    /* A copy of an edit changes nothing. */
+    int before = g_said_n;
+    heard("xprs.warning", "e00005", EDIT_FLOOD("2026-08-16_14:00:00", "danger", "X1QZ3N", "third"));
+    CHECK(g_said_n == before, "a copy redrew");
+}
+
+static void test_edit_before_original(void)
+{
+    mock_reset(); mock_kv_clear(); restart();
+    heard("xprs.warning", "e00002", EDIT_FLOOD("2026-08-16_12:00:00", "danger", "X1QZ3N", "lower car park floods"));
+    CHECK(g_nal == 0, "an edit alone became an alert");
+    heard("xprs.warning", "a1b2c3", HEARD_FLOOD);
+    CHECK(strstr(said_last("ui.people.set"), "lower car park floods") != 0, "the early edit was lost");
+    /* ... and a forged-looking one from another author arriving first is
+     * dropped when the original shows whose it is. */
+    mock_reset(); mock_kv_clear(); restart();
+    heard("xprs.warning", "e00001", EDIT_FLOOD("2026-08-16_12:00:00", "danger", "X1EVIL", "gone"));
+    heard("xprs.warning", "a1b2c3", HEARD_FLOOD);
+    CHECK(strstr(said_last("ui.people.set"), "car park") != 0, "another author's edit won");
+}
+
+static void test_edit_own_and_history(void)
+{
+    mock_reset(); mock_kv_clear(); restart();
+    tap("p_type", "info"); tap("p_kind", "closure"); write_msg("east gate closed");
+    tap("p_for", "1m"); tap("p_where", "none");
+    command("{\"command\":\"post\"}");
+    CHECK(g_aired_n == 1, "not posted");
+    char id[7];
+    al_id(g_aired[0], strlen(g_aired[0]), id);
+    char cmd[200];
+    snprintf(cmd, sizeof cmd, "{\"command\":\"alerts_tap\",\"fields\":{\"alerts_id\":\"%s\"}}", id);
+    command(cmd);
+    CHECK(strstr(said_last("edit__hidden"), "false") != 0, "edit not offered on our own");
+    CHECK(strstr(said_last("history__hidden"), "true") != 0, "history offered before any edit");
+    command("{\"command\":\"edit\"}");
+    CHECK(strstr(said_last("\"p_review\""), "Unchanged") != 0, "the review does not keep duration");
+    CHECK(strstr(said_last("save__hidden"), "false") != 0, "save not offered");
+    CHECK(strstr(said_last("post__hidden"), "true") != 0, "post offered while editing");
+    /* Change the words through the review's Message tile. */
+    tap("p_review", "Message");
+    g_now += 120;
+    write_msg("east gate open again");
+    command("{\"command\":\"save\"}");
+    CHECK(g_aired_n == 2, "no edit aired");
+    char want[40];
+    snprintf(want, sizeof want, " edit:%s", id);
+    CHECK(strstr(g_aired[1], want) != 0, "edit does not name the original: %s", g_aired[1]);
+    CHECK(strstr(g_aired[1], "m:east gate open again") != 0, "edit words: %s", g_aired[1]);
+    CHECK(strlen(g_aired[1]) <= AL_WIRE_UNSIGNED, "edit too long to sign");
+    CHECK(strstr(said_last("ui.screen.open"), "\"name\":\"Alert\"") != 0,
+          "saving did not land back on the alert");
+    CHECK(g_nal == 1, "the edit became a second row");
+    CHECK(strstr(said_last("ui.people.set"), "east gate open again") != 0, "row shows the old words");
+    CHECK(strstr(said_last("\"a_hub\""), "Edited") != 0, "alert does not say edited");
+    command("{\"command\":\"history\"}");
+    const char *h = said_last("\"a_hist\"");
+    CHECK(strstr(h, "Original") && strstr(h, "east gate closed") &&
+          strstr(h, "Edit -") && strstr(h, "east gate open again"), "history: %s", h);
+    CHECK(strstr(h, "east gate closed") < strstr(h, "east gate open again"), "history out of order");
+    /* The History screen closing leaves the alert selected. */
+    command("{\"command\":\"screen_closed\"}");
+    CHECK(g_sel >= 0, "closing the history dropped the alert");
+    CHECK(strstr(said_last("ui.screen.open"), "\"name\":\"Alert\"") != 0,
+          "closing the history did not put the alert back in front");
+    /* A restart replays the ring: still edited. */
+    restart();
+    CHECK(strstr(said_last("ui.people.set"), "east gate open again") != 0, "restart lost the edit");
+    /* Withdrawing destroys the words of every version. */
+    snprintf(cmd, sizeof cmd, "{\"command\":\"alerts_tap\",\"fields\":{\"alerts_id\":\"%s\"}}", id);
+    command(cmd);
+    command("{\"command\":\"withdraw\"}");
+    for (int k = 0; k < VER_MAX; k++)
+        CHECK(!g_ver[k].id[0] || !g_ver[k].m[0], "a version kept its words after withdrawal");
+}
+
 int main(void)
 {
     printf("alerts native tests\n");
@@ -360,6 +461,9 @@ int main(void)
     test_planned();
     test_withdrawn_by_author_only();
     test_withdraw_own();
+    test_edit_by_author_only();
+    test_edit_before_original();
+    test_edit_own_and_history();
     test_time_round_trip();
     printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

@@ -35,6 +35,12 @@ void history_set(const char *json);
 const char *last_query(void);
 void ui_attached(int on);
 void kv_clear(void);
+void set_now(int64_t v);
+const char *cap_find(const char *s);
+const char *last_edit_text(void);
+const char *last_edit_orig(void);
+const char *last_edit_reply(void);
+int  edit_calls(void);
 
 /* main.c */
 int32_t module_init(void);
@@ -58,6 +64,7 @@ static void reset(void) {
  * epoch the spool returns. The two doors disagree about that field, and a
  * fixture that quietly agreed with itself was how a live post came to be
  * dropped by the host as malformed JSON. */
+static const char *g_sig = "verified";
 static void deliver(const char *topic, const char *id, const char *from,
                     const char *wire) {
     char row[1600];
@@ -68,10 +75,10 @@ static void deliver(const char *topic, const char *id, const char *from,
         "[\"ts\",\"2026-09-10_09:00:00\"]],"
         "\"forUs\":false,\"sealed\":false,\"obfuscated\":false,"
         "\"scope\":\"global\",\"bearer\":\"lan\",\"rssi\":0,\"via\":\"\","
-        "\"link\":\"\",\"sig\":\"verified\",\"wire\":\"%s\"}",
+        "\"link\":\"\",\"sig\":\"%s\",\"wire\":\"%s\"}",
         id, strcmp(topic, "xprs.reaction") == 0 ? "reaction" : "status",
         from, strcmp(topic, "xprs.reaction") == 0 ? "reaction" : "status",
-        from, wire);
+        from, g_sig, wire);
     event_push(topic, row);
 }
 
@@ -406,6 +413,200 @@ int main(void) {
     module_handle_event();
     check(cap_count_of("file:BBBBBGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg") == 1,
           "a token an older client left in the text is not doubled");
+
+
+    /* ── XPRS.md 7.8: correcting and withdrawing a status ── */
+    set_now(1790000000);                    /* 2026-09-21: after every fixture */
+    reset();
+    deliver("xprs.status", "ed0001", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:00:00 m:meet at six");
+    module_handle_event();
+    check(cap_count_of("\"mid\":\"ed0001\"") == 1, "the original is drawn");
+    check(!cap_contains("\"edited\":true"), "unedited: no mark");
+
+    /* the author's correction replaces the words in place, as the same post */
+    cap_clear();
+    deliver("xprs.status", "ed0002", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:30:00 edit:ed0001 m:meet at seven");
+    module_handle_event();
+    check(cap_contains("\"mid\":\"ed0001\"") && cap_contains("meet at seven") &&
+              cap_contains("\"edited\":true"),
+          "the correction is sent as the ORIGINAL again, with the new words and edited");
+    check(cap_count_of("\"mid\":\"ed0002\"") == 0, "an edit is never a post of its own");
+
+    /* an unsigned or foreign correction changes nothing */
+    cap_clear();
+    g_sig = "unsigned";
+    deliver("xprs.status", "ed0003", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_10:00:00 edit:ed0001 m:forged words");
+    module_handle_event();
+    g_sig = "verified";
+    check(!cap_contains("forged words"), "an unverified correction counts for nothing");
+    deliver("xprs.status", "ed0004", "X3EVIL",
+            "t:status f:X3EVIL ts:2026-09-10_10:00:00 edit:ed0001 m:not yours");
+    module_handle_event();
+    check(!cap_contains("not yours"), "another author's correction counts for nothing");
+    /* an earlier one than the original is discarded; one from the future too */
+    deliver("xprs.status", "ed0005", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_08:00:00 edit:ed0001 m:too early");
+    module_handle_event();
+    check(!cap_contains("too early"), "a correction earlier than the original is discarded");
+    deliver("xprs.status", "ed0006", "X1FRND",
+            "t:status f:X1FRND ts:2027-01-01_00:00:00 edit:ed0001 m:tomorrow");
+    module_handle_event();
+    check(!cap_contains("tomorrow"), "a correction from the future is discarded");
+
+    /* a correction heard BEFORE its original is applied when the original is drawn */
+    reset();
+    deliver("xprs.status", "ed1002", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:30:00 edit:ed1001 m:second thoughts");
+    module_handle_event();
+    check(!cap_contains("ui.chat.append"), "an orphan correction draws nothing");
+    deliver("xprs.status", "ed1001", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:00:00 m:first thoughts");
+    module_handle_event();
+    check(cap_contains("second thoughts") && cap_contains("\"edited\":true") &&
+              !cap_contains("first thoughts"),
+          "and the original is drawn already corrected");
+
+    /* the spool is newest first: the correction is met before its original */
+    reset();
+    history_set("[{\"id\":\"ed2002\",\"type\":\"status\",\"from\":\"X1FRND\","
+                "\"ts\":\"1789030800\",\"sig\":\"verified\",\"bearer\":\"lan\",\"own\":false,"
+                "\"wire\":\"t:status f:X1FRND ts:2026-09-10_09:30:00 edit:ed2001 m:v2\"},"
+                "{\"id\":\"ed2001\",\"type\":\"status\",\"from\":\"X1FRND\","
+                "\"ts\":\"1789029000\",\"sig\":\"verified\",\"bearer\":\"lan\",\"own\":false,"
+                "\"wire\":\"t:status f:X1FRND ts:2026-09-10_09:00:00 m:v1\"}]");
+    inbox_set("{\"command\":\"ready\"}");
+    module_handle_event();
+    check(cap_count_of("\"mid\":\"ed2001\"") == 1 && cap_contains("\"text\":\"v2\"") &&
+              !cap_contains("\"text\":\"v1\""),
+          "the feed draws the newest version once, from the spool");
+
+    /* a withdrawal: the place stays, the words do not */
+    reset();
+    deliver("xprs.status", "dl0001", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:00:00 m:my phone number");
+    module_handle_event();
+    cap_clear();
+    deliver("xprs.status", "dl0002", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:10:00 r:dl0001 remove:status");
+    module_handle_event();
+    check(cap_contains("\"mid\":\"dl0001\"") && cap_contains("\"deleted\":true") &&
+              !cap_contains("my phone number"),
+          "a verified withdrawal marks the post deleted and carries no words");
+    check(cap_count_of("\"mid\":\"dl0002\"") == 0, "and the withdrawal is not a post");
+    /* a stranger's withdrawal is ignored */
+    reset();
+    deliver("xprs.status", "dl1001", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:00:00 m:keep me");
+    module_handle_event();
+    cap_clear();
+    deliver("xprs.status", "dl1002", "X3EVIL",
+            "t:status f:X3EVIL ts:2026-09-10_09:10:00 r:dl1001 remove:status");
+    module_handle_event();
+    check(!cap_contains("\"deleted\":true"), "another author cannot withdraw it");
+    /* a withdrawn post whose original the archive no longer holds is still told */
+    reset();
+    history_set("[{\"id\":\"dl2002\",\"type\":\"status\",\"from\":\"X1FRND\","
+                "\"ts\":\"1789030800\",\"sig\":\"verified\",\"bearer\":\"lan\",\"own\":false,"
+                "\"wire\":\"t:status f:X1FRND ts:2026-09-10_09:10:00 r:dl2001 remove:status\"}]");
+    inbox_set("{\"command\":\"ready\"}");
+    module_handle_event();
+    check(cap_contains("\"mid\":\"dl2001\"") && cap_contains("\"deleted\":true"),
+          "the host is told a post is gone even when the spool has already purged it");
+    /* a withdrawal cannot be undone by a later correction */
+    reset();
+    deliver("xprs.status", "dl3001", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:00:00 m:gone");
+    deliver("xprs.status", "dl3002", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:10:00 r:dl3001 remove:status");
+    deliver("xprs.status", "dl3003", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:20:00 edit:dl3001 m:back again");
+    module_handle_event();
+    check(!cap_contains("back again"), "a withdrawal cannot be withdrawn by a later edit");
+
+    /* our own: edit asks the core, sends the words as the original again */
+    reset();
+    inbox_set("{\"command\":\"activity_send\",\"activity_input\":\"first draft\"}");
+    module_handle_event();
+    char orig[32];
+    snprintf(orig, sizeof(orig), "%s", last_status_id());
+    cap_clear();
+    char cmdbuf[300];
+    snprintf(cmdbuf, sizeof(cmdbuf),
+             "{\"command\":\"activity_edit\",\"activity_mid\":\"%s\","
+             "\"activity_input\":\"final draft\"}", orig);
+    inbox_set(cmdbuf);
+    module_handle_event();
+    check(edit_calls() == 1 && strcmp(last_edit_text(), "final draft") == 0 &&
+              strcmp(last_edit_orig(), orig) == 0,
+          "an edit is composed by the core, naming the original");
+    check(cap_contains("\"edited\":true") && cap_contains("final draft"),
+          "and shows at once");
+    /* somebody else's post cannot be edited from here */
+    cap_clear();
+    snprintf(cmdbuf, sizeof(cmdbuf),
+             "{\"command\":\"activity_edit\",\"activity_mid\":\"ed0001\","
+             "\"activity_input\":\"hijack\"}");
+    inbox_set(cmdbuf);
+    int before = edit_calls();
+    module_handle_event();
+    check(edit_calls() == before, "a post of somebody else's is not edited");
+
+    /* a reply stays a reply when it is edited */
+    reset();
+    inbox_set("{\"command\":\"activity_reply\",\"activity_target_mid\":\"abc123\","
+              "\"activity_input\":\"typo\"}");
+    module_handle_event();
+    snprintf(orig, sizeof(orig), "%s", last_status_id());
+    snprintf(cmdbuf, sizeof(cmdbuf),
+             "{\"command\":\"activity_edit\",\"activity_mid\":\"%s\","
+             "\"activity_input\":\"fixed\"}", orig);
+    inbox_set(cmdbuf);
+    module_handle_event();
+    check(strcmp(last_edit_reply(), "abc123") == 0, "the edit repeats the parent (r:)");
+
+    /* withdrawing our own: r: and remove:status on the air */
+    reset();
+    inbox_set("{\"command\":\"activity_send\",\"activity_input\":\"oops\"}");
+    module_handle_event();
+    snprintf(orig, sizeof(orig), "%s", last_status_id());
+    cap_clear();
+    snprintf(cmdbuf, sizeof(cmdbuf),
+             "{\"command\":\"activity_unsend\",\"activity_mid\":\"%s\"}", orig);
+    inbox_set(cmdbuf);
+    module_handle_event();
+    check(strstr(last_wire(), " remove:status") && strstr(last_wire(), orig) &&
+              strncmp(last_wire(), "t:status f:X1SELF ", 18) == 0,
+          "a withdrawal names the original with remove:status");
+    check(cap_contains("\"deleted\":true"), "and the row says deleted at once");
+
+    /* history: the original, then each edit, oldest first */
+    reset();
+    deliver("xprs.status", "hs0001", "X1FRND",
+            "t:status f:X1FRND ts:2026-09-10_09:00:00 m:one");
+    module_handle_event();
+    history_set("[{\"id\":\"hs0003\",\"type\":\"status\",\"from\":\"X1FRND\","
+                "\"ts\":\"1789032600\",\"sig\":\"verified\",\"bearer\":\"lan\",\"own\":false,"
+                "\"wire\":\"t:status f:X1FRND ts:2026-09-10_10:00:00 edit:hs0001 m:three\"},"
+                "{\"id\":\"hs0002\",\"type\":\"status\",\"from\":\"X1FRND\","
+                "\"ts\":\"1789030800\",\"sig\":\"verified\",\"bearer\":\"lan\",\"own\":false,"
+                "\"wire\":\"t:status f:X1FRND ts:2026-09-10_09:30:00 edit:hs0001 m:two\"},"
+                "{\"id\":\"hs0001\",\"type\":\"status\",\"from\":\"X1FRND\","
+                "\"ts\":\"1789029000\",\"sig\":\"verified\",\"bearer\":\"lan\",\"own\":false,"
+                "\"wire\":\"t:status f:X1FRND ts:2026-09-10_09:00:00 m:one\"}]");
+    cap_clear();
+    inbox_set("{\"command\":\"activity_history\",\"activity_mid\":\"hs0001\"}");
+    module_handle_event();
+    check(cap_contains("\"type\":\"ui.convo.history\"") && cap_contains("\"mid\":\"hs0001\""),
+          "history is answered for that post");
+    check(strstr(last_query(), "\"from\":\"X1FRND\"") != NULL,
+          "from the author's own rows");
+    check(cap_contains("\"text\":\"one\",\"date\":\"2026-09-10\",\"time\":\"09:00\"") &&
+              cap_contains("\"role\":\"author\"},{\"text\":\"two\"") &&
+              cap_contains("\"role\":\"author\"},{\"text\":\"three\""),
+          "the original first, then each edit in order, each with its date and time");
 
     printf("\n%d checks, %d failed\n", g_pass + g_fail, g_fail);
     return g_fail ? 1 : 0;

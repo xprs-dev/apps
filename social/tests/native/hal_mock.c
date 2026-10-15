@@ -21,6 +21,7 @@ static char *g_cap[CAP_MAX];
 static int   g_capn = 0;
 void cap_clear(void) { for (int i = 0; i < g_capn; i++) free(g_cap[i]); g_capn = 0; }
 int  cap_count(void) { return g_capn; }
+const char *cap_find(const char *s) { for (int i = 0; i < g_capn; i++) if (strstr(g_cap[i], s)) return g_cap[i]; return ""; }
 int  cap_contains(const char *s) {
     for (int i = 0; i < g_capn; i++) if (strstr(g_cap[i], s)) return 1;
     return 0;
@@ -151,6 +152,26 @@ int32_t hal_xprs_status(const char *text, uint32_t tlen,
     if (id_cap > 0) snprintf(id_out, id_cap, "%s", g_last_id);
     return 0;
 }
+/* A correction (XPRS.md 7.8.1): what the core was asked to compose. */
+static char g_edit_text[1200], g_edit_orig[32], g_edit_reply[32];
+static int  g_edit_calls = 0;
+const char *last_edit_text(void) { return g_edit_text; }
+const char *last_edit_orig(void) { return g_edit_orig; }
+const char *last_edit_reply(void) { return g_edit_reply; }
+int edit_calls(void) { return g_edit_calls; }
+int32_t hal_xprs_status_edit(const char *text, uint32_t tlen,
+                             const char *orig, uint32_t olen,
+                             const char *reply_to, uint32_t rlen,
+                             char *id_out, uint32_t id_cap) {
+    g_edit_calls++;
+    snprintf(g_edit_text, sizeof(g_edit_text), "%.*s", (int)tlen, text);
+    snprintf(g_edit_orig, sizeof(g_edit_orig), "%.*s", (int)olen, orig);
+    snprintf(g_edit_reply, sizeof(g_edit_reply), "%.*s", (int)rlen, reply_to ? reply_to : "");
+    if (g_status_fail || tlen == 0) return -1;
+    snprintf(g_last_id, sizeof(g_last_id), "edit%03d", ++g_id_seq);
+    if (id_cap > 0) snprintf(id_out, id_cap, "%s", g_last_id);
+    return 0;
+}
 int32_t hal_xprs_send(const char *wire, uint32_t len) {
     g_send_calls++;
     int n = (int)len < (int)sizeof(g_last_wire) - 1 ? (int)len : (int)sizeof(g_last_wire) - 1;
@@ -190,7 +211,10 @@ int32_t hal_identity(char *out, uint32_t cap) {
     memcpy(out, j, n);
     return n;
 }
-int64_t hal_time_epoch(void) { return 1788000000; }
+static int64_t g_now = 1788000000;
+void set_now(int64_t v) { g_now = v; }
+int32_t hal_time_utc_offset(void) { return 0; }
+int64_t hal_time_epoch(void) { return g_now; }
 void hal_log(int32_t level, const char *msg, uint32_t len) {
     (void)level; (void)msg; (void)len;
 }

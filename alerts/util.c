@@ -15,6 +15,12 @@ int al_eq(const char *a, const char *b)
     return *a == *b;
 }
 
+int al_cmp(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
 int al_starts(const char *s, const char *p)
 {
     if (!s || !p) return 0;
