@@ -2,6 +2,7 @@
   {"file":"alerts/alerts-0.1.0.wapp","id":"tools.xprs.alerts","version":"0.1.0","size":29408,"title":"Alerts","description":"Warnings and notices about the place you are in."},
   {"file":"alerts/alerts-0.2.5.wapp","id":"tools.xprs.alerts","version":"0.2.5","size":44648,"title":"Alerts","description":"Warnings and notices about the place you are in."},
   {"file":"alerts/alerts-0.2.6.wapp","id":"tools.xprs.alerts","version":"0.2.6","size":52812,"title":"Alerts","description":"Warnings and notices about the place you are in."},
+  {"file":"alerts/alerts-0.2.7.wapp","id":"tools.xprs.alerts","version":"0.2.7","size":53747,"title":"Alerts","description":"Warnings and notices about the place you are in."},
   {"file":"app-creator/app-creator-0.3.4.wapp","id":"tools.xprs.app-creator","version":"0.3.4","size":42059,"title":"App Creator","description":"Write, compile and install C wapps without leaving XPRS."},
   {"file":"app-creator/app-creator-0.3.5.wapp","id":"tools.xprs.app-creator","version":"0.3.5","size":42059,"title":"App Creator","description":"Write, compile and install C wapps without leaving XPRS."},
   {"file":"app-creator/app-creator-0.3.6.wapp","id":"tools.xprs.app-creator","version":"0.3.6","size":42042,"title":"App Creator","description":"Write and build C wapps inside XPRS."},

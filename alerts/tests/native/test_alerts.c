@@ -445,6 +445,28 @@ static void test_edit_own_and_history(void)
         CHECK(!g_ver[k].id[0] || !g_ver[k].m[0], "a version kept its words after withdrawal");
 }
 
+static void test_edit_announced_and_withdrawal_scrubs_ring(void)
+{
+    mock_reset(); mock_kv_clear(); restart();
+    heard("xprs.warning", "a1b2c3", HEARD_FLOOD);
+    int n0 = said_count("\"notify\"");
+    heard("xprs.warning", "e00002", EDIT_FLOOD("2026-08-16_12:00:00", "danger", "X1QZ3N", "lower car park floods"));
+    CHECK(said_count("\"notify\"") == n0 + 1, "a correction by somebody else was not announced");
+    CHECK(strstr(said_last("\"notify\""), "updated") != 0, "and it does not say updated");
+    heard("xprs.warning", "e00002", EDIT_FLOOD("2026-08-16_12:00:00", "danger", "X1QZ3N", "lower car park floods"));
+    CHECK(said_count("\"notify\"") == n0 + 1, "a copy of it was announced again");
+    heard("xprs.warning", "eeeeee", "t:warning f:X1QZ3N scope:local ts:2026-08-16_13:00:00 "
+          "until:2026-08-23_10:00:00 r:a1b2c3 remove:warning");
+    for (int i = 0; i < KEEP_MAX; i++) {
+        char k[4], v[AL_WIRE_MAX + 16];
+        keep_key(k, i);
+        uint32_t l = hal_kv_get(k, 3, v, sizeof v - 1);
+        if (l >= sizeof v) continue;
+        v[l] = 0;
+        CHECK(!strstr(v, "car park"), "slot %d still holds the words of a withdrawn alert", i);
+    }
+}
+
 int main(void)
 {
     printf("alerts native tests\n");
@@ -464,6 +486,7 @@ int main(void)
     test_edit_by_author_only();
     test_edit_before_original();
     test_edit_own_and_history();
+    test_edit_announced_and_withdrawal_scrubs_ring();
     test_time_round_trip();
     printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

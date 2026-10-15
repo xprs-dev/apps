@@ -517,6 +517,35 @@ static void keep(const char *id, const char *wire)
 
 static int take(const char *wire, const char *id, int may_announce);
 
+/* A withdrawal destroys the words of every version (7.8.2), and the ring holds
+ * their wires: cut the m: off every kept wire of [root] and of its edits. */
+static void scrub(const char *root)
+{
+    if (g_keep_w < 0) return;
+    for (int i = 0; i < KEEP_MAX; i++) {
+        char k[4], v[AL_WIRE_MAX + 16];
+        keep_key(k, i);
+        uint32_t l = hal_kv_get(k, 3, v, sizeof v - 1);
+        if (l < 8 || l >= sizeof v) continue;
+        v[l] = 0;
+        char e[8] = "";
+        int mine = al_len(v) > 7 && v[6] == ' ';
+        char id[7];
+        for (int j = 0; j < 6; j++) id[j] = v[j];
+        id[6] = 0;
+        if (!mine) continue;
+        al_field(v + 7, "edit", e, sizeof e);
+        if (!al_eq(id, root) && !al_eq(e, root)) continue;
+        /* "m:" is last and preceded by a space: cut there. */
+        for (unsigned j = 7; v[j]; j++)
+            if (v[j - 1] == ' ' && v[j] == 'm' && v[j + 1] == ':') {
+                v[j - 1] = 0;
+                hal_kv_set(k, 3, v, al_len(v));
+                break;
+            }
+    }
+}
+
 /* 1 when the ring was there to read: not the first start. */
 static int restore(void)
 {
@@ -621,11 +650,12 @@ static void ver_destroy(const char *root, const char *from)
             g_ver[k].m[0] = 0;
 }
 
-static void announce(const al_alert_t *a)
+static void announce(const al_alert_t *a, const char *tagid, int updated)
 {
     char title[64] = "", t[48];
     title_of(a, t, sizeof t);
-    al_cat(title, al_eq(a->type, "warning") ? "Warning nearby: " : "Notice nearby: ", sizeof title);
+    al_cat(title, updated ? (al_eq(a->type, "warning") ? "Warning updated: " : "Notice updated: ")
+                         : (al_eq(a->type, "warning") ? "Warning nearby: " : "Notice nearby: "), sizeof title);
     al_cat(title, t, sizeof title);
     char m[600] = "{\"type\":\"notify\",\"level\":\"";
     int loud = al_eq(a->type, "warning") && (al_eq(a->sev, "warning") || al_eq(a->sev, "danger"));
@@ -635,7 +665,7 @@ static void announce(const al_alert_t *a)
     al_cat(m, "\",\"body\":\"", sizeof m);
     al_jesc(m, a->m[0] ? a->m : "Open Alerts to read it.", sizeof m);
     al_cat(m, "\",\"tag\":\"alerts.", sizeof m);
-    al_cat(m, a->id, sizeof m);
+    al_cat(m, tagid, sizeof m);
     al_cat(m, "\"}", sizeof m);
     say(m);
 }
@@ -659,6 +689,7 @@ static int take(const char *wire, const char *id, int may_announce)
         g_gone_w = (g_gone_w + 1) % GONE_MAX;
         keep("------", wire);
         ver_destroy(a.id, a.from);
+        scrub(a.id);
         int i = find(a.id);
         if (i >= 0 && al_eq(g_al[i].from, a.from) && !g_al[i].withdrawn) {
             g_al[i].withdrawn = 1;
@@ -677,7 +708,14 @@ static int take(const char *wire, const char *id, int may_announce)
         ver_add(&a, id, a.edit);
         keep(id, wire);
         int i = find(a.edit);
-        return i >= 0 && al_eq(g_al[i].from, a.from) && resolve(i);
+        int changed = i >= 0 && al_eq(g_al[i].from, a.from) && resolve(i);
+        /* Somebody else's correction is news too, once per correction. */
+        if (changed && !g_al[i].mine && !seen(id)) {
+            if (may_announce && al_state(&g_al[i], now_s()) != AL_GONE)
+                announce(&g_al[i], id, 1);
+            seen_add(id);
+        }
+        return changed;
     }
     if (find(id) >= 0) return 0;          /* a copy: the id is the same */
     al_cpy(a.id, id, sizeof a.id);
@@ -704,7 +742,7 @@ static int take(const char *wire, const char *id, int may_announce)
     resolve(slot);
     keep(a.id, wire);
     if (!a.mine && !seen(a.id)) {
-        if (may_announce && al_state(&a, now_s()) != AL_GONE) announce(&a);
+        if (may_announce && al_state(&a, now_s()) != AL_GONE) announce(&a, a.id, 0);
         seen_add(a.id);
     }
     return 1;
