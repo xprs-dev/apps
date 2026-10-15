@@ -19,6 +19,7 @@ static int scoped_room(const char *id) {
 static char g_self[16] = "";
 static char g_open[48] = "";     /* the conversation on screen, or "" */
 static char g_top[48] = "";      /* first row of the rail as last drawn */
+static int  g_open_mod;          /* we are a moderator or the admin of the open group */
 static int  g_local_on = 1;
 static int  g_idx = -1;
 static int  g_said_nodb = 0;
@@ -210,8 +211,229 @@ static void emit_upsert(const char *id, int bump, int select) {
   s_cat(m, ",\"closed\":false,\"private\":", sizeof(m));
   /* A group is never sealed (6.3: no single key); a 1:1 is, unless marked. */
   s_cat(m, (id[0] != '#' && !jint(row, "plain")) ? "true" : "false", sizeof(m));
+  /* The host offers moderation on other people's messages only where we have
+   * the authority (10.4.1). Whether an act binds is judged per message. */
+  if (g_open_mod && s_eq(id, g_open) && is_xgroup(id)) s_cat(m, ",\"mod\":true", sizeof(m));
   if (bump) s_cat(m, ",\"bump\":true", sizeof(m));
   if (select) s_cat(m, ",\"select\":true", sizeof(m));
+  s_cat(m, "}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+
+/* ── versions: correcting and withdrawing (XPRS.md 7.8, 10.4.1) ──────────
+ *
+ * `messages.body` is the ORIGINAL and never changes. Everything done to it
+ * since is a row in `versions`, keyed on the packet that did it, and what a
+ * person sees is WORKED OUT from the two each time, in `ts` order, so the order
+ * the packets arrived in cannot change the answer:
+ *
+ *   - the author's edits and withdrawal count while nobody with authority has
+ *     acted, and only from the original's own author;
+ *   - a moderator's or the admin's act counts when its signer outranks the
+ *     author AS THE AUTHOR WAS AT THAT MOMENT (hal_xprs_group_role_at), and
+ *     from then on the author cannot overrule it, only an equal or higher
+ *     authority can (10.4.1);
+ *   - a withdrawal that stands destroys the text of every version, here as it
+ *     is asked to be everywhere (7.8.2). */
+typedef struct {
+  char text[BODY_MAX + 1];
+  char by[24];        /* who wrote the words shown, when it is a moderator */
+  char rid[40];       /* the newest version's receipt id: its ticks are the bubble's */
+  char status[16];
+  int edited, deleted, enc, by_mod;
+} room_view_t;
+
+static char g_vq[32768];     /* the versions of one message */
+static char g_ht[16384];     /* scratch for trimming a history */
+
+void room_set_mod(int mod, int say) {
+  if (g_open_mod == (mod ? 1 : 0)) return;
+  g_open_mod = mod ? 1 : 0;
+  /* [say]: the room is already on screen, so its row is restated. Before a
+   * room is opened it is not: the open itself states the row, once. */
+  if (say && g_open[0]) emit_upsert(g_open, 0, 0);
+}
+
+/* A callsign without its device suffix, upper-cased: one person's two devices
+ * are one author (3.1). */
+static void bare_up(const char *in, char *out, unsigned cap) {
+  unsigned n = 0;
+  for (; *in && *in != '-' && n + 1 < cap; in++)
+    out[n++] = (*in >= 'a' && *in <= 'z') ? (char)(*in - 32) : *in;
+  out[n] = 0;
+}
+static int same_station(const char *a, const char *b) {
+  char x[24], y[24];
+  bare_up(a, x, sizeof(x)); bare_up(b, y, sizeof(y));
+  return x[0] && s_eq(x, y);
+}
+
+/* What [call] was in closed group [room] at [ts]: 0 none .. 4 admin. A room
+ * that is not a closed group has no roles, so nobody outranks anybody. */
+static int role_at(const char *room, const char *call, unsigned long long ts) {
+  if (!is_xgroup(room)) return 0;
+  return (int)hal_xprs_group_role_at(room + 1, s_len(room + 1), call, s_len(call),
+                                     (uint32_t)ts);
+}
+
+static void hist_add(char *hist, unsigned cap, const char *text,
+                     unsigned long long ts, const char *by, const char *role) {
+  if (!hist) return;
+  char t[8], d[12]; fmt_time_at(t, ts); fmt_date_at(d, ts);
+  char cut[404]; s_cpy(cut, text, sizeof(cut));
+  if (hist[0]) s_cat(hist, ",", cap);
+  s_cat(hist, "{\"text\":\"", cap); jesc(hist, cap, cut);
+  s_cat(hist, "\",\"time\":\"", cap); s_cat(hist, t, cap);
+  s_cat(hist, "\",\"date\":\"", cap); s_cat(hist, d, cap);
+  s_cat(hist, "\",\"by\":\"", cap); jesc(hist, cap, by);
+  s_cat(hist, "\",\"role\":\"", cap); s_cat(hist, role, cap); s_cat(hist, "\"}", cap);
+}
+
+/* Work out what [mid] shows. Returns -1 when there is no such row, 1 when
+ * something changed it, 0 when it reads as the original. [hist], when given,
+ * receives the versions oldest first as JSON objects; a viewer who is not a
+ * moderator or the admin is not shown what a moderator's edit replaced. */
+static int room_resolve(int h, const char *room, const char *mid, room_view_t *v,
+                        char *hist, unsigned hcap, int viewer_mod) {
+  static char orow[2800];
+  { pj_t p; pj_init(&p); pj_str(&p, mid);
+    if (db_query(h, "SELECT sender,ts,body,enc,rid,status,deleted,orphan FROM messages WHERE mid=? LIMIT 1",
+                 pj_done(&p), orow, sizeof(orow)) <= 0) return -1; }
+  char author[24] = ""; jstr(orow, "sender", author, sizeof(author));
+  /* A placeholder made from a correction (7.8.1) does not know when the
+   * original was written, so nothing is "before" it. */
+  int orphan = jint(orow, "orphan") ? 1 : 0;
+  unsigned long long ots = orphan ? 0 : (unsigned long long)jint(orow, "ts");
+  v->text[0] = 0; v->rid[0] = 0; v->status[0] = 0; v->by[0] = 0;
+  jstr(orow, "body", v->text, sizeof(v->text));
+  jstr(orow, "rid", v->rid, sizeof(v->rid));
+  jstr(orow, "status", v->status, sizeof(v->status));
+  v->enc = (int)jint(orow, "enc");
+  v->edited = v->deleted = v->by_mod = 0;
+  if (hist) hist[0] = 0;
+  if (jint(orow, "deleted")) { v->deleted = 1; v->text[0] = 0; return 1; }
+  if (!orphan) hist_add(hist, hcap, v->text, ots, author, "author");
+  { pj_t p; pj_init(&p); pj_str(&p, mid);
+    if (db_query(h, "SELECT vid,kind,sender,ts,body,enc,srole,rid,status FROM versions "
+                    "WHERE root=? ORDER BY ts ASC, vid ASC LIMIT 60",
+                 pj_done(&p), g_vq, sizeof(g_vq)) <= 0) return 0; }
+  const char *cur = g_vq;
+  static char vr[2400];
+  int locked = 0, top = 0, have_mod = 0;
+  unsigned mod_off = 0;
+  while (next_object(&cur, vr, sizeof(vr))) {
+    int kind = (int)jint(vr, "kind");
+    char sender[24] = ""; jstr(vr, "sender", sender, sizeof(sender));
+    unsigned long long ts = (unsigned long long)jint(vr, "ts");
+    if (kind <= VER_WITHDRAW) {
+      /* The author's own: after the original, from the same station, and not
+       * once a moderator has acted. */
+      if (locked || ts <= ots || !same_station(sender, author)) continue;
+      if (kind == VER_WITHDRAW) { v->deleted = 1; break; }
+      jstr(vr, "body", v->text, sizeof(v->text));
+      v->enc = (int)jint(vr, "enc");
+      v->rid[0] = 0; v->status[0] = 0;
+      jstr(vr, "rid", v->rid, sizeof(v->rid));
+      jstr(vr, "status", v->status, sizeof(v->status));
+      v->edited = 1; v->by[0] = 0; v->by_mod = 0;
+      hist_add(hist, hcap, v->text, ts, sender, "author");
+    } else {
+      int sr = (int)jint(vr, "srole");
+      /* Strictly above the author at that moment, and not below whoever has
+       * already acted. */
+      if (sr < top || sr <= role_at(room, author, ts)) continue;
+      locked = 1; top = sr;
+      if (kind == VER_MOD_REMOVE) { v->deleted = 1; break; }
+      jstr(vr, "body", v->text, sizeof(v->text));
+      v->enc = 0;
+      s_cpy(v->by, sender, sizeof(v->by));
+      v->edited = 1; v->by_mod = 1;
+      if (hist && !have_mod) { mod_off = s_len(hist) + (hist[0] ? 1u : 0u); }
+      have_mod = 1;
+      hist_add(hist, hcap, v->text, ts, sender, sr >= 4 ? "admin" : "moderator");
+    }
+  }
+  if (v->deleted) { v->text[0] = 0; v->edited = 0; }
+  if (hist && have_mod && !viewer_mod) {
+    s_cpy(g_ht, hist + mod_off, sizeof(g_ht));
+    s_cpy(hist, "{\"note\":\"Earlier versions were removed by a moderator\"},", hcap);
+    s_cat(hist, g_ht, hcap);
+  }
+  return (v->edited || v->deleted) ? 1 : 0;
+}
+
+static int has_sub(const char *hay, const char *needle) {
+  if (!needle[0]) return 0;
+  for (; *hay; hay++) {
+    const char *a = hay, *b = needle;
+    while (*a && *b && *a == *b) { a++; b++; }
+    if (!*b) return 1;
+  }
+  return 0;
+}
+
+/* The conversation list's preview line is built from the last message, so it
+ * still carries the words that were just corrected or withdrawn. A withdrawn
+ * message must leave them nowhere, so the line is rewritten (or emptied) when
+ * it held them. Call BEFORE the text is destroyed: it reads the original. */
+static void relast(int h, const char *room, const char *mid, const room_view_t *v) {
+  static char orow[1300], irow[400];
+  static char body[BODY_MAX + 1];
+  char sender[24] = "", last[140] = "";
+  { pj_t p; pj_init(&p); pj_str(&p, mid);
+    if (db_query(h, "SELECT sender,body FROM messages WHERE mid=? LIMIT 1", pj_done(&p), orow, sizeof(orow)) <= 0) return; }
+  jstr(orow, "sender", sender, sizeof(sender)); body[0] = 0; jstr(orow, "body", body, sizeof(body));
+  { pj_t p; pj_init(&p); pj_str(&p, room);
+    if (db_query(g_idx, "SELECT last_line FROM rooms WHERE id=? LIMIT 1", pj_done(&p), irow, sizeof(irow)) <= 0) return; }
+  jstr(irow, "last_line", last, sizeof(last));
+  /* The line held the words as of whichever version was newest when it was
+   * written: the original, or a correction already made. Any of them counts. */
+  char probe[48]; s_cpy(probe, body, sizeof(probe));
+  int held = has_sub(last, probe);
+  if (!held) {
+    pj_t p; pj_init(&p); pj_str(&p, mid);
+    if (db_query(h, "SELECT body FROM versions WHERE root=? ORDER BY ts DESC LIMIT 60", pj_done(&p), g_vq, sizeof(g_vq)) > 0) {
+      const char *cur = g_vq; static char vr[1100];
+      while (!held && next_object(&cur, vr, sizeof(vr))) {
+        static char vb[BODY_MAX + 1]; vb[0] = 0; jstr(vr, "body", vb, sizeof(vb));
+        s_cpy(probe, vb, sizeof(probe));
+        held = has_sub(last, probe);
+      }
+    }
+  }
+  if (!held) return;
+  char now[140] = "";
+  if (!v->deleted) {
+    s_cpy(now, sender, sizeof(now)); s_cat(now, ": ", sizeof(now)); s_cat(now, v->text, sizeof(now));
+  }
+  pj_t p; pj_init(&p); pj_str(&p, now); pj_str(&p, room);
+  db_exec(g_idx, "UPDATE rooms SET last_line=? WHERE id=?", pj_done(&p));
+  emit_upsert(room, 0, 0);
+}
+
+/* A withdrawal that stands: the text goes, from the row and from every
+ * version, and only the fact that it was withdrawn is kept. */
+static void destroy_text(int h, const char *mid) {
+  pj_t p; pj_init(&p); pj_str(&p, mid);
+  db_exec(h, "UPDATE messages SET body='', deleted=1 WHERE mid=?", pj_done(&p));
+  pj_init(&p); pj_str(&p, mid);
+  db_exec(h, "DELETE FROM versions WHERE root=? AND kind IN (0,2)", pj_done(&p));
+}
+
+/* What an already-drawn bubble should now show. */
+static void emit_view(const char *room, const char *mid, const room_view_t *v) {
+  static char m[1500];
+  s_cpy(m, "{\"type\":\"ui.convo.edit\",\"id\":\"", sizeof(m)); jesc(m, sizeof(m), room);
+  s_cat(m, "\",\"mid\":\"", sizeof(m)); jesc(m, sizeof(m), mid);
+  s_cat(m, "\",\"text\":\"", sizeof(m)); jesc(m, sizeof(m), v->text);
+  s_cat(m, "\"", sizeof(m));
+  if (v->edited) s_cat(m, ",\"edited\":true", sizeof(m));
+  if (v->edited && v->by[0]) { s_cat(m, ",\"by\":\"", sizeof(m)); jesc(m, sizeof(m), v->by); s_cat(m, "\"", sizeof(m)); }
+  if (v->deleted) s_cat(m, ",\"deleted\":true", sizeof(m));
+  if (v->enc) s_cat(m, ",\"enc\":true", sizeof(m));
+  else if (room[0] != '#') s_cat(m, ",\"plain\":true", sizeof(m));
+  if (v->rid[0]) { s_cat(m, ",\"rid\":\"", sizeof(m)); jesc(m, sizeof(m), v->rid); s_cat(m, "\"", sizeof(m)); }
+  if (v->status[0]) { s_cat(m, ",\"status\":\"", sizeof(m)); jesc(m, sizeof(m), v->status); s_cat(m, "\"", sizeof(m)); }
   s_cat(m, "}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
@@ -223,7 +445,13 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
                      const char *sender, unsigned long long ts, const char *body,
                      const char *parent, const char *via, const char *auth,
                      int enc, const char *rid, const char *status, int sys,
-                     int priv, int obf) {
+                     int priv, int obf, const room_view_t *v) {
+  /* A message that has been corrected or withdrawn is drawn as it stands now:
+   * the words, the lock and the ticks of its newest version, and whether it
+   * was edited and by whom. */
+  if (v) {
+    body = v->text; enc = v->enc; rid = v->rid; status = v->status;
+  }
   char t[8]; fmt_time_at(t, ts);
   char dstr[12]; fmt_date_at(dstr, ts);
   /* 1400: a 900-byte body doubles under escaping in the worst case, and the
@@ -249,6 +477,9 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
   if (priv) s_cat(m, ",\"private\":true", sizeof(m));
   if (obf) s_cat(m, ",\"obfuscated\":true,\"tip\":\"Tap to reveal hidden text\"", sizeof(m));
   if (sys) s_cat(m, ",\"sys\":true", sizeof(m));
+  if (v && v->edited) s_cat(m, ",\"edited\":true", sizeof(m));
+  if (v && v->edited && v->by[0]) { s_cat(m, ",\"by\":\"", sizeof(m)); jesc(m, sizeof(m), v->by); s_cat(m, "\"", sizeof(m)); }
+  if (v && v->deleted) s_cat(m, ",\"deleted\":true", sizeof(m));
   s_cat(m, ",\"backfill\":true}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
@@ -596,6 +827,27 @@ int room_admit(const room_msg_t *m) {
   if (m->replay && m->ts && m->ts <= room_cleared(h)) return 0;
   /* "Have I seen this" is the primary key. A second copy off another bearer,
    * our own post echoed off the air, a refill re-reading last week: one row. */
+  /* A placeholder made from a correction that arrived first (7.8.1) is filled
+   * in with the real original now. The corrections already held are judged
+   * again against it: one from somebody else's hand stops counting. */
+  { pj_t p; pj_init(&p); pj_str(&p, m->mid);
+    if (db_int(h, "SELECT orphan AS n FROM messages WHERE mid=? LIMIT 1", pj_done(&p), 0) == 1) {
+      pj_t q; pj_init(&q);
+      pj_str(&q, m->dir); pj_str(&q, m->sender ? m->sender : "");
+      pj_int(&q, (long long)(m->ts ? m->ts : hal_time_epoch()));
+      pj_str(&q, m->body); pj_str(&q, m->parent ? m->parent : "");
+      pj_str(&q, m->via ? m->via : ""); pj_str(&q, m->auth ? m->auth : "");
+      pj_int(&q, m->enc ? 1 : 0); pj_str(&q, m->rid ? m->rid : ""); pj_str(&q, m->status ? m->status : "");
+      pj_int(&q, m->obf ? 1 : 0); pj_str(&q, m->mid);
+      db_exec(h, "UPDATE messages SET dir=?,sender=?,ts=?,body=?,parent=?,via=?,auth=?,enc=?,rid=?,status=?,obf=?,orphan=0 WHERE mid=?",
+              pj_done(&q));
+      room_view_t v;
+      if (room_resolve(h, m->room, m->mid, &v, 0, 0, 0) >= 0) {
+        if (v.deleted) destroy_text(h, m->mid);
+        emit_view(m->room, m->mid, &v);
+      }
+      return 1;
+    } }
   { pj_t p; pj_init(&p); pj_str(&p, m->mid);
     if (db_int(h, "SELECT 1 AS n FROM messages WHERE mid=? LIMIT 1", pj_done(&p), 0) == 1) {
       /* Already stored -- typically by the OTHER engine. Two engines each drain
@@ -612,7 +864,7 @@ int room_admit(const room_msg_t *m) {
                  m->ts ? m->ts : hal_time_epoch(), m->body,
                  m->parent ? m->parent : "", m->via ? m->via : "",
                  m->auth ? m->auth : "", m->enc, m->rid ? m->rid : "",
-                 m->status ? m->status : "", m->sys, 0, m->obf);
+                 m->status ? m->status : "", m->sys, 0, m->obf, 0);
         /* The row is already stored (read_sent=0), so flushing acks it now --
          * the page engine is the one that knows it is being read on screen. */
         room_flush_reads(h);
@@ -636,6 +888,19 @@ int room_admit(const room_msg_t *m) {
     if (db_exec(h, "INSERT INTO messages(mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys,obf)"
                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", pj_done(&p)) != 0) return -1; }
 
+  /* Corrections or a withdrawal that arrived BEFORE this original (7.8.1): the
+   * row is born already corrected, or already gone. */
+  room_view_t view; int viewed = 0;
+  { pj_t p; pj_init(&p); pj_str(&p, m->mid);
+    int held = db_int(h, "SELECT COUNT(*) AS n FROM versions WHERE root=?", pj_done(&p), 0);
+    if (held > 0) {
+      pj_init(&p); pj_int(&p, held); pj_str(&p, m->mid);
+      db_exec(h, "UPDATE messages SET nver=? WHERE mid=?", pj_done(&p));
+      if (room_resolve(h, m->room, m->mid, &view, 0, 0, 0) >= 0) {
+        viewed = 1;
+        if (view.deleted) destroy_text(h, m->mid);
+      }
+    } }
   int created = room_ensure(m->room, m->title);
   /* Who this station talks with, for the statuses at the head of the list. */
   if (!m->sys) {
@@ -667,7 +932,7 @@ int room_admit(const room_msg_t *m) {
    * holds as closed, and the row says closed:false. */
   emit_upsert(m->room, !m->replay, 0);
   emit_msg(m->room, m->mid, m->dir, sender, ts, body, parent, via, auth,
-           m->enc, rid, status, m->sys, 0, m->obf);
+           m->enc, rid, status, m->sys, 0, m->obf, viewed ? &view : 0);
   if (!m->replay) {
     if (created > 0 || !s_eq(g_top, m->room)) room_rail();
     /* Not for an archived conversation: archiving is how a person says "do
@@ -696,12 +961,157 @@ int room_admit(const room_msg_t *m) {
   return 1;
 }
 
+/* ── correcting and withdrawing: the doors (XPRS.md 7.8, 10.4.1) ───── */
+
+/* Keep one version of [root] and redraw it. [kind] is VER_*; [sender] is who
+ * made it (the author, or the moderator); [srole] is a moderator's rank, 3 mod
+ * or 4 admin, and 0 for the author's own. Whether it COUNTS is not decided
+ * here but each time the message is drawn, in room_resolve, so a version that
+ * arrives before its original, or out of order, lands the same way.
+ *
+ * 1 = new and kept, 0 = already held, -1 = nothing could be done. */
+int room_version_add(const char *room, const char *root, const char *vid, int kind,
+                     const char *sender, unsigned long long ts, const char *body,
+                     int enc, const char *rid, const char *status, int srole) {
+  if (!room_renderable(room) || !root || !root[0] || !vid || !vid[0]) return -1;
+  if (g_idx < 0) return -1;
+  int h = room_handle(room);
+  if (h < 0) return -1;
+  int exists;
+  { pj_t p; pj_init(&p); pj_str(&p, root);
+    exists = db_int(h, "SELECT 1 AS n FROM messages WHERE mid=? LIMIT 1", pj_done(&p), 0) == 1; }
+  int made = 0;
+  if (!exists && kind == VER_EDIT) {
+    /* A correction for something we never heard (7.8.1): shown as what it is,
+     * a correction of a message this station does not hold, and replaced by
+     * the original if that arrives (room_admit). Only an edit has anything to
+     * show; a withdrawal or a moderator's act waits in `versions`. */
+    pj_t p; pj_init(&p);
+    pj_str(&p, root); pj_str(&p, "in"); pj_str(&p, sender);
+    pj_int(&p, (long long)(ts ? ts : hal_time_epoch())); pj_str(&p, body);
+    pj_int(&p, enc ? 1 : 0);
+    if (db_exec(h, "INSERT INTO messages(mid,dir,sender,ts,body,enc,orphan) VALUES(?,?,?,?,?,?,1)",
+                pj_done(&p)) == 0) {
+      room_ensure(room, 0);
+      exists = 1; made = 1;
+    }
+  }
+  { pj_t p; pj_init(&p);
+    pj_str(&p, vid); pj_str(&p, root); pj_int(&p, kind); pj_str(&p, sender);
+    pj_int(&p, (long long)(ts ? ts : hal_time_epoch())); pj_str(&p, body ? body : "");
+    pj_int(&p, enc ? 1 : 0); pj_int(&p, srole); pj_str(&p, rid ? rid : ""); pj_str(&p, status ? status : "");
+    if (db_exec(h, "INSERT OR IGNORE INTO versions(vid,root,kind,sender,ts,body,enc,srole,rid,status)"
+                   " VALUES(?,?,?,?,?,?,?,?,?,?)", pj_done(&p)) != 0) return -1; }
+  if (db_int(h, "SELECT changes() AS n", 0, 0) <= 0) return 0;
+  if (!exists) return 1;
+  { pj_t p; pj_init(&p); pj_str(&p, root);
+    db_exec(h, "UPDATE messages SET nver=nver+1 WHERE mid=?", pj_done(&p)); }
+  room_view_t v;
+  if (room_resolve(h, room, root, &v, 0, 0, 0) < 0) return 1;
+  relast(h, room, root, &v);
+  if (v.deleted) destroy_text(h, root);
+  /* The host holds the bubbles of every room, not only the open one, so the
+   * change is said whichever room is on screen. */
+  if (made) {
+    /* The bubble does not exist yet: draw it, then it can be corrected. */
+    emit_upsert(room, 0, 0);
+    emit_msg(room, root, "in", sender, ts ? ts : hal_time_epoch(), body, "", "", "", enc,
+             "", "", 0, 0, 0, &v);
+  } else {
+    emit_view(room, root, &v);
+  }
+  return 1;
+}
+
+/* The message [mid] in [room], when it is ours to correct or withdraw:
+ * 1 and its identifier's sender copied to [sender], else 0. */
+int room_message_sender(const char *room, const char *mid, char *sender, unsigned cap) {
+  int h = room_handle(room);
+  if (h < 0) return 0;
+  static char row[400];
+  pj_t p; pj_init(&p); pj_str(&p, mid);
+  if (db_query(h, "SELECT sender,deleted FROM messages WHERE mid=? LIMIT 1", pj_done(&p), row, sizeof(row)) <= 0)
+    return 0;
+  if (jint(row, "deleted")) return 0;
+  jstr(row, "sender", sender, cap);
+  return 1;
+}
+
+/* Pull the moderators' acts of closed group [room] from the core and fold in
+ * the ones that concern messages held here (10.4.1). Idempotent: an act already
+ * kept is skipped, and one the core no longer reports (the admin voided the
+ * moderator) is dropped, so the version it replaced comes back into view. A
+ * removal cannot come back: its text is already gone. */
+void room_moderation_sync(const char *room) {
+  if (!is_xgroup(room) || !room_known(room)) return;
+  int h = room_handle(room);
+  if (h < 0) return;
+  static char buf[20000];
+  int n = (int)hal_xprs_group_moderation(room + 1, s_len(room + 1), buf, sizeof(buf) - 1);
+  if (n < 0 || n >= (int)sizeof(buf)) return;
+  buf[n] = 0;
+  static char seen[64][12]; int nseen = 0, over = 0;
+  const char *cur = buf; static char row[1800];
+  while (next_object(&cur, row, sizeof(row))) {
+    char id[12] = "", kind[10] = "", target[12] = "", signer[24] = "", srole[10] = "";
+    static char text[BODY_MAX + 1];
+    jstr(row, "id", id, sizeof(id)); jstr(row, "kind", kind, sizeof(kind));
+    jstr(row, "target", target, sizeof(target)); jstr(row, "signer", signer, sizeof(signer));
+    jstr(row, "srole", srole, sizeof(srole)); text[0] = 0; jstr(row, "text", text, sizeof(text));
+    unsigned long long ts = (unsigned long long)jint(row, "ts");
+    if (!id[0] || !target[0]) continue;
+    if (nseen < 64) s_cpy(seen[nseen++], id, sizeof(seen[0])); else over = 1;
+    int exists;
+    { pj_t p; pj_init(&p); pj_str(&p, target);
+      exists = db_int(h, "SELECT 1 AS n FROM messages WHERE mid=? LIMIT 1", pj_done(&p), 0) == 1; }
+    if (!exists) continue;
+    room_version_add(room, target, id, s_eq(kind, "edit") ? VER_MOD_EDIT : VER_MOD_REMOVE,
+                     signer, ts, text, 0, "", "", s_eq(srole, "admin") ? 4 : 3);
+  }
+  if (over) return;   /* too many to tell what is missing: keep what we have */
+  /* What we kept that the core no longer reports was voided. */
+  static char held[8192];
+  if (db_query(h, "SELECT vid,root FROM versions WHERE kind>=2", 0, held, sizeof(held)) <= 0) return;
+  const char *hc = held; static char hr[200];
+  while (next_object(&hc, hr, sizeof(hr))) {
+    char vid[12] = "", root[12] = "";
+    jstr(hr, "vid", vid, sizeof(vid)); jstr(hr, "root", root, sizeof(root));
+    int found = 0;
+    for (int i = 0; i < nseen; i++) if (s_eq(seen[i], vid)) { found = 1; break; }
+    if (found || !vid[0]) continue;
+    { pj_t p; pj_init(&p); pj_str(&p, vid);
+      db_exec(h, "DELETE FROM versions WHERE vid=?", pj_done(&p)); }
+    { pj_t p; pj_init(&p); pj_str(&p, root);
+      db_exec(h, "UPDATE messages SET nver=nver-1 WHERE mid=? AND nver>0", pj_done(&p)); }
+    room_view_t v;
+    if (room_resolve(h, room, root, &v, 0, 0, 0) >= 0) emit_view(room, root, &v);
+  }
+}
+
+/* The versions of [mid], oldest first, for the Info dialog: the original and
+ * every correction that counts, who made each and when (7.8.1). A viewer who is
+ * not a moderator or the admin of the group is told that earlier versions were
+ * removed by a moderator rather than shown them (10.4.1). */
+void room_history(const char *room, const char *mid) {
+  int h = room_handle(room);
+  if (h < 0) return;
+  static char hist[14000];
+  room_view_t v;
+  if (room_resolve(h, room, mid, &v, hist, sizeof(hist), g_open_mod) < 0) return;
+  static char m[15000];
+  s_cpy(m, "{\"type\":\"ui.convo.history\",\"id\":\"", sizeof(m)); jesc(m, sizeof(m), room);
+  s_cat(m, "\",\"mid\":\"", sizeof(m)); jesc(m, sizeof(m), mid);
+  s_cat(m, "\",\"versions\":[", sizeof(m)); s_cat(m, hist, sizeof(m));
+  s_cat(m, "]}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+
 /* ── opening ──────────────────────────────────────────────────────── */
 static void emit_tail(const char *id, int h) {
   int limit = TAIL, n = -2;
   while (limit >= 12) {
     pj_t p; pj_init(&p); pj_int(&p, limit);
-    n = db_query(h, "SELECT mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys,obf FROM "
+    n = db_query(h, "SELECT mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys,obf,nver,deleted FROM "
                     "(SELECT * FROM messages ORDER BY seq DESC LIMIT ?) ORDER BY seq ASC",
                  pj_done(&p), g_q, sizeof(g_q));
     if (n != -2) break;
@@ -719,9 +1129,15 @@ static void emit_tail(const char *id, int h) {
     jstr(row, "parent", parent, sizeof(parent)); jstr(row, "via", via, sizeof(via));
     jstr(row, "auth", auth, sizeof(auth)); jstr(row, "rid", rid, sizeof(rid));
     jstr(row, "status", status, sizeof(status));
+    /* Drawn as it stands: a message with corrections is resolved, one without
+     * costs nothing, and a withdrawn one is a place saying so. */
+    room_view_t view; int viewed = 0;
+    if (jint(row, "nver") > 0 || jint(row, "deleted")) {
+      if (room_resolve(h, id, mid, &view, 0, 0, 0) >= 0) viewed = 1;
+    }
     emit_msg(id, mid, dir, sender, (unsigned long long)jint(row, "ts"), body, parent, via,
              auth, (int)jint(row, "enc"), rid, status, (int)jint(row, "sys"), 0,
-             (int)jint(row, "obf"));
+             (int)jint(row, "obf"), viewed ? &view : 0);
   }
   /* Hearts on those bubbles. */
   pj_t p; pj_init(&p); pj_int(&p, limit);
@@ -841,6 +1257,12 @@ void room_status(const char *rid, const char *state) {
        * This matters now that a receipt with no outbox row still reaches here. */
       pj_t p; pj_init(&p); pj_str(&p, state); pj_str(&p, rid);
       db_exec(h, "UPDATE messages SET status=? WHERE rid=? AND status<>'read'",
+              pj_done(&p));
+      /* A correction is a packet of its own with its own receipt (7.8.1); the
+       * bubble's ticks follow its newest version, which is what resolution
+       * hands back, so the version keeps the tick too. */
+      pj_init(&p); pj_str(&p, state); pj_str(&p, rid);
+      db_exec(h, "UPDATE versions SET status=? WHERE rid=? AND status<>'read'",
               pj_done(&p));
     }
   }

@@ -198,6 +198,61 @@ const char* mock_folder_ask(void){ return g_folder_ask; }
 const char* mock_picture_ask(void){ return g_picture_ask; }
 int32_t hal_xprs_group_folder(const char* p,uint32_t pl,const char* n,uint32_t nl,char* o,uint32_t cap){ if(g_hk_folder) return g_hk_folder(p,pl,n,nl,o,cap); snprintf(g_folder_ask,sizeof(g_folder_ask),"%.*s:%.*s",(int)pl,p,(int)nl,n); const char* c="X5FOLD"; uint32_t m=strlen(c); if(m>cap) return -1; memcpy(o,c,m); if(m<cap) o[m]=0; return m; }
 int32_t hal_xprs_group_picture(const char* g,uint32_t gl,const char* t,uint32_t tl){ if(g_hk_picture) return g_hk_picture(g,gl,t,tl); snprintf(g_picture_ask,sizeof(g_picture_ask),"%.*s:%.*s",(int)gl,g,(int)tl,t); return 0; }
+/* XPRS.md 7.8: correcting and withdrawing, and a moderator's acts. Single-node
+ * tests read back what was asked; sim.c installs the hooks to network them. */
+int32_t (*g_hk_edit)(const char*,uint32_t,const char*,uint32_t,const char*,uint32_t,uint32_t,char*,uint32_t) = 0;
+int32_t (*g_hk_withdraw)(const char*,uint32_t,const char*,uint32_t) = 0;
+int32_t (*g_hk_moderation)(const char*,uint32_t,char*,uint32_t) = 0;
+int32_t (*g_hk_role_at)(const char*,uint32_t,const char*,uint32_t,uint32_t) = 0;
+int32_t (*g_hk_moderate)(const char*,uint32_t,const char*,uint32_t,const char*,uint32_t,uint32_t) = 0;
+static char g_edit_ask[1100]; static char g_withdraw_ask[96]; static char g_moderate_ask[1100];
+static char g_moderation[4096] = "[]"; static char g_roles[512];
+const char* mock_edit_ask(void){ return g_edit_ask; }
+const char* mock_withdraw_ask(void){ return g_withdraw_ask; }
+const char* mock_moderate_ask(void){ return g_moderate_ask; }
+void mock_edit_clear(void){ g_edit_ask[0]=0; g_withdraw_ask[0]=0; g_moderate_ask[0]=0; }
+/* "X1PZ4Q=2,X32DVA=3": what each callsign is at any moment. */
+void mock_set_roles(const char* spec){ snprintf(g_roles,sizeof(g_roles),"%s",spec?spec:""); }
+void mock_set_moderation(const char* json){ snprintf(g_moderation,sizeof(g_moderation),"%s",json&&json[0]?json:"[]"); }
+int32_t hal_xprs_edit(const char* to,uint32_t tl,const char* orig,uint32_t ol,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){
+  if(g_hk_edit) return g_hk_edit(to,tl,orig,ol,t,l,priv,id,cap);
+  snprintf(g_edit_ask,sizeof(g_edit_ask),"%.*s|%.*s|%.*s|%u",(int)tl,to,(int)ol,orig,(int)l,t,priv);
+  int fx=mock_is_foreign(to,tl);
+  if(fx&&priv) return -3;
+  snprintf(id,cap,"m%05d",++g_bcast_n);
+  return fx?3:(priv?1:2);
+}
+int32_t hal_xprs_withdraw(const char* to,uint32_t tl,const char* orig,uint32_t ol){
+  if(g_hk_withdraw) return g_hk_withdraw(to,tl,orig,ol);
+  snprintf(g_withdraw_ask,sizeof(g_withdraw_ask),"%.*s|%.*s",(int)tl,to,(int)ol,orig);
+  return 0;
+}
+int32_t hal_xprs_group_moderation(const char* g,uint32_t gl,char* o,uint32_t cap){
+  if(g_hk_moderation) return g_hk_moderation(g,gl,o,cap);
+  uint32_t n=strlen(g_moderation);
+  if(n>cap) return -(int32_t)n;
+  memcpy(o,g_moderation,n);
+  return (int32_t)n;
+}
+int32_t hal_xprs_group_role_at(const char* g,uint32_t gl,const char* c,uint32_t cl,uint32_t ts){
+  if(g_hk_role_at) return g_hk_role_at(g,gl,c,cl,ts);
+  (void)g;(void)gl;(void)ts;
+  const char* p=g_roles;
+  while(*p){
+    const char* e=strchr(p,'=');
+    if(!e) break;
+    if((uint32_t)(e-p)==cl && !strncmp(p,c,cl)) return atoi(e+1);
+    p=strchr(e,',');
+    if(!p) break;
+    p++;
+  }
+  return 0;
+}
+int32_t hal_xprs_group_moderate(const char* g,uint32_t gl,const char* tg,uint32_t tgl,const char* t,uint32_t l,uint32_t kind){
+  if(g_hk_moderate) return g_hk_moderate(g,gl,tg,tgl,t,l,kind);
+  snprintf(g_moderate_ask,sizeof(g_moderate_ask),"%.*s|%.*s|%.*s|%u",(int)gl,g,(int)tgl,tg,(int)l,t,kind);
+  return 0;
+}
 int32_t hal_xprs_stations(char* o,uint32_t cap){ const char* s="[{\"title\":\"Heard over the air (2)\",\"items\":[{\"id\":\"X1NEAR\",\"title\":\"X1NEAR\",\"subtitle\":\"BLE - -40 dBm - 3 packets\",\"tags\":[\"seen 20s ago\",\"BLE\",\"peers 2\"]},{\"id\":\"X1TEST\",\"title\":\"X1TEST\",\"subtitle\":\"BLE\",\"tags\":[\"seen 5s ago\",\"BLE\"]}]},{\"title\":\"Heard this hour (1)\",\"items\":[{\"id\":\"X1EARLIER\",\"title\":\"X1EARLIER\",\"subtitle\":\"LAN\",\"tags\":[\"seen 40m ago\",\"LAN\"]}]},{\"title\":\"On Reticulum (1)\",\"items\":[{\"id\":\"X1FAR\",\"title\":\"X1FAR\",\"subtitle\":\"RNS\",\"tags\":[\"seen 3m ago\",\"RNS\"]}]}]"; uint32_t n=strlen(s); if(n>cap) return -(int32_t)n; memcpy(o,s,n); return n; }
 int32_t hal_mesh_devices(char* o,uint32_t cap){ const char* s="[{\"title\":\"Nearby\",\"items\":[{\"id\":\"X1NEAR\",\"title\":\"X1NEAR\",\"subtitle\":\"phone\"}]},{\"title\":\"Multi-hop\",\"items\":[{\"id\":\"X1FAR\",\"title\":\"X1FAR\"}]}]"; uint32_t n=strlen(s); if(n>cap) return -(int32_t)n; memcpy(o,s,n); return n; }
 int32_t hal_people_directory(const char* q,uint32_t ql,char* o,uint32_t cap){ (void)q;(void)ql; const char* s="[{\"kind\":\"xprs\",\"callsign\":\"X1PEER\",\"nick\":\"Peer\",\"live\":true}]"; uint32_t n=strlen(s); if(n>cap) return -2; memcpy(o,s,n); return n; }

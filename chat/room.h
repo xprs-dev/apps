@@ -51,6 +51,25 @@ int room_renderable(const char *id);
 /* THE DOOR. 1 stored and shown, 0 filtered or already held, -1 no database. */
 int room_admit(const room_msg_t *m);
 
+/* Correcting and withdrawing what was said (XPRS.md 7.8, 10.4.1). Kinds: 0 an
+ * author's edit, 1 an author's withdrawal, 2 a moderator's edit, 3 a
+ * moderator's removal. 1 kept, 0 already held, -1 nothing could be done. The
+ * original is never overwritten: what a message shows is worked out from it and
+ * its versions each time it is drawn. */
+enum { VER_EDIT = 0, VER_WITHDRAW = 1, VER_MOD_EDIT = 2, VER_MOD_REMOVE = 3 };
+int room_version_add(const char *room, const char *root, const char *vid, int kind,
+                     const char *sender, unsigned long long ts, const char *body,
+                     int enc, const char *rid, const char *status, int srole);
+/* The sender of [mid] in [room], 1 if it is held and not withdrawn. */
+int room_message_sender(const char *room, const char *mid, char *sender, unsigned cap);
+/* Fold in the moderators' acts of closed group [room] from the core. */
+void room_moderation_sync(const char *room);
+/* Send the versions of [mid] for the Info dialog. */
+void room_history(const char *room, const char *mid);
+/* We are a moderator or the admin of the open group (the host offers
+ * moderation on other people's messages only then). */
+void room_set_mod(int mod, int say);
+
 /* Reveal a redacted message in the open room (9.2.1); transient, not stored. */
 void room_reveal(const char *mid, const char *text);
 

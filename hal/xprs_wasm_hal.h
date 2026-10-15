@@ -1794,6 +1794,59 @@ __attribute__((import_module("hal"), import_name("xprs_group_invite")))
 int32_t hal_xprs_group_invite(const char *group, uint32_t group_len,
                               const char *call, uint32_t call_len);
 
+/* Correct a message this station sent to `to` (XPRS.md 7.8.1). Exactly
+ * hal_xprs_message, plus `orig`, the section 5 identifier of the ORIGINAL it
+ * corrects (never an earlier edit): the core builds `edit:<orig>`, seals it as
+ * the original was (`want_private`), splits, signs and airs it as a packet of
+ * its own. Same return codes as hal_xprs_message; the id written to `id_out`
+ * is the EDIT's, the one a receipt names. A group or an open room is corrected
+ * by a wire through hal_xprs_send, the way it is posted to. */
+__attribute__((import_module("hal"), import_name("xprs_edit")))
+int32_t hal_xprs_edit(const char *to, uint32_t to_len,
+                      const char *orig, uint32_t orig_len,
+                      const char *text, uint32_t text_len,
+                      uint32_t want_private, char *id_out, uint32_t id_cap);
+
+/* Withdraw a message this station sent to `to` (XPRS.md 7.8.2): `r:<orig>
+ * remove:message`, a packet with no body that travels as the original did. A
+ * carrier holding the original discards its copy on hearing it. 0 = aired,
+ * -1 = not a valid request. A group or an open room is withdrawn from by a
+ * wire through hal_xprs_send. */
+__attribute__((import_module("hal"), import_name("xprs_withdraw")))
+int32_t hal_xprs_withdraw(const char *to, uint32_t to_len,
+                          const char *orig, uint32_t orig_len);
+
+/* The edits and removals of other people's publications that are in force in
+ * ONE closed group (XPRS.md 10.4.1), as a JSON array
+ * [{"id","kind":"edit"|"remove","target","signer","srole":"mod"|"admin",
+ * "ts":<epoch seconds>,"text"}], oldest first. The core has verified each
+ * signature, judged the signer's authority at the act's own ts and left out
+ * what the admin voided; whether an act binds the publication's author is for
+ * the holder of the original, with hal_xprs_group_role_at. Bytes written,
+ * negated size if `out` is small. */
+__attribute__((import_module("hal"), import_name("xprs_group_moderation")))
+int32_t hal_xprs_group_moderation(const char *group, uint32_t group_len,
+                                  char *out, uint32_t out_cap);
+
+/* What `call` was in closed group `group` at `ts` (epoch seconds): 0 none,
+ * 1 invited, 2 member, 3 moderator, 4 admin (XPRS.md 10.4). */
+__attribute__((import_module("hal"), import_name("xprs_group_role_at")))
+int32_t hal_xprs_group_role_at(const char *group, uint32_t group_len,
+                               const char *call, uint32_t call_len,
+                               uint32_t ts);
+
+/* A moderator's or the admin's act on somebody else's publication in closed
+ * group `group` (XPRS.md 10.4.1): kind 1 replaces the text of the publication
+ * whose section 5 identifier is `target` with `text`, kind 2 removes it (the
+ * text is ignored). The core signs as the group when this station is its
+ * admin, as itself when it is a moderator. 0 = aired, -1 = not a valid request
+ * or it did not fit one packet, -2 = not a moderator or the admin. */
+__attribute__((import_module("hal"), import_name("xprs_group_moderate")))
+int32_t hal_xprs_group_moderate(const char *group, uint32_t group_len,
+                                const char *target, uint32_t target_len,
+                                const char *text, uint32_t text_len,
+                                uint32_t kind);
+
 /* A folder inside closed group `parent` ("X5..." or "#X5..."), named `nick`
  * (may be empty): what XPRS.md 10.2 calls a subgroup, a closed group of its
  * own with its own key and roster, listed by the parent with role:sub. The

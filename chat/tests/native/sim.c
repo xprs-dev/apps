@@ -61,7 +61,13 @@ extern int32_t (*g_hk_folder)(const char*,uint32_t,const char*,uint32_t,char*,ui
 extern int32_t (*g_hk_picture)(const char*,uint32_t,const char*,uint32_t);
 extern int32_t (*g_hk_invite)(const char*,uint32_t,const char*,uint32_t);
 extern int32_t (*g_hk_accept)(const char*,uint32_t);
+extern int32_t (*g_hk_edit)(const char*,uint32_t,const char*,uint32_t,const char*,uint32_t,uint32_t,char*,uint32_t);
+extern int32_t (*g_hk_withdraw)(const char*,uint32_t,const char*,uint32_t);
+extern int32_t (*g_hk_moderation)(const char*,uint32_t,char*,uint32_t);
+extern int32_t (*g_hk_role_at)(const char*,uint32_t,const char*,uint32_t,uint32_t);
+extern int32_t (*g_hk_moderate)(const char*,uint32_t,const char*,uint32_t,const char*,uint32_t,uint32_t);
 
+void mock_set_time(uint64_t);
 /* the section-5 identifier, from the wapp's own xprs.c */
 void xprs_id(const char *wire, unsigned len, char out[7]);
 
@@ -86,6 +92,9 @@ typedef struct {
   char parent[8];                                /* the group listing it (10.2), or "" */
   char picture[96];                              /* file: token of its picture, or "" */
   struct { char call[8]; char role[8]; } mem[MAXMEM]; int mn;   /* role incl. "invited" */
+  /* a moderator's or the admin's edits and removals (XPRS.md 10.4.1) */
+  struct { char id[8]; char kind[8]; char target[8]; char signer[8]; char srole[8];
+           unsigned long long ts; char text[200]; } acts[16]; int an;
 } grp_t;
 
 static node_t N[MAXNODE]; static int NN;
@@ -259,10 +268,12 @@ static int32_t hk_send(const char* w, uint32_t l){
     if(g){                                           /* closed-group post (26) */
       if(!is_posting_member(g,from)) return -2;      /* the core's door, verbatim */
       char row[1400];
+      char ed[8]="", rm[16]="";
+      wfield(w,"edit:",ed,sizeof ed); wfield(w,"remove:",rm,sizeof rm);
       int o=snprintf(row,sizeof row,
         "{\"call\":\"%s\",\"title\":\"#%s\",\"id\":\"%s\",\"ts\":%llu,"
-        "\"sig\":\"verified\",\"bearer\":\"rns\",\"content\":\"",
-        from,d,id,(unsigned long long)hal_time_epoch());
+        "\"sig\":\"verified\",\"bearer\":\"rns\",\"edit\":\"%s\",\"remove\":\"%s\",\"content\":\"",
+        from,d,id,(unsigned long long)hal_time_epoch(),ed,rm[0]?r:"");
       (void)o; jesc_into(row,sizeof row,m); strncat(row,"\"}",sizeof row-strlen(row)-1);
       remember_author(id,from);
       enqueue_members(g,from,"xprs.message",row);
@@ -298,6 +309,42 @@ static int32_t hk_message(const char* to,uint32_t tl,const char* text,uint32_t l
   }
   remember_author(mid,from);
   return priv?1:2;                                   /* the form actually used */
+}
+
+/* A correction of a 1:1 (XPRS.md 7.8.1): the same delivery as a message, with
+ * the original it corrects named in `edit`. */
+static int32_t hk_edit(const char* to,uint32_t tl,const char* orig,uint32_t ol,const char* text,
+                       uint32_t l,uint32_t priv,char* id,uint32_t cap){
+  (void)tl;(void)l;
+  const char* from = cur>=0 ? N[cur].call : "X1TEST";
+  char mid[16]; snprintf(mid,sizeof mid,"s%05d",++g_seq);
+  snprintf(id,cap,"%s",mid);
+  int ni=node_by_call(to);
+  if(ni>=0){
+    char row[1400];
+    snprintf(row,sizeof row,
+      "{\"call\":\"%s\",\"id\":\"%s\",\"ts\":%llu,\"sig\":\"verified\",\"bearer\":\"rns\","
+      "\"sealed\":%s,\"edit\":\"%.*s\",\"content\":\"",
+      from,mid,(unsigned long long)hal_time_epoch(),priv?"true":"false",(int)ol,orig);
+    char body[1000]; body[0]=0; jesc_into(body,sizeof body,text);
+    strncat(row,body,sizeof row-strlen(row)-3); strncat(row,"\"}",sizeof row-strlen(row)-1);
+    enqueue(ni,"xprs.message",row);
+  }
+  return priv?1:2;
+}
+/* A withdrawal of a 1:1 (7.8.2): no body, the target in `remove`. */
+static int32_t hk_withdraw(const char* to,uint32_t tl,const char* orig,uint32_t ol){
+  (void)tl;
+  const char* from = cur>=0 ? N[cur].call : "X1TEST";
+  int ni=node_by_call(to);
+  if(ni>=0){
+    char row[600];
+    snprintf(row,sizeof row,
+      "{\"call\":\"%s\",\"id\":\"w%05d\",\"ts\":%llu,\"sig\":\"verified\",\"bearer\":\"rns\","
+      "\"remove\":\"%.*s\",\"content\":\"\"}",from,++g_seq,(unsigned long long)hal_time_epoch(),(int)ol,orig);
+    enqueue(ni,"xprs.message",row);
+  }
+  return 0;
 }
 
 /* a room by range -- an undirected broadcast to everyone its scope reaches
@@ -461,7 +508,7 @@ static int add_node(const char* call){
 }
 static grp_t* add_group(const char* call,const char* nick){
   grp_t* g=&G[GN++]; snprintf(g->call,sizeof g->call,"%s",call);
-  snprintf(g->nick,sizeof g->nick,"%s",nick); g->mn=0;
+  snprintf(g->nick,sizeof g->nick,"%s",nick); g->mn=0; g->an=0;
   g->parent[0]=0; g->picture[0]=0; return g;
 }
 static void group_put(grp_t* g,const char* call,const char* role){
@@ -477,6 +524,56 @@ static const char* grp_role(grp_t* g,const char* call){
 /* Tell every station named that its groups moved (core.groups). */
 static void groups_changed(grp_t* g){
   for(int i=0;i<g->mn;i++){ int ni=node_by_call(g->mem[i].call); if(ni>=0) enqueue(ni,"core.groups","{}"); }
+}
+
+/* ── the stand-in core's half of moderation (XPRS.md 10.4.1) ────────────
+ * An act is kept on the group, signed as the admin or as the moderator who made
+ * it, and every member is told the group moved, as the real core does. */
+static int hk_rank(const char* role){
+  if(!strcmp(role,"admin")) return 4;
+  if(!strcmp(role,"mod")) return 3;
+  if(!strcmp(role,"member")) return 2;
+  if(!strcmp(role,"invited")) return 1;
+  return 0;
+}
+static int32_t hk_role_at(const char* g,uint32_t gl,const char* c,uint32_t cl,uint32_t ts){
+  (void)ts;
+  char gc[8], cc[8]; snprintf(gc,sizeof gc,"%.*s",(int)gl,g); snprintf(cc,sizeof cc,"%.*s",(int)cl,c);
+  grp_t* gp=grp_by_call(gc); if(!gp) return 0;
+  return hk_rank(grp_role(gp,cc));
+}
+static int g_act_seq=0;
+static int32_t hk_moderate(const char* g,uint32_t gl,const char* tg,uint32_t tl,const char* t,uint32_t l,uint32_t kind){
+  char gc[8]; snprintf(gc,sizeof gc,"%.*s",(int)gl,g);
+  grp_t* gp=grp_by_call(gc); if(!gp) return -1;
+  const char* me = cur>=0 ? N[cur].call : "";
+  int rank=hk_rank(grp_role(gp,me));
+  if(rank<3) return -2;
+  if(gp->an>=16) return -1;
+  int i=gp->an++;
+  snprintf(gp->acts[i].id,sizeof gp->acts[i].id,"a%05d",++g_act_seq);
+  snprintf(gp->acts[i].kind,sizeof gp->acts[i].kind,"%s",kind==1?"edit":"remove");
+  snprintf(gp->acts[i].target,sizeof gp->acts[i].target,"%.*s",(int)tl,tg);
+  snprintf(gp->acts[i].signer,sizeof gp->acts[i].signer,"%s",rank==4?gp->call:me);
+  snprintf(gp->acts[i].srole,sizeof gp->acts[i].srole,"%s",rank==4?"admin":"mod");
+  gp->acts[i].ts=hal_time_epoch();
+  snprintf(gp->acts[i].text,sizeof gp->acts[i].text,"%.*s",(int)l,t);
+  for(int k=0;k<gp->mn;k++){ int ni=node_by_call(gp->mem[k].call); if(ni>=0 && ni!=cur) enqueue(ni,"core.groups","{}"); }
+  return 0;
+}
+static int32_t hk_moderation(const char* g,uint32_t gl,char* o,uint32_t cap){
+  char gc[8]; snprintf(gc,sizeof gc,"%.*s",(int)gl,g);
+  grp_t* gp=grp_by_call(gc);
+  char out[4000]; int n=0; out[n++]='[';
+  for(int i=0; gp && i<gp->an; i++){
+    char t[400]; t[0]=0; jesc_into(t,sizeof t,gp->acts[i].text);
+    n+=snprintf(out+n,sizeof out-n,"%s{\"id\":\"%s\",\"kind\":\"%s\",\"target\":\"%s\",\"signer\":\"%s\","
+      "\"srole\":\"%s\",\"ts\":%llu,\"text\":\"%s\"}",i?",":"",gp->acts[i].id,gp->acts[i].kind,
+      gp->acts[i].target,gp->acts[i].signer,gp->acts[i].srole,gp->acts[i].ts,t);
+  }
+  out[n++]=']'; out[n]=0;
+  if((uint32_t)n>cap) return -n;
+  memcpy(o,out,n); return n;
 }
 
 /* ── the stand-in core's half of folders (XPRS.md 10.2) and pictures ─────
@@ -589,6 +686,107 @@ static void reset_world(void){
   memset(g_site,0,sizeof g_site); memset(g_region,0,sizeof g_region);
   g_sim_correct[0]=g_sim_stored[0]=g_sim_text[0]=0;
   system("rm -rf /tmp/chat_sim");
+}
+
+
+/* XPRS.md 7.8 and 10.4.1: correcting and withdrawing what was said, across
+ * nodes. The original is never overwritten; a moderator's act is final for the
+ * author; a withdrawal leaves no words behind. */
+static void edit_cmd(int ni,const char* cmd,const char* room,const char* mid,const char* text){
+  char c[1400];
+  if(text) snprintf(c,sizeof c,"{\"command\":\"%s\",\"rooms_convo\":\"%s\",\"rooms_mid\":\"%s\",\"rooms_input\":\"%s\"}",cmd,room,mid,text);
+  else     snprintf(c,sizeof c,"{\"command\":\"%s\",\"rooms_convo\":\"%s\",\"rooms_mid\":\"%s\"}",cmd,room,mid);
+  ui(ni,c);
+}
+static void t_edits(void){
+  printf("1:1 — a correction reaches the peer and keeps the original, a withdrawal removes the words\n");
+  reset_world();
+  int A=add_node("X1ANNA"), B=add_node("X1BOBB");
+  mock_set_time(1700000000);
+  cap_clear();
+  send(A,"X1BOBB","meet at six");
+  char mid[24]; CHECK(cap_field("ui.convo.msg","mid",mid,sizeof mid));
+  pump(B); open_room(B,"X1ANNA");
+  CHECK(cap_contains("meet at six"));
+
+  mock_set_time(1700000100);
+  cap_clear();
+  edit_cmd(A,"rooms_edit","X1BOBB",mid,"meet at seven");
+  CHECK(cap_contains("ui.convo.edit") && cap_contains("meet at seven"));   /* A's own bubble */
+  cap_clear(); pump(B);
+  CHECK(cap_contains("ui.convo.edit") && cap_contains("meet at seven") && cap_contains("\"edited\":true"));
+  /* B reads the history back to the original. */
+  cap_clear();
+  edit_cmd(B,"rooms_history","X1ANNA",mid,0);
+  { const char* h=cap_find("ui.convo.history");
+    CHECK(h && strstr(h,"meet at six") && strstr(h,"meet at seven") && strstr(h,"meet at six")<strstr(h,"meet at seven")); }
+
+  mock_set_time(1700000200);
+  cap_clear();
+  edit_cmd(A,"rooms_unsend","X1BOBB",mid,0);
+  CHECK(cap_contains("\"deleted\":true"));
+  cap_clear(); pump(B);
+  /* The sim restarts a node each time it is driven, and a restart restates the
+   * rail as it was; what counts is the LAST row stated, after the withdrawal. */
+  { const char* last=0;
+    for(int i=cap_n()-1;i>=0 && !last;i--)
+      if(strstr(cap_nth(i),"ui.convo.upsert") && strstr(cap_nth(i),"\"id\":\"X1ANNA\"")) last=cap_nth(i);
+    CHECK(cap_contains("\"deleted\":true") && last && !strstr(last,"meet at")); }
+  cap_clear(); open_room(B,"X1ANNA");
+  CHECK(cap_contains("\"deleted\":true") && !cap_contains("meet at six") && !cap_contains("meet at seven"));
+}
+
+static void t_moderation(void){
+  printf("closed group — the admin edits and removes a member's post, and the author cannot undo it\n");
+  reset_world();
+  int A=add_node("X1ANNA"), B=add_node("X1BOBB"), C=add_node("X1CATE");
+  grp_t* g=add_group("X5SIMG","Sim group");
+  group_put(g,"X1ANNA","admin"); group_put(g,"X1BOBB","member"); group_put(g,"X1CATE","member");
+  mock_set_time(1700000000);
+  cap_clear();
+  send(B,"#X5SIMG","call me on 912 345 678");
+  char mid[24]; CHECK(cap_field("ui.convo.msg","mid",mid,sizeof mid));
+  pump(A); open_room(A,"#X5SIMG");
+  pump(C); open_room(C,"#X5SIMG");
+  CHECK(cap_contains("912 345 678"));
+
+  /* A member holds no authority: refused, and nothing changes. */
+  mock_set_time(1700000100);
+  open_room(C,"#X5SIMG");
+  cap_clear();
+  edit_cmd(C,"rooms_edit","#X5SIMG",mid,"mine now");
+  CHECK(cap_contains("cannot edit that message"));
+
+  /* The admin edits it. The author is a member, the admin outranks them. */
+  cap_clear();
+  edit_cmd(A,"rooms_edit","#X5SIMG",mid,"[number removed]");
+  CHECK(cap_contains("[number removed]") && cap_contains("\"edited\":true"));
+  cap_clear(); pump(C);                              /* the group moved ... */
+  open_room(C,"#X5SIMG");                            /* ... and C folds the act in as it opens */
+  CHECK(cap_contains("[number removed]") && cap_contains("\"by\":\"X5SIMG\""));
+  cap_clear();
+  edit_cmd(C,"rooms_history","#X5SIMG",mid,0);       /* an ordinary member is not shown what it replaced */
+  { const char* h=cap_find("ui.convo.history");
+    CHECK(h && strstr(h,"removed by a moderator") && !strstr(h,"912 345 678")); }
+
+  /* The author tries to put the number back: moderation is final for them. */
+  mock_set_time(1700000200);
+  open_room(B,"#X5SIMG");
+  edit_cmd(B,"rooms_edit","#X5SIMG",mid,"call me on 912 345 678 again");
+  cap_clear(); pump(C);
+  { char t[200]; (void)t; }
+  cap_clear(); open_room(C,"#X5SIMG");
+  CHECK(cap_contains("[number removed]") && !cap_contains("again"));
+
+  /* The admin removes it altogether: nobody keeps the words. */
+  mock_set_time(1700000300);
+  cap_clear();
+  edit_cmd(A,"rooms_unsend","#X5SIMG",mid,0);
+  CHECK(cap_contains("\"deleted\":true"));
+  cap_clear(); pump(C);
+  cap_clear(); open_room(C,"#X5SIMG");
+  CHECK(cap_contains("\"deleted\":true") && !cap_contains("912 345 678") && !cap_contains("number removed"));
+  (void)A;
 }
 
 /* A one-to-one: B sends to A, A reads, B sees the read tick. */
@@ -1029,6 +1227,8 @@ int main(void){
   g_hk_broadcast=hk_broadcast; g_hk_read=hk_read; g_hk_groups=hk_groups; g_hk_roster=hk_roster;
   g_hk_unlock=hk_unlock; g_hk_redact=hk_redact;
   g_hk_folder=hk_folder; g_hk_invite=hk_invite; g_hk_accept=hk_accept; g_hk_picture=hk_picture;
+  g_hk_edit=hk_edit; g_hk_withdraw=hk_withdraw; g_hk_moderation=hk_moderation;
+  g_hk_role_at=hk_role_at; g_hk_moderate=hk_moderate;
 
   t_direct();
   t_emoji();
@@ -1043,6 +1243,8 @@ int main(void){
   t_local();
   t_rooms_by_range();
   t_folders();
+  t_edits();
+  t_moderation();
 
   printf("\nsim: %d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;

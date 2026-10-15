@@ -681,6 +681,110 @@ static void send_message(const char *id, const char *text_in) {
         mid, "sent", 0, 0);
 }
 
+/* ── Correcting and withdrawing what was said (XPRS.md 7.8, 10.4.1) ───── */
+
+/* What we are in closed group [gid] now: 0 none .. 4 admin. */
+static int my_role_in(const char *gid) {
+  return (int)hal_xprs_group_role_at(gid + 1, s_len(gid + 1), g_call, s_len(g_call),
+                                     (uint32_t)hal_time_epoch());
+}
+
+/* The wire of our own correction or withdrawal of something said to a closed
+ * group or a room by range. The core signs it, like every post made this way.
+ * [edit] gives the new words; without it this is a withdrawal. */
+static int wire_for_room(const char *id, const char *orig, const char *text, char *wire, unsigned cap) {
+  char ts[24]; xprs_stamp(ts, sizeof(ts), hal_time_epoch());
+  s_cpy(wire, "t:message f:", cap); s_cat(wire, g_call, cap);
+  if (xgroup_is(id)) { s_cat(wire, " d:", cap); s_cat(wire, id + 1, cap); }
+  s_cat(wire, " ts:", cap); s_cat(wire, ts, cap);
+  if (xroom_is(id) && !s_eq(xroom_scope(id), "global")) {
+    s_cat(wire, " scope:", cap); s_cat(wire, xroom_scope(id), cap);
+  }
+  if (text) { s_cat(wire, " edit:", cap); s_cat(wire, orig, cap); s_cat(wire, " m:", cap); s_cat(wire, text, cap); }
+  else { s_cat(wire, " r:", cap); s_cat(wire, orig, cap); s_cat(wire, " remove:message", cap); }
+  return s_len(wire) <= 250;
+}
+
+static void edit_message(const char *id, const char *orig, const char *text_in) {
+  static char text[900];
+  s_cpy(text, text_in, sizeof(text));
+  if (!id[0] || !orig[0] || !text[0] || !room_renderable(id)) return;
+  char author[24] = "";
+  if (!room_message_sender(id, orig, author, sizeof(author))) {
+    notify("warning", "That message is gone");
+    return;
+  }
+  uint64_t now = hal_time_epoch();
+  if (!is_self_call(author)) {
+    /* Somebody else's: only a moderator or the admin of a closed group may
+     * (10.4.1), and only for somebody they outrank. */
+    if (!xgroup_is(id)) { notify("warning", "Only its author can edit this"); return; }
+    int mine = my_role_in(id);
+    int theirs = (int)hal_xprs_group_role_at(id + 1, s_len(id + 1), author, s_len(author), (uint32_t)now);
+    if (mine < 3 || mine <= theirs) { notify("warning", "You cannot edit that message"); return; }
+    int rc = hal_xprs_group_moderate(id + 1, s_len(id + 1), orig, s_len(orig), text, s_len(text), 1);
+    if (rc == -2) { notify("warning", "Only a moderator or the admin can do that"); return; }
+    if (rc != 0) { notify("warning", "Could not edit (too long?)"); return; }
+    room_moderation_sync(id);
+    return;
+  }
+  char eid[8] = "";
+  int enc = 0;
+  if (xprs_is_station(id) && !xgroup_is(id)) {
+    int32_t form = hal_xprs_edit(id, s_len(id), orig, s_len(orig), text, s_len(text),
+                                 room_is_private(id) ? 1u : 0u, eid, sizeof(eid));
+    if (form == -1) { notify("warning", "No key for this contact yet. Not edited"); return; }
+    if (form == -3) { notify("warning", "This contact cannot open a sealed message. Not edited"); return; }
+    if (form <= 0 || !eid[0]) { notify("warning", "Could not edit"); return; }
+    enc = form == 1;
+    room_tx_note(eid, id);
+  } else if (xgroup_is(id) || xroom_is(id)) {
+    char wire[400];
+    if (!wire_for_room(id, orig, text, wire, sizeof(wire))) { notify("warning", "Message too long"); return; }
+    int32_t rc = hal_xprs_send(wire, s_len(wire));
+    if (rc == -2) { notify("warning", "You can post here once you accept the invitation"); return; }
+    if (rc != 0) { notify("warning", "Could not edit"); return; }
+    xprs_id(wire, s_len(wire), eid);
+  } else {
+    notify("warning", "Editing is not available in this room");
+    return;
+  }
+  room_version_add(id, orig, eid, VER_EDIT, g_call, now, text, enc, eid[0] && xprs_is_station(id) ? eid : "",
+                   xprs_is_station(id) ? "sent" : "", 0);
+}
+
+static void unsend_message(const char *id, const char *orig) {
+  if (!id[0] || !orig[0] || !room_renderable(id)) return;
+  char author[24] = "";
+  if (!room_message_sender(id, orig, author, sizeof(author))) { notify("warning", "That message is gone"); return; }
+  uint64_t now = hal_time_epoch();
+  if (!is_self_call(author)) {
+    if (!xgroup_is(id)) { notify("warning", "Only its author can delete this"); return; }
+    int mine = my_role_in(id);
+    int theirs = (int)hal_xprs_group_role_at(id + 1, s_len(id + 1), author, s_len(author), (uint32_t)now);
+    if (mine < 3 || mine <= theirs) { notify("warning", "You cannot delete that message"); return; }
+    int rc = hal_xprs_group_moderate(id + 1, s_len(id + 1), orig, s_len(orig), "", 0, 2);
+    if (rc == -2) { notify("warning", "Only a moderator or the admin can do that"); return; }
+    if (rc != 0) { notify("warning", "Could not delete"); return; }
+    room_moderation_sync(id);
+    return;
+  }
+  if (xprs_is_station(id) && !xgroup_is(id)) {
+    if (hal_xprs_withdraw(id, s_len(id), orig, s_len(orig)) != 0) { notify("warning", "Could not delete"); return; }
+  } else if (xgroup_is(id) || xroom_is(id)) {
+    char wire[300];
+    if (!wire_for_room(id, orig, 0, wire, sizeof(wire))) { notify("warning", "Could not delete"); return; }
+    int32_t rc = hal_xprs_send(wire, s_len(wire));
+    if (rc == -2) { notify("warning", "You can post here once you accept the invitation"); return; }
+    if (rc != 0) { notify("warning", "Could not delete"); return; }
+  } else {
+    notify("warning", "Deleting is not available in this room");
+    return;
+  }
+  char vid[12] = "w"; s_cat(vid, orig, sizeof(vid));
+  room_version_add(id, orig, vid, VER_WITHDRAW, g_call, now, "", 0, "", "", 0);
+}
+
 /* ── What the core routes to us ───────────────────────────────────────── */
 
 /* A shared file's reference travels in the `file:` FIELD, outside the caption
@@ -757,6 +861,39 @@ static void on_core_packet(const char *topic, const char *row) {
     return;
   }
   if (!s_eq(topic, "xprs.message")) return;
+  /* 7.8: a withdrawal, or a correction, of something said to a room or a
+   * group. Only a verified one counts (9.7.1 gives the reason: a withdrawal
+   * that can be forged deletes other people's words), and whether its sender
+   * wrote the original is judged against the original when the message is
+   * drawn. */
+  {
+    char rm[12] = "", ed[12] = "", rr[12] = "";
+    jfield(row, "remove", rm, sizeof(rm));
+    jfield(row, "edit", ed, sizeof(ed));
+    jfield(row, "r", rr, sizeof(rr));
+    if (s_eq(rm, "message") || ed[0]) {
+      if (!s_eq(sigv, "verified") || is_blocked(from)) return;
+      char gid2[24] = "#"; s_cat(gid2, to, sizeof(gid2));
+      const char *room2 = 0;
+      if (!to[0]) {
+        char scope[16] = ""; jstr(row, "scope", scope, sizeof(scope));
+        room2 = jbool_def(row, "inRange", 1) ? xroom_of(scope) : 0;
+      } else if (room_known(gid2)) {
+        room2 = gid2;
+      }
+      if (!room2) return;
+      uint64_t ts2 = 0;
+      { char t[24]; if (jfield(row, "ts", t, sizeof(t))) ts2 = xprs_parse_stamp(t); }
+      if (s_eq(rm, "message")) {
+        if (rr[0]) room_version_add(room2, rr, id, VER_WITHDRAW, from, ts2, "", 0, "", "", 0);
+      } else {
+        static char em[900]; em[0] = 0;
+        if (!jfield(row, "m", em, sizeof(em)) || !em[0]) return;
+        room_version_add(room2, ed, id, VER_EDIT, from, ts2, em, 0, "", "", 0);
+      }
+      return;
+    }
+  }
   char m[900] = "";
   char fref[80] = "";
   jfield(row, "file", fref, sizeof(fref));
@@ -836,6 +973,21 @@ static void on_core_event(const char *topic, const char *row) {
    * reference can travel. */
   char fref[80] = "";
   jstr(row, "file", fref, sizeof(fref));
+  /* 7.8: a withdrawal of something the sender said to us has no body, so it
+   * is read before the content test sends it to the packet shape. */
+  {
+    char rm[12] = "";
+    jstr(row, "remove", rm, sizeof(rm));
+    if (rm[0] && call[0] && xprs_is_station(call) && !is_self_call(call)) {
+      if (!s_eq(sigv, "verified") || is_blocked(call)) return;
+      uint64_t wts = (uint64_t)jint(row, "ts");
+      if (wts > 100000000000ULL) wts /= 1000;
+      /* To a closed group it is the group's room, to us the conversation. */
+      const char *wroom = (title[0] == '#' && xgroup_is(title)) ? title : call;
+      room_version_add(wroom, rm, id, VER_WITHDRAW, call, wts, "", 0, "", "", 0);
+      return;
+    }
+  }
   /* Two shapes reach us on xprs.message. `content` marks the finished one:
    * a 1:1 or a closed-group post the core reassembled and unsealed. */
   if (!jstr(row, "content", content, sizeof(content)) ||
@@ -870,6 +1022,15 @@ static void on_core_event(const char *topic, const char *row) {
   s_cpy(body, content, sizeof(body));
   if (room[0] == '#') strip_reply6(body, parent);
   body_add_file(body, sizeof(body), fref);
+  /* 7.8.1: a correction of something the sender said, not a message. The core
+   * has opened it and says whether it verified (a sealed one always does: it
+   * only opens against the sender's key). */
+  { char ed[12] = ""; jstr(row, "edit", ed, sizeof(ed));
+    if (ed[0]) {
+      if (!s_eq(sigv, "verified") || is_blocked(call)) return;
+      room_version_add(room, ed, mid, VER_EDIT, call, ts, body, jbool(row, "sealed"), "", "", 0);
+      return;
+    } }
   /* The read half of 13.7 is recorded by room_admit (a live inbound 1:1 is
    * queued in the room's database) and aired when the user opens the thread
    * (room_open -> room_flush_reads). Nothing to do here. */
@@ -980,7 +1141,11 @@ static void drain_core_events(void) {
       xgroups_refresh();
       /* A roster that changed while its room is open updates the panel now. */
       const char *open = room_open_id();
-      if (xgroup_is(open)) push_group_members(open);
+      if (xgroup_is(open)) {
+        push_group_members(open);
+        room_set_mod(my_role_in(open) >= 3, 1);
+        room_moderation_sync(open);
+      }
       continue;
     }
     if (s_eq(topic, "xprs.unlock")) { on_xr_unlock(row); continue; }
@@ -1356,6 +1521,11 @@ static int cmd_field(const char *buf, const char *key, char *out, unsigned m) {
 static void do_open(const char *buf) {
   char convo[48] = ""; cmd_field(buf, "convo", convo, sizeof(convo));
   if (!convo[0]) return;
+  /* Whether the host offers moderation, stated by the row the open sends. */
+  room_set_mod(xgroup_is(convo) && my_role_in(convo) >= 3, 0);
+  /* And the acts of authority already in force on this group's posts, folded
+   * in BEFORE the tail is drawn, so the first paint is the corrected one. */
+  if (xgroup_is(convo)) room_moderation_sync(convo);
   room_open(convo);
   /* Opening the room is the one moment somebody is asking to SEE it. The
    * guard is a memory of the last refill, not a schedule. */
@@ -1365,6 +1535,8 @@ static void do_open(const char *buf) {
   }
   /* A closed group's member panel is the roster, pushed now so it is ready
    * the moment the header's group button is tapped. */
+  /* Moderation: whether the host offers it on other people's messages, and
+   * the acts already in force on this group's (10.4.1). */
   if (xgroup_is(convo)) {
     push_group_members(convo);
     int i = xgroup_find(convo + 1);
@@ -1438,6 +1610,25 @@ void module_handle_event(void) {
     cmd_field(buf, "convo", id, sizeof(id));
     cmd_field(buf, "input", text, sizeof(text));
     if (id[0] && text[0]) send_message(id, text);
+  }
+  else if (s_eq(cmd, "rooms_edit")) {
+    char id[48] = "", mid[24] = ""; static char text[900];
+    cmd_field(buf, "convo", id, sizeof(id));
+    cmd_field(buf, "mid", mid, sizeof(mid));
+    cmd_field(buf, "input", text, sizeof(text));
+    edit_message(id, mid, text);
+  }
+  else if (s_eq(cmd, "rooms_unsend")) {
+    char id[48] = "", mid[24] = "";
+    cmd_field(buf, "convo", id, sizeof(id));
+    cmd_field(buf, "mid", mid, sizeof(mid));
+    unsend_message(id, mid);
+  }
+  else if (s_eq(cmd, "rooms_history")) {
+    char id[48] = "", mid[24] = "";
+    cmd_field(buf, "convo", id, sizeof(id));
+    cmd_field(buf, "mid", mid, sizeof(mid));
+    if (id[0] && mid[0]) room_history(id, mid);
   }
   else if (s_eq(cmd, "rooms_open") || s_eq(cmd, "conversations_open")) do_open(buf);
   /* The host names a thread it just deep-linked into: "open X1WATT, and by the

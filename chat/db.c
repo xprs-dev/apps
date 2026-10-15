@@ -310,4 +310,30 @@ void db_init_room(int h) {
    * partly obfuscated, so it renders tappable with a tip. ALTER for older
    * tables; the duplicate-column error is ignored (db_exec never throws). */
   db_exec(h, "ALTER TABLE messages ADD COLUMN obf INTEGER NOT NULL DEFAULT 0", 0);
+  /* XPRS.md 7.8. A message is never overwritten: `body` stays the ORIGINAL
+   * for good, and every correction, withdrawal and moderator act on it is a
+   * row in `versions`, keyed on the packet that made it. What is shown is
+   * worked out from the two, so a vote of the order they arrived in cannot
+   * change the answer. `nver` is how many rows `versions` holds for it, so a
+   * row with none costs no lookup when a room is drawn. `orphan` marks a
+   * placeholder made from a correction whose original has not arrived (7.8.1),
+   * to be filled in when it does. `deleted` is a withdrawal that stood: the
+   * text is gone from here, as it is asked to be everywhere. */
+  db_exec(h, "ALTER TABLE messages ADD COLUMN nver INTEGER NOT NULL DEFAULT 0", 0);
+  db_exec(h, "ALTER TABLE messages ADD COLUMN orphan INTEGER NOT NULL DEFAULT 0", 0);
+  db_exec(h, "ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0", 0);
+  /* kind 0 an author's edit, 1 an author's withdrawal, 2 a moderator's edit,
+   * 3 a moderator's removal; `srole` is the moderator's rank (3 mod, 4 admin). */
+  db_exec(h, "CREATE TABLE IF NOT EXISTS versions("
+             "vid TEXT PRIMARY KEY,"
+             "root TEXT NOT NULL,"
+             "kind INTEGER NOT NULL,"
+             "sender TEXT NOT NULL,"
+             "ts INTEGER NOT NULL,"
+             "body TEXT NOT NULL DEFAULT '',"
+             "enc INTEGER NOT NULL DEFAULT 0,"
+             "srole INTEGER NOT NULL DEFAULT 0,"
+             "rid TEXT NOT NULL DEFAULT '',"
+             "status TEXT NOT NULL DEFAULT '')", 0);
+  db_exec(h, "CREATE INDEX IF NOT EXISTS versions_root ON versions(root)", 0);
 }

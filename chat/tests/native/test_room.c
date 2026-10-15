@@ -14,6 +14,9 @@
 void cap_clear(void); int cap_count(const char*); int cap_contains(const char*);
 const char* cap_find(const char*); const char* cap_nth(int); int cap_n(void);
 void inbox_set(const char*); void event_push(const char*, const char*);
+/* XPRS.md 7.8: what the mock HAL was asked, and what it should answer. */
+const char* mock_edit_ask(void); const char* mock_withdraw_ask(void); const char* mock_moderate_ask(void);
+void mock_edit_clear(void); void mock_set_roles(const char*); void mock_set_moderation(const char*);
 int log_count(const char*); void log_clear(void);
 void mock_set_time(uint64_t); void mock_kv_set(const char*, const char*); int mock_kv_exists(const char*);
 const char* mock_last_wire(void); void mock_set_history(const char*); void mock_query_cap(uint32_t);
@@ -386,7 +389,7 @@ TEST(a_one_to_one_is_sealed_by_default_and_every_bubble_shows_its_lock) {
   fresh();
   /* No history, no choice made: sealed. A group is never sealed (6.3). */
   CHECK(room_is_private("X1PEER"));
-  CHECK(!room_is_private("#X5GRP"));
+  CHECK(!room_is_private("#X5GRPA"));
   cap_clear();
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"X1PEER\"}");
   module_handle_event();
@@ -419,6 +422,387 @@ TEST(a_one_to_one_is_sealed_by_default_and_every_bubble_shows_its_lock) {
   CHECK(room_is_private("X1PEER"));
 }
 
+
+/* ── XPRS.md 7.8 and 10.4.1: correcting and withdrawing what was said ──── */
+
+/* A 1:1 as the core hands it over, already opened: `edit` names the original a
+ * correction replaces, `remove` the one a withdrawal retracts. */
+static const char *find_msg(const char *mid) {
+  char needle[40]; snprintf(needle, sizeof(needle), "\"mid\":\"%s\"", mid);
+  for (int i = cap_n() - 1; i >= 0; i--) {
+    const char *m = cap_nth(i);
+    if (strstr(m, "ui.convo.msg") && strstr(m, needle)) return m;
+  }
+  return 0;
+}
+static void dm(const char *call, const char *id, const char *content, int sealed,
+               const char *edit, const char *remove, const char *sig, long ts) {
+  char row[1400];
+  snprintf(row, sizeof(row),
+    "{\"id\":\"%s\",\"type\":\"message\",\"from\":\"\",\"call\":\"%s\",\"sig\":\"%s\",\"to\":\"\","
+    "\"content\":\"%s\",\"title\":\"\",\"ts\":%ld,\"forUs\":true,\"bearer\":\"lan\",\"sealed\":%s,"
+    "\"edit\":\"%s\",\"remove\":\"%s\"}",
+    id, call, sig, content, ts, sealed ? "true" : "false", edit, remove);
+  event_push("xprs.message", row);
+  module_handle_event();
+}
+
+/* A post to a room by range, or to a group, as a packet, with the 7.8 fields. */
+static void packet(const char *from, const char *id, const char *to, const char *text,
+                   const char *edit, const char *remove, const char *target,
+                   const char *sig, const char *ts) {
+  char row[1500], extra[160] = "";
+  if (edit[0]) snprintf(extra, sizeof(extra), ",[\"edit\",\"%s\"]", edit);
+  else if (remove[0]) snprintf(extra, sizeof(extra), ",[\"r\",\"%s\"],[\"remove\",\"%s\"]", target, remove);
+  snprintf(row, sizeof(row),
+    "{\"id\":\"%s\",\"type\":\"message\",\"from\":\"%s\",\"to\":\"%s\",\"fields\":[[\"t\",\"message\"],[\"f\",\"%s\"],[\"ts\",\"%s\"]%s%s%s%s],"
+    "\"forUs\":false,\"sealed\":false,\"scope\":\"local\",\"bearer\":\"ble\",\"sig\":\"%s\"}",
+    id, from, to, from, ts, extra, text[0] ? ",[\"m\",\"" : "", text, text[0] ? "\"]" : "", sig);
+  event_push("xprs.message", row);
+  module_handle_event();
+}
+
+TEST(a_correction_replaces_what_is_shown_and_keeps_the_original) {
+  fresh();
+  dm("X1PEER", "aaa111", "meet at six", 0, "", "", "verified", 1700000000);
+  cap_clear();
+  dm("X1PEER", "bbb222", "meet at seven", 1, "aaa111", "", "verified", 1700000100);
+  { const char *m = cap_find("ui.convo.edit");
+    CHECK(m && strstr(m, "\"mid\":\"aaa111\"") && strstr(m, "\"text\":\"meet at seven\""));
+    CHECK(m && strstr(m, "\"edited\":true") && strstr(m, "\"enc\":true")); }
+  CHECK(cap_count("ui.convo.msg") == 0);   /* a correction is not a new bubble */
+  /* A second one names the SAME original; the newest stands. */
+  dm("X1PEER", "ccc333", "meet at seven, bring the keys", 1, "aaa111", "", "verified", 1700000200);
+  { const char *m = 0;
+    for (int i = cap_n() - 1; i >= 0 && !m; i--) if (strstr(cap_nth(i), "ui.convo.edit")) m = cap_nth(i);
+    CHECK(m && strstr(m, "bring the keys") && strstr(m, "\"edited\":true")); }
+  /* Opening the room draws it as it stands now. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"X1PEER\"}");
+  module_handle_event();
+  { const char *m = find_msg("aaa111");
+    CHECK(m && strstr(m, "bring the keys") && strstr(m, "\"edited\":true")); }
+  /* The history is the original, then each version, oldest first. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_history\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"aaa111\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.convo.history");
+    CHECK(m && strstr(m, "meet at six") && strstr(m, "meet at seven\"") && strstr(m, "bring the keys"));
+    CHECK(m && strstr(m, "meet at six") < strstr(m, "meet at seven\"")
+              && strstr(m, "meet at seven\"") < strstr(m, "bring the keys")); }
+}
+
+TEST(only_the_author_can_correct_and_only_if_verified_and_later) {
+  fresh();
+  packet("X1PEER", "aaa111", "", "the plan is at six", "", "", "", "verified", "2026-09-04_10:00:00");
+  cap_clear();
+  /* Somebody else in the same room cannot put words in the author's mouth. */
+  packet("X1EVIL", "eee555", "", "the plan is at midnight", "aaa111", "", "", "verified", "2026-09-04_10:05:00");
+  CHECK(!cap_contains("at midnight\"") || !cap_contains("\"edited\":true"));
+  /* Nor can an unverified packet. */
+  packet("X1PEER", "fff666", "", "forged edit", "aaa111", "", "", "unverified", "2026-09-04_10:06:00");
+  CHECK(!cap_contains("forged edit"));
+  /* An edit dated before the original is no edit. */
+  packet("X1PEER", "ggg777", "", "from the past", "aaa111", "", "", "verified", "2026-09-04_09:00:00");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  { const char *m = find_msg("aaa111");
+    CHECK(m && strstr(m, "the plan is at six") && !strstr(m, "\"edited\":true")); }
+}
+
+TEST(a_correction_that_arrives_first_waits_for_its_original) {
+  fresh();
+  cap_clear();
+  dm("X1PEER", "bbb222", "meet at seven", 0, "aaa111", "", "verified", 1700000100);
+  CHECK(cap_contains("meet at seven") && cap_contains("\"edited\":true"));   /* shown as what it is */
+  cap_clear();
+  dm("X1PEER", "aaa111", "meet at six", 0, "", "", "verified", 1700000000);
+  { const char *m = cap_find("ui.convo.edit");
+    CHECK(m && strstr(m, "\"mid\":\"aaa111\"") && strstr(m, "meet at seven")); }
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_history\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"aaa111\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.convo.history");
+    CHECK(m && strstr(m, "meet at six") && strstr(m, "meet at seven")); }
+}
+
+TEST(a_withdrawal_destroys_the_text_of_every_version) {
+  fresh();
+  dm("X1PEER", "aaa111", "a secret", 1, "", "", "verified", 1700000000);
+  dm("X1PEER", "bbb222", "a different secret", 1, "aaa111", "", "verified", 1700000100);
+  cap_clear();
+  dm("X1PEER", "ddd444", "", 0, "", "aaa111", "verified", 1700000200);
+  { const char *m = cap_find("ui.convo.edit");
+    CHECK(m && strstr(m, "\"deleted\":true") && strstr(m, "\"text\":\"\"")); }
+  /* Gone from the store too: opening draws a place that says so, no words. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"X1PEER\"}");
+  module_handle_event();
+  { const char *m = find_msg("aaa111");
+    CHECK(m && strstr(m, "\"deleted\":true") && !strstr(m, "a secret") && !strstr(m, "different secret")); }
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_history\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"aaa111\"}");
+  module_handle_event();
+  CHECK(!cap_contains("a secret"));
+  /* And it cannot be withdrawn: a later correction brings nothing back. */
+  cap_clear();
+  dm("X1PEER", "eee555", "back again", 0, "aaa111", "", "verified", 1700000300);
+  CHECK(!cap_contains("back again\"") || cap_contains("\"deleted\":true"));
+}
+
+TEST(a_withdrawal_must_be_verified_and_from_the_author) {
+  fresh();
+  packet("X1PEER", "aaa111", "", "stays", "", "", "", "verified", "2026-09-04_10:00:00");
+  packet("X1EVIL", "ddd444", "", "", "", "message", "aaa111", "verified", "2026-09-04_10:05:00");
+  packet("X1PEER", "ddd555", "", "", "", "message", "aaa111", "unverified", "2026-09-04_10:06:00");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  { const char *m = find_msg("aaa111");
+    CHECK(m && strstr(m, "stays") && !strstr(m, "\"deleted\":true")); }
+  packet("X1PEER", "ddd666", "", "", "", "message", "aaa111", "verified", "2026-09-04_10:07:00");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  { const char *m = find_msg("aaa111");
+    CHECK(m && strstr(m, "\"deleted\":true") && !strstr(m, "stays")); }
+}
+
+TEST(we_correct_and_withdraw_our_own_messages) {
+  fresh();
+  mock_edit_clear();
+  mock_set_time(1700000000);
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"X1PEER\",\"rooms_input\":\"hello\"}");
+  module_handle_event();
+  mock_set_time(1700000060);   /* an edit is later than what it corrects */
+  /* The mock names the message m00001's successor; read its id from the bubble. */
+  const char *b = cap_find("ui.convo.msg");
+  CHECK(b != 0);
+  char mid[16] = ""; { const char *k = b ? strstr(b, "\"mid\":\"") : 0; if (k) { k += 7; int i = 0; while (*k && *k != '"' && i < 15) mid[i++] = *k++; mid[i] = 0; } }
+  CHECK(mid[0]);
+  cap_clear();
+  char cmd[300];
+  snprintf(cmd, sizeof(cmd), "{\"command\":\"rooms_edit\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"%s\",\"rooms_input\":\"hello there\"}", mid);
+  inbox_set(cmd); module_handle_event();
+  { char want[80]; snprintf(want, sizeof(want), "X1PEER|%s|hello there|1", mid);
+    CHECK(strcmp(mock_edit_ask(), want) == 0); }   /* sealed, naming the ORIGINAL */
+  { const char *m = cap_find("ui.convo.edit");
+    CHECK(m && strstr(m, "hello there") && strstr(m, "\"edited\":true") && strstr(m, "\"enc\":true")); }
+  cap_clear();
+  snprintf(cmd, sizeof(cmd), "{\"command\":\"rooms_unsend\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"%s\"}", mid);
+  inbox_set(cmd); module_handle_event();
+  { char want[80]; snprintf(want, sizeof(want), "X1PEER|%s", mid);
+    CHECK(strcmp(mock_withdraw_ask(), want) == 0); }
+  CHECK(cap_contains("\"deleted\":true"));
+}
+
+TEST(somebody_elses_message_in_a_1to1_is_not_ours_to_correct) {
+  fresh();
+  mock_edit_clear();
+  dm("X1PEER", "aaa111", "theirs", 0, "", "", "verified", 1700000000);
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_edit\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"aaa111\",\"rooms_input\":\"mine now\"}");
+  module_handle_event();
+  CHECK(cap_contains("Only its author") && mock_edit_ask()[0] == 0);
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_unsend\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"aaa111\"}");
+  module_handle_event();
+  CHECK(cap_contains("Only its author") && mock_withdraw_ask()[0] == 0);
+}
+
+TEST(a_group_post_is_corrected_with_a_wire_the_core_signs) {
+  fresh();
+  mock_set_groups("[{\"call\":\"X5GRPA\",\"nick\":\"grp\",\"role\":\"member\"}]");
+  event_push("core.groups", "{}"); module_handle_event();
+  mock_clear_wire();
+  mock_set_time(1700000000);
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#X5GRPA\",\"rooms_input\":\"original words\"}");
+  module_handle_event();
+  mock_set_time(1700000060);
+  const char *b = cap_find("ui.convo.msg");
+  char mid[16] = ""; { const char *k = b ? strstr(b, "\"mid\":\"") : 0; if (k) { k += 7; int i = 0; while (*k && *k != '"' && i < 15) mid[i++] = *k++; mid[i] = 0; } }
+  CHECK(mid[0]);
+  cap_clear(); mock_clear_wire();
+  char cmd[300];
+  snprintf(cmd, sizeof(cmd), "{\"command\":\"rooms_edit\",\"rooms_convo\":\"#X5GRPA\",\"rooms_mid\":\"%s\",\"rooms_input\":\"better words\"}", mid);
+  inbox_set(cmd); module_handle_event();
+  { const char *w = mock_last_wire();
+    CHECK(w && strstr(w, "d:X5GRPA") && strstr(w, "edit:") && strstr(w, "m:better words"));
+    char want[40]; snprintf(want, sizeof(want), "edit:%s", mid);
+    CHECK(w && strstr(w, want)); }
+  CHECK(cap_contains("better words") && cap_contains("\"edited\":true"));
+  cap_clear(); mock_clear_wire();
+  snprintf(cmd, sizeof(cmd), "{\"command\":\"rooms_unsend\",\"rooms_convo\":\"#X5GRPA\",\"rooms_mid\":\"%s\"}", mid);
+  inbox_set(cmd); module_handle_event();
+  { const char *w = mock_last_wire();
+    CHECK(w && strstr(w, "remove:message") && strstr(w, "r:") && !strstr(w, "m:")); }
+  CHECK(cap_contains("\"deleted\":true"));
+  mock_set_groups("[]");
+}
+
+/* 10.4.1: a moderator or the admin acting on somebody else's post. */
+static void moderated_group(int my_role) {
+  fresh();
+  mock_set_groups("[{\"call\":\"X5GRPA\",\"nick\":\"grp\",\"role\":\"member\"}]");
+  event_push("core.groups", "{}"); module_handle_event();
+  char roles[120];
+  snprintf(roles, sizeof(roles), "X1TEST=%d,X1PZ4Q=2,X32DVA=3,X1MODB=3,X5GRPA=4", my_role);
+  mock_set_roles(roles);
+  mock_set_moderation("[]");
+  mock_edit_clear();
+  packet("X1PZ4Q", "ppp111", "X5GRPA", "call me on 912 345 678", "", "", "", "verified", "2026-09-04_10:00:00");
+  packet("X1MODB", "ppp222", "X5GRPA", "a moderator speaking", "", "", "", "verified", "2026-09-04_10:01:00");
+}
+
+TEST(a_moderators_edit_replaces_the_text_and_says_who) {
+  moderated_group(2);   /* we are an ordinary member */
+  mock_set_moderation("[{\"id\":\"mod001\",\"kind\":\"edit\",\"target\":\"ppp111\",\"signer\":\"X32DVA\",\"srole\":\"mod\",\"ts\":1788516000,\"text\":\"[number removed by a moderator]\"}]");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
+  module_handle_event();
+  { /* the post as it stands, edited by the moderator */
+    int found = 0;
+    for (int i = 0; i < cap_n(); i++) { const char *m = cap_nth(i);
+      if (strstr(m, "ui.convo.msg") && strstr(m, "\"mid\":\"ppp111\"")) {
+        found = 1;
+        CHECK(strstr(m, "number removed") && strstr(m, "\"edited\":true") && strstr(m, "\"by\":\"X32DVA\"")); } }
+    CHECK(found); }
+  /* An ordinary member is told earlier versions were removed, not shown them. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_history\",\"rooms_convo\":\"#X5GRPA\",\"rooms_mid\":\"ppp111\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.convo.history");
+    CHECK(m && strstr(m, "removed by a moderator") && !strstr(m, "912 345 678")); }
+  /* A moderator reads the whole record. */
+  moderated_group(3);
+  mock_set_moderation("[{\"id\":\"mod001\",\"kind\":\"edit\",\"target\":\"ppp111\",\"signer\":\"X32DVA\",\"srole\":\"mod\",\"ts\":1788516000,\"text\":\"[number removed by a moderator]\"}]");
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
+  module_handle_event();
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_history\",\"rooms_convo\":\"#X5GRPA\",\"rooms_mid\":\"ppp111\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.convo.history");
+    CHECK(m && strstr(m, "912 345 678") && strstr(m, "number removed")); }
+  mock_set_groups("[]");
+}
+
+TEST(moderation_is_final_for_the_author_and_ranked) {
+  moderated_group(2);
+  /* The author tries to put the number back after the moderator edited it. */
+  mock_set_moderation("[{\"id\":\"mod001\",\"kind\":\"edit\",\"target\":\"ppp111\",\"signer\":\"X32DVA\",\"srole\":\"mod\",\"ts\":1788516000,\"text\":\"[removed]\"}]");
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
+  module_handle_event();
+  packet("X1PZ4Q", "ppp333", "X5GRPA", "call me on 912 345 678 again", "ppp111", "", "", "verified", "2026-09-04_11:00:00");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
+  module_handle_event();
+  { int ok = 0;
+    for (int i = 0; i < cap_n(); i++) { const char *m = cap_nth(i);
+      if (strstr(m, "ui.convo.msg") && strstr(m, "\"mid\":\"ppp111\"")) ok = strstr(m, "[removed]") && !strstr(m, "again"); }
+    CHECK(ok); }
+  /* A moderator cannot act on another moderator's post. */
+  mock_set_moderation("[{\"id\":\"mod002\",\"kind\":\"remove\",\"target\":\"ppp222\",\"signer\":\"X32DVA\",\"srole\":\"mod\",\"ts\":1788516100,\"text\":\"\"}]");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
+  module_handle_event();
+  { int ok = 0;
+    for (int i = 0; i < cap_n(); i++) { const char *m = cap_nth(i);
+      if (strstr(m, "ui.convo.msg") && strstr(m, "\"mid\":\"ppp222\"")) ok = strstr(m, "a moderator speaking") && !strstr(m, "\"deleted\":true"); }
+    CHECK(ok); }
+  /* The admin can. */
+  mock_set_moderation("[{\"id\":\"mod003\",\"kind\":\"remove\",\"target\":\"ppp222\",\"signer\":\"X5GRPA\",\"srole\":\"admin\",\"ts\":1788516200,\"text\":\"\"}]");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
+  module_handle_event();
+  { int ok = 0;
+    for (int i = 0; i < cap_n(); i++) { const char *m = cap_nth(i);
+      if (strstr(m, "ui.convo.msg") && strstr(m, "\"mid\":\"ppp222\"")) ok = strstr(m, "\"deleted\":true") && !strstr(m, "a moderator speaking"); }
+    CHECK(ok); }
+  mock_set_groups("[]");
+}
+
+TEST(a_voided_moderator_edit_brings_the_original_back_but_a_removal_stays_gone) {
+  moderated_group(2);
+  mock_set_moderation("[{\"id\":\"mod001\",\"kind\":\"edit\",\"target\":\"ppp111\",\"signer\":\"X32DVA\",\"srole\":\"mod\",\"ts\":1788516000,\"text\":\"[removed]\"},"
+                      "{\"id\":\"mod002\",\"kind\":\"remove\",\"target\":\"ppp222\",\"signer\":\"X5GRPA\",\"srole\":\"admin\",\"ts\":1788516100,\"text\":\"\"}]");
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
+  module_handle_event();
+  /* The admin voids the moderator: the core stops reporting the edit. */
+  mock_set_moderation("[{\"id\":\"mod002\",\"kind\":\"remove\",\"target\":\"ppp222\",\"signer\":\"X5GRPA\",\"srole\":\"admin\",\"ts\":1788516100,\"text\":\"\"}]");
+  cap_clear();
+  event_push("core.groups", "{}");
+  module_handle_event();
+  { int back = 0;
+    for (int i = 0; i < cap_n(); i++) { const char *m = cap_nth(i);
+      if (strstr(m, "ui.convo.edit") && strstr(m, "\"mid\":\"ppp111\"")) back = strstr(m, "912 345 678") && !strstr(m, "\"edited\":true"); }
+    CHECK(back); }
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"deleted\":true"));
+  mock_set_groups("[]");
+}
+
+TEST(a_moderator_acts_through_the_core_and_a_member_cannot) {
+  moderated_group(3);   /* we are a moderator */
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"mod\":true"));
+  cap_clear(); mock_edit_clear();
+  inbox_set("{\"command\":\"rooms_edit\",\"rooms_convo\":\"#X5GRPA\",\"rooms_mid\":\"ppp111\",\"rooms_input\":\"[removed]\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_moderate_ask(), "X5GRPA|ppp111|[removed]|1") == 0);
+  cap_clear(); mock_edit_clear();
+  inbox_set("{\"command\":\"rooms_unsend\",\"rooms_convo\":\"#X5GRPA\",\"rooms_mid\":\"ppp111\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_moderate_ask(), "X5GRPA|ppp111||2") == 0);
+  /* Not on another moderator's post: the same rank. */
+  cap_clear(); mock_edit_clear();
+  inbox_set("{\"command\":\"rooms_edit\",\"rooms_convo\":\"#X5GRPA\",\"rooms_mid\":\"ppp222\",\"rooms_input\":\"x\"}");
+  module_handle_event();
+  CHECK(cap_contains("cannot edit that message") && mock_moderate_ask()[0] == 0);
+  /* A member is offered nothing and refused. */
+  moderated_group(2);
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
+  module_handle_event();
+  CHECK(!cap_contains("\"mod\":true"));
+  cap_clear(); mock_edit_clear();
+  inbox_set("{\"command\":\"rooms_edit\",\"rooms_convo\":\"#X5GRPA\",\"rooms_mid\":\"ppp111\",\"rooms_input\":\"x\"}");
+  module_handle_event();
+  CHECK(cap_contains("cannot edit that message") && mock_moderate_ask()[0] == 0);
+  mock_set_groups("[]");
+}
+
+
+TEST(a_withdrawn_message_leaves_its_words_nowhere_not_even_in_the_list_preview) {
+  fresh();
+  dm("X1PEER", "aaa111", "my bank pin is 4321", 1, "", "", "verified", 1700000000);
+  /* The list preview quotes the last message. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"X1PEER\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"subtitle\":\"X1PEER: my bank pin is 4321\""));
+  /* A correction updates the preview to the words that stand. */
+  cap_clear();
+  dm("X1PEER", "bbb222", "my pin is a secret", 1, "aaa111", "", "verified", 1700000100);
+  { const char *last = 0;
+    for (int i = cap_n() - 1; i >= 0 && !last; i--)
+      if (strstr(cap_nth(i), "ui.convo.upsert") && strstr(cap_nth(i), "\"id\":\"X1PEER\"")) last = cap_nth(i);
+    CHECK(last && strstr(last, "my pin is a secret") && !strstr(last, "4321")); }
+  /* A withdrawal takes the preview with it, whichever wording it held. */
+  cap_clear();
+  dm("X1PEER", "ccc333", "", 0, "", "aaa111", "verified", 1700000200);
+  { const char *last = 0;
+    for (int i = cap_n() - 1; i >= 0 && !last; i--)
+      if (strstr(cap_nth(i), "ui.convo.upsert") && strstr(cap_nth(i), "\"id\":\"X1PEER\"")) last = cap_nth(i);
+    CHECK(last && !strstr(last, "pin") && !strstr(last, "4321") && strstr(last, "\"subtitle\":\"\"")); }
+  /* And not from the store either: nothing but the fact it was withdrawn. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_history\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"aaa111\"}");
+  module_handle_event();
+  CHECK(!cap_contains("4321") && !cap_contains("secret"));
+}
 /* XPRS.md 3.2 and 9.11.5: a Meshtastic node is a room like any other, is
  * never sealed to, and the person is told once that the words cross a public
  * channel. The verdicts are the core's (the mock mirrors them). */
@@ -1344,6 +1728,19 @@ int main(void) {
   run_a_one_to_one_arrives_by_callsign_and_creates_its_room();
   run_a_sent_one_to_one_carries_its_tick_and_the_tick_finds_it_after_restart();
   run_a_one_to_one_is_sealed_by_default_and_every_bubble_shows_its_lock();
+  run_a_correction_replaces_what_is_shown_and_keeps_the_original();
+  run_only_the_author_can_correct_and_only_if_verified_and_later();
+  run_a_correction_that_arrives_first_waits_for_its_original();
+  run_a_withdrawal_destroys_the_text_of_every_version();
+  run_a_withdrawal_must_be_verified_and_from_the_author();
+  run_we_correct_and_withdraw_our_own_messages();
+  run_somebody_elses_message_in_a_1to1_is_not_ours_to_correct();
+  run_a_group_post_is_corrected_with_a_wire_the_core_signs();
+  run_a_moderators_edit_replaces_the_text_and_says_who();
+  run_moderation_is_final_for_the_author_and_ranked();
+  run_a_voided_moderator_edit_brings_the_original_back_but_a_removal_stays_gone();
+  run_a_moderator_acts_through_the_core_and_a_member_cannot();
+  run_a_withdrawn_message_leaves_its_words_nowhere_not_even_in_the_list_preview();
   run_a_meshtastic_contact_is_a_room_never_sealed_and_says_so_once();
   run_a_read_receipt_is_asked_for_on_open_and_survives_the_other_engine();
   run_a_1to1_like_is_a_directed_reaction_65();
