@@ -1,0 +1,28 @@
+{
+  "id":              "tools.xprs.alerts",
+  "version":         "0.1.0",
+  "kind":            "app",
+  "title":           "Alerts",
+  "description":     "Warnings and notices about the place you are in.",
+  "summary":         "See the warnings and notices posted where you are, such as a flooded car park, a closed gate or a storm on its way, and post your own. An alert goes out over Bluetooth and the local network only. It lasts from a day to a year, and you can withdraw it at any time. A station you own keeps your alerts and gives each one to everybody who arrives, once, so people who come later still hear about it. You are told about a new alert even when the app is closed.",
+  "icon":            "media/icons/alerts.svg",
+  "color":           "#C62828",
+  "tags":            ["xprs", "alert", "warning", "notice", "safety", "local"],
+  "entry_ui":        "screens/home.ui.json",
+  "tick_interval_ms": 0,
+  "permissions":     ["archive.read"],
+  "platforms":       ["android", "linux", "windows", "macos"],
+  "hardware":        ["N/A", "intel", "arm"],
+  "provides": {
+    "functions":       [],
+    "events":          [],
+    "variables":       [],
+    "functionalities": []
+  },
+  "requires": {
+    "hal":       ["log", "msg", "kv", "xprs", "event", "archive", "sensor"],
+    "events":    [],
+    "libraries": [],
+    "variables": []
+  }
+}
