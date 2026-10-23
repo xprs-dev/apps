@@ -1710,7 +1710,32 @@ TEST(opening_a_thread_acks_read_for_older_unacked_messages_too) {
   CHECK(mock_reads_count() == 0);
 }
 
+/* A bridged Meshtastic message carries its network (for the tag beside the
+ * bearer) and its §13 relay path (who carried it here, for the info dialog). */
+TEST(a_bridged_meshtastic_message_carries_its_network_and_relay_path) {
+  fresh();
+  char row[1200];
+  snprintf(row, sizeof(row),
+    "{\"id\":\"mt0001\",\"type\":\"message\",\"from\":\"MT66B7F06F\",\"to\":\"\","
+    "\"fields\":[[\"t\",\"message\"],[\"f\",\"MT66B7F06F\"],[\"ts\",\"2026-09-04_10:00:00\"],[\"m\",\"ola malta\"]],"
+    "\"forUs\":false,\"sealed\":false,\"scope\":\"global\","
+    "\"bearer\":\"ble\",\"via\":\"X3SEP2\",\"sig\":\"\"}");
+  event_push("xprs.message", row);
+  module_handle_event();
+  const char *m = cap_find("ui.convo.msg");
+  CHECK(m && strstr(m, "\"from\":\"MT66B7F06F\""));
+  CHECK(m && strstr(m, "\"via\":\"BLE\""));         /* the bearer, labelled */
+  CHECK(m && strstr(m, "\"net\":\"Meshtastic\""));  /* the tag beside it */
+  CHECK(m && strstr(m, "\"path\":\"X3SEP2\""));      /* who carried it here */
+  /* One of ours carries no net tag and (heard direct) no path. */
+  cap_clear();
+  local_packet("X1PEER", "ours01", "hi", "global");
+  const char *o = cap_find("ui.convo.msg");
+  CHECK(o && !strstr(o, "\"net\":"));
+}
+
 int main(void) {
+  run_a_bridged_meshtastic_message_carries_its_network_and_relay_path();
   run_the_rooms_by_range_exist_by_default_and_nothing_else();
   run_a_local_message_is_stored_and_shown_once();
   run_undirected_traffic_goes_to_the_room_its_scope_names();

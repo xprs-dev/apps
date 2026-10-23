@@ -316,10 +316,12 @@ static void xgroups_refresh(void) {
 static int admit(const char *room, const char *mid, const char *dir,
                  const char *sender, const char *body, const char *parent,
                  const char *via, const char *auth, int enc, uint64_t ts,
-                 const char *rid, const char *status, int replay, int obf) {
+                 const char *rid, const char *status, int replay, int obf,
+                 const char *path) {
   char title[48]; room_title(room, title, sizeof(title));
   room_msg_t m = { room, title, mid, dir, sender, body, parent, via, auth,
-                   rid, status, ts, enc, obf, 0, replay };
+                   rid, status, ts, enc, obf, 0, replay, 0 };
+  m.path = path;
   return room_admit(&m);
 }
 /* A muted, centered line inside a conversation -- not words anybody said. */
@@ -327,7 +329,7 @@ static void sysnote(const char *room, const char *text) {
   char h[5]; msg_id(room, text, h);
   char mid[40] = "sys:"; char nb[24]; u_lltoa(hal_time_epoch(), nb);
   s_cat(mid, nb, sizeof(mid)); s_cat(mid, ":", sizeof(mid)); s_cat(mid, h, sizeof(mid));
-  room_msg_t m = { room, 0, mid, "in", "", text, "", "", "", "", "", 0, 0, 0, 1, 0 };
+  room_msg_t m = { room, 0, mid, "in", "", text, "", "", "", "", "", 0, 0, 0, 1, 0, 0 };
   room_admit(&m);
 }
 /* A reply marker on a wire with room for a section 5 id: "+<6hex> text". */
@@ -465,7 +467,7 @@ static int xroom_backfill(void) {
     char xrv[8]; int obf = wire_key(wire, "xr", xrv, sizeof(xrv)) ? 1 : 0;
     if (admit(xroom, id, mine ? "out" : "in", mine ? g_call : from, body, parent,
               bearer, s_eq(sig, "verified") ? "verified" : "", 0,
-              (uint64_t)jint(slice, "ts"), "", "", 1, obf) == 1)
+              (uint64_t)jint(slice, "ts"), "", "", 1, obf, "") == 1)
       kept++;
   }
   /* One line for the pass, not one per row: performance.md 8.10, "any
@@ -530,7 +532,7 @@ static void send_message(const char *id, const char *text_in) {
       notify("warning", "Could not send");
       return;
     }
-    admit(id, mid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0, 0);
+    admit(id, mid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0, 0, "");
     return;
   }
 
@@ -576,7 +578,7 @@ static void send_message(const char *id, const char *text_in) {
     if (rc == -2) { notify("warning", "You can post here once you accept the invitation"); return; }
     if (rc != 0) { notify("warning", "Could not send"); return; }
     char gmid[7]; xprs_id(wire, s_len(wire), gmid);
-    admit(id, gmid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0, 0);
+    admit(id, gmid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0, 0, "");
     return;
   }
 
@@ -594,7 +596,7 @@ static void send_message(const char *id, const char *text_in) {
     char gmid[7]; xprs_id(wire, s_len(wire), gmid);
     char parent[5]; const char *disp;
     thread_parse(text, parent, &disp);
-    admit(id, gmid, "out", g_call, disp, parent, "", "verified", 0, 0, "", "", 0, 0);
+    admit(id, gmid, "out", g_call, disp, parent, "", "verified", 0, 0, "", "", 0, 0, "");
     return;
   }
 
@@ -678,7 +680,7 @@ static void send_message(const char *id, const char *text_in) {
   }
   if (mid[0]) room_tx_note(mid, id);
   admit(id, mid[0] ? mid : "", "out", g_call, text, "", "", "verified", form == 1, 0,
-        mid, "sent", 0, 0);
+        mid, "sent", 0, 0, "");
 }
 
 /* ── Correcting and withdrawing what was said (XPRS.md 7.8, 10.4.1) ───── */
@@ -821,6 +823,10 @@ static void on_core_packet(const char *topic, const char *row) {
   jstr(row, "id", id, sizeof(id));
   jstr(row, "bearer", bearer, sizeof(bearer));
   jstr(row, "sig", sigv, sizeof(sigv));
+  /* The section 13 relay chain (`via:` on the wire, the row's `via` -- NOT the
+   * bearer, which the core spells `bearer`): who carried this packet here. For
+   * a bridged Meshtastic sender it names the bridge. Shown in the info dialog. */
+  char path[96] = ""; jstr(row, "via", path, sizeof(path));
   /* 9.2.1: a packet carrying an `xr:` field has obfuscated content -- the only
    * honest marker (bars in the text are not). It rides through to the row so a
    * bubble renders tappable with a tip; the reveal itself is the core's. */
@@ -925,7 +931,7 @@ static void on_core_packet(const char *topic, const char *row) {
     jstr(row, "scope", scope, sizeof(scope));
     const char *xroom = jbool_def(row, "inRange", 1) ? xroom_of(scope) : 0;
     if (!xroom) return;
-    admit(xroom, id, "in", from, m, parent, bearer, auth, 0, ts, "", "", 0, obf);
+    admit(xroom, id, "in", from, m, parent, bearer, auth, 0, ts, "", "", 0, obf, path);
     return;
   }
 
@@ -940,7 +946,7 @@ static void on_core_packet(const char *topic, const char *row) {
   if (like_parse(m, tgt, &unlike)) { room_react(gid, tgt, from, unlike, 0); return; }
   char par4[5]; const char *disp;
   thread_parse(m, par4, &disp);
-  admit(gid, id, "in", from, disp, parent[0] ? parent : par4, bearer, auth, 0, ts, "", "", 0, obf);
+  admit(gid, id, "in", from, disp, parent[0] ? parent : par4, bearer, auth, 0, ts, "", "", 0, obf, path);
 }
 
 static void on_core_event(const char *topic, const char *row) {
@@ -1035,8 +1041,9 @@ static void on_core_event(const char *topic, const char *row) {
    * queued in the room's database) and aired when the user opens the thread
    * (room_open -> room_flush_reads). Nothing to do here. */
   int obf = jbool(row, "obfuscated");
+  char cpath[96] = ""; jstr(row, "via", cpath, sizeof(cpath));
   admit(room, mid, "in", call, body, parent, bearer,
-        s_eq(sigv, "verified") ? "verified" : "", jbool(row, "sealed"), ts, "", "", 0, obf);
+        s_eq(sigv, "verified") ? "verified" : "", jbool(row, "sealed"), ts, "", "", 0, obf, cpath);
 }
 
 static void push_group_members(const char *gid);
@@ -1077,7 +1084,7 @@ static void on_xr_redacted(const char *row) {
    * composer looking like it swallowed the message. */
   if (!jbool_def(row, "ok", 1)) { notify("warning", "Could not send"); return; }
   if (!convo[0] || !id[0]) return;
-  admit(convo, id, "out", g_call, m, "", "", "verified", 0, 0, "", "", 0, 1);
+  admit(convo, id, "out", g_call, m, "", "", "verified", 0, 0, "", "", 0, 1, "");
 }
 
 /* ── Statuses at the head of the list (XPRS.md 27) ────────────────────

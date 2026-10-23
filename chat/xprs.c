@@ -121,22 +121,46 @@ int xprs_is_station(const char *addr) {
   return station;
 }
 
+/* The network a callsign belongs to, for the bubble's tag beside the bearer:
+ * "Meshtastic"/"MeshCore"/"another network" for a `foreign:` kind, "" for one
+ * of ours. Memoised like xprs_is_station: emit_msg asks it for every row a
+ * room draws, including a full history replay, and the answer never changes. */
+#define NET_MEMO 16
+static struct { char addr[24]; const char *net; } g_net[NET_MEMO];
+static unsigned g_net_next;
+
 const char *xprs_network_name(const char *addr) {
   if (!addr || !addr[0]) return "";
+  unsigned n = x_len(addr);
+  if (n >= sizeof g_net[0].addr) n = sizeof g_net[0].addr - 1;
+  for (unsigned i = 0; i < NET_MEMO; i++) {
+    if (!g_net[i].addr[0]) continue;
+    unsigned k = 0;
+    while (k < n && g_net[i].addr[k] == addr[k]) k++;
+    if (k == n && g_net[i].addr[n] == 0) return g_net[i].net;
+  }
+  const char *net = "";
   char kind[24];
-  int32_t got = hal_xprs_kind(addr, x_len(addr), kind, sizeof kind - 1);
-  if (got <= 0) return "";
-  kind[got] = 0;
-  /* `foreign:<network>`; anything without the colon is one of ours. */
-  const char *colon = kind;
-  while (*colon && *colon != ':') colon++;
-  if (*colon != ':') return "";
-  colon++;
-  if (colon[0] == 'm' && colon[1] == 'e' && colon[2] == 's' &&
-      colon[3] == 'h' && colon[4] == 't') return "Meshtastic";
-  if (colon[0] == 'm' && colon[1] == 'e' && colon[2] == 's' &&
-      colon[3] == 'h' && colon[4] == 'c') return "MeshCore";
-  return "another network";
+  int32_t got = hal_xprs_kind(addr, n, kind, sizeof kind - 1);
+  if (got > 0) {
+    kind[got] = 0;
+    /* `foreign:<network>`; anything without the colon is one of ours. */
+    const char *colon = kind;
+    while (*colon && *colon != ':') colon++;
+    if (*colon == ':') {
+      colon++;
+      if (colon[0] == 'm' && colon[1] == 'e' && colon[2] == 's' &&
+          colon[3] == 'h' && colon[4] == 't') net = "Meshtastic";
+      else if (colon[0] == 'm' && colon[1] == 'e' && colon[2] == 's' &&
+               colon[3] == 'h' && colon[4] == 'c') net = "MeshCore";
+      else net = "another network";
+    }
+  }
+  unsigned slot = g_net_next++ % NET_MEMO;
+  for (unsigned k = 0; k < n; k++) g_net[slot].addr[k] = addr[k];
+  g_net[slot].addr[n] = 0;
+  g_net[slot].net = net;
+  return net;
 }
 
 /* ── Building ──────────────────────────────────────────────────────────── */

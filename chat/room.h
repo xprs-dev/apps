@@ -34,6 +34,9 @@ typedef struct {
   int obf;              /* carries an xr: field (9.2.1): tap to reveal */
   int sys;              /* a system note, not words */
   int replay;           /* archive refill: store only -- no unread, no notify */
+  const char *path;     /* section 13 relay chain (`via:` on the wire), or NULL:
+                           who carried it here. Shown in the info dialog; live
+                           only, not stored. */
 } room_msg_t;
 
 /* Open the index, create the schema, make sure "#LOCAL" exists. [self] is

@@ -443,7 +443,8 @@ static void emit_view(const char *room, const char *mid, const room_view_t *v) {
  * row's upsert. */
 static void emit_msg(const char *id, const char *mid, const char *dir,
                      const char *sender, unsigned long long ts, const char *body,
-                     const char *parent, const char *via, const char *auth,
+                     const char *parent, const char *via, const char *path,
+                     const char *auth,
                      int enc, const char *rid, const char *status, int sys,
                      int priv, int obf, const room_view_t *v) {
   /* A message that has been corrected or withdrawn is drawn as it stands now:
@@ -469,6 +470,16 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
   s_cat(m, "\"", sizeof(m));
   if (parent && parent[0]) { s_cat(m, ",\"parent\":\"", sizeof(m)); jesc(m, sizeof(m), parent); s_cat(m, "\"", sizeof(m)); }
   if (via && via[0]) { s_cat(m, ",\"via\":\"", sizeof(m)); jesc(m, sizeof(m), via_label(via)); s_cat(m, "\"", sizeof(m)); }
+  /* The network a foreign sender belongs to (Meshtastic/MeshCore), so a
+   * bubble can wear a tag beside the bearer -- most people do not know an
+   * MT callsign is a Meshtastic node bridged in. "" for one of ours. */
+  { const char *net = xprs_network_name(sender);
+    if (net && net[0]) { s_cat(m, ",\"net\":\"", sizeof(m)); jesc(m, sizeof(m), net); s_cat(m, "\"", sizeof(m)); } }
+  /* The section 13 relay path (`via:` on the wire): who carried it here. For
+   * a bridged Meshtastic message this names the bridge (e.g. your own
+   * station). Live only -- not stored, so a reload shows the bearer but not
+   * the hops. Shown in the message info dialog. */
+  if (path && path[0]) { s_cat(m, ",\"path\":\"", sizeof(m)); jesc(m, sizeof(m), path); s_cat(m, "\"", sizeof(m)); }
   if (auth && auth[0]) { s_cat(m, ",\"auth\":\"", sizeof(m)); jesc(m, sizeof(m), auth); s_cat(m, "\"", sizeof(m)); }
   if (rid && rid[0]) { s_cat(m, ",\"rid\":\"", sizeof(m)); jesc(m, sizeof(m), rid); s_cat(m, "\"", sizeof(m)); }
   if (status && status[0]) { s_cat(m, ",\"status\":\"", sizeof(m)); jesc(m, sizeof(m), status); s_cat(m, "\"", sizeof(m)); }
@@ -863,6 +874,7 @@ int room_admit(const room_msg_t *m) {
         emit_msg(m->room, m->mid, m->dir, m->sender ? m->sender : "",
                  m->ts ? m->ts : hal_time_epoch(), m->body,
                  m->parent ? m->parent : "", m->via ? m->via : "",
+                 m->path ? m->path : "",
                  m->auth ? m->auth : "", m->enc, m->rid ? m->rid : "",
                  m->status ? m->status : "", m->sys, 0, m->obf, 0);
         /* The row is already stored (read_sent=0), so flushing acks it now --
@@ -931,7 +943,8 @@ int room_admit(const room_msg_t *m) {
   /* The row first, then the bubble: the host drops a bubble for a row it
    * holds as closed, and the row says closed:false. */
   emit_upsert(m->room, !m->replay, 0);
-  emit_msg(m->room, m->mid, m->dir, sender, ts, body, parent, via, auth,
+  emit_msg(m->room, m->mid, m->dir, sender, ts, body, parent, via,
+           m->path ? m->path : "", auth,
            m->enc, rid, status, m->sys, 0, m->obf, viewed ? &view : 0);
   if (!m->replay) {
     if (created > 0 || !s_eq(g_top, m->room)) room_rail();
@@ -1015,7 +1028,7 @@ int room_version_add(const char *room, const char *root, const char *vid, int ki
   if (made) {
     /* The bubble does not exist yet: draw it, then it can be corrected. */
     emit_upsert(room, 0, 0);
-    emit_msg(room, root, "in", sender, ts ? ts : hal_time_epoch(), body, "", "", "", enc,
+    emit_msg(room, root, "in", sender, ts ? ts : hal_time_epoch(), body, "", "", "", "", enc,
              "", "", 0, 0, 0, &v);
   } else {
     emit_view(room, root, &v);
@@ -1136,7 +1149,7 @@ static void emit_tail(const char *id, int h) {
       if (room_resolve(h, id, mid, &view, 0, 0, 0) >= 0) viewed = 1;
     }
     emit_msg(id, mid, dir, sender, (unsigned long long)jint(row, "ts"), body, parent, via,
-             auth, (int)jint(row, "enc"), rid, status, (int)jint(row, "sys"), 0,
+             "", auth, (int)jint(row, "enc"), rid, status, (int)jint(row, "sys"), 0,
              (int)jint(row, "obf"), viewed ? &view : 0);
   }
   /* Hearts on those bubbles. */
