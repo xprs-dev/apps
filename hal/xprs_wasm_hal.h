@@ -1746,7 +1746,7 @@ int32_t hal_xprs_read(const char *id, uint32_t id_len);
  * across restarts. [query] is a JSON filter, "{}" for the latest:
  *   {"since":"YYYY-MM-DD_hh:mm:ss","until":"...","only":"CALL","limit":n,
  *    "to":["","X5A3F2"],"types":["observation"],"from":"CALL",
- *    "kind":"device"}
+ *    "kind":"device","scope":"local"}
  * since/until window on the packet's own ts:, only matches sender OR
  * addressee (or a hears: list). "types" keeps those packet types. "from" is
  * exactly that author, indexed: what one device said. "kind" (user, device)
@@ -1754,7 +1754,10 @@ int32_t hal_xprs_read(const char *id, uint32_t id_len);
  * "station" has no single prefix and selects nothing. "to" keeps only the named destinations — "" means undirected —
  * so a room can ask for the rows it renders instead of sieving the newest N:
  * on a station mid store-and-forward the newest N are its own custody
- * re-airs, and a sieving caller's window carries nothing it can use. Reply, newest first:
+ * re-airs, and a sieving caller's window carries nothing it can use. "scope"
+ * (local, regional, global) is one chat room by the scope its author wrote
+ * (XPRS.md 9.11.1); ask a room at a time, or a busy room fills the window
+ * and a quiet one looks empty. A core older than the field ignores it. Reply, newest first:
  *   [{ts,heardTs,bearer,rssi,from,to,type,id,mine,own,sig,heard,wire}]
  * `sig` is verified|forged|unverified|unsigned; `heard` counts collapsed
  * duplicate sightings. Returns bytes written, negated size if out is small. */

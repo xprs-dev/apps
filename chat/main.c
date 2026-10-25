@@ -400,13 +400,35 @@ static int wire_body(const char *wire, char *out, unsigned cap) {
   return 0;
 }
 
+static int xroom_backfill_one(const char *room, const char *scope, int *read);
 static int xroom_backfill(void) {
-  char q[160] = "{\"limit\":60,\"types\":[\"message\"],\"to\":[\"\"]";
-  /* From the oldest of the three rooms' newest messages: one ask fills all. */
-  uint64_t since = room_max_ts(XROOM_LOCAL);
-  { uint64_t r = room_max_ts(XROOM_REGIONAL), g = room_max_ts(XROOM_GLOBAL);
-    if (r < since) since = r;
-    if (g < since) since = g; }
+  /* One ask PER ROOM, each from that room's own newest message. One ask for
+   * all three filled the 60-row window with whichever room talked most --
+   * at home a Meshtastic channel bridged into Regional -- and Local came
+   * back empty although the archive held it. The core files a row by the
+   * scope its author wrote (hal_xprs_history "scope"); a core older than the
+   * field ignores it and answers the newest rows, which xroom_of files as
+   * before. */
+  static const char *rooms[] = { XROOM_LOCAL, XROOM_REGIONAL, XROOM_GLOBAL };
+  static const char *scopes[] = { "local", "regional", "global" };
+  int kept = 0, read = 0;
+  for (int ri = 0; ri < 3; ri++)
+    kept += xroom_backfill_one(rooms[ri], scopes[ri], &read);
+  /* One line for the pass, not one per row or per room: performance.md
+   * 8.10, "any per-event log line is a bet that the event is rare", and
+   * this one reads sixty. The drop line this replaced was exactly that bet,
+   * lost. */
+  char lg[96] = "[chat] backfill: read=";
+  char nb[16]; u_itoa((unsigned)read, nb); s_cat(lg, nb, sizeof(lg));
+  s_cat(lg, " kept=", sizeof(lg)); u_itoa((unsigned)kept, nb); s_cat(lg, nb, sizeof(lg));
+  log1(lg);
+  return kept;
+}
+
+static int xroom_backfill_one(const char *room, const char *scope, int *read) {
+  char q[160] = "{\"limit\":60,\"types\":[\"message\"],\"to\":[\"\"],\"scope\":\"";
+  s_cat(q, scope, sizeof(q)); s_cat(q, "\"", sizeof(q));
+  uint64_t since = room_max_ts(room);
   if (since > 300) {
     char st[24]; xprs_stamp(st, sizeof(st), since - 300);
     s_cat(q, ",\"since\":\"", sizeof(q)); s_cat(q, st, sizeof(q)); s_cat(q, "\"", sizeof(q));
@@ -477,13 +499,7 @@ static int xroom_backfill(void) {
               (uint64_t)jint(slice, "ts"), "", "", 1, obf, "") == 1)
       kept++;
   }
-  /* One line for the pass, not one per row: performance.md 8.10, "any
-   * per-event log line is a bet that the event is rare", and this one reads
-   * sixty. The drop line this replaced was exactly that bet, lost. */
-  char lg[96] = "[chat] backfill: read=";
-  char nb[16]; u_itoa((unsigned)rows, nb); s_cat(lg, nb, sizeof(lg));
-  s_cat(lg, " kept=", sizeof(lg)); u_itoa((unsigned)kept, nb); s_cat(lg, nb, sizeof(lg));
-  log1(lg);
+  *read += rows;
   return kept;
 }
 

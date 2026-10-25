@@ -266,6 +266,33 @@ TEST(the_archive_catch_up_waits_for_the_first_event) {
   mock_set_history("[]");   /* the next fresh() starts a module that reads it */
 }
 
+/* A room that out-talks another must not hide it. Sixty Regional rows newer
+ * than the one Local row: one ask for all three rooms, newest first and
+ * capped at sixty, never reached the Local row, and Local opened empty
+ * although the archive held it (a Meshtastic channel bridged into Regional
+ * at home, 2026-10-25). The refill asks a room at a time. */
+TEST(a_busy_room_does_not_hide_a_quiet_one) {
+  fresh();
+  static char big[40000]; size_t n = 0;
+  big[n++] = '[';
+  for (int i = 0; i < 60; i++)
+    n += (size_t)snprintf(big + n, sizeof(big) - n,
+      "{\"ts\":%d,\"bearer\":\"lora\",\"from\":\"MT%06X\",\"to\":\"\",\"type\":\"message\","
+      "\"id\":\"r%05d\",\"own\":false,\"sig\":\"none\","
+      "\"wire\":\"t:message f:MT%06X ts:2026-09-04_11:%02d:00 scope:regional m:flood %d\"},",
+      1700003600 - i * 60, i, i, i, 59 - (i % 60), i);
+  n += (size_t)snprintf(big + n, sizeof(big) - n,
+      "{\"ts\":1700000000,\"bearer\":\"ble\",\"from\":\"X1PEER\",\"to\":\"\",\"type\":\"message\","
+      "\"id\":\"h00009\",\"own\":false,\"sig\":\"verified\","
+      "\"wire\":\"t:message f:X1PEER ts:2026-09-04_10:00:00 scope:local m:quiet local\"}]");
+  mock_set_history(big);
+  module_destroy(); cap_clear(); log_clear();
+  module_init(); module_handle_event();
+  CHECK(log_count("backfill: read=61 kept=61") == 1);
+  CHECK(cap_contains("\"text\":\"quiet local\""));
+  mock_set_history("[]");
+}
+
 TEST(replay_from_the_archive_is_silent) {
   fresh();
   mock_set_history(
@@ -1747,6 +1774,7 @@ int main(void) {
   run_a_message_for_the_open_room_does_not_count();
   run_the_archive_catch_up_waits_for_the_first_event();
   run_replay_from_the_archive_is_silent();
+  run_a_busy_room_does_not_hide_a_quiet_one();
   run_a_backfilled_redaction_keeps_its_bars();
   run_a_blocked_sender_never_enters();
   run_hide_forgets_a_message_for_good();

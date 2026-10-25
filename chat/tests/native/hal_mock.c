@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 /*
  * A native HAL for the chat wapp's tests: real sqlite3 behind hal_sqlite_*,
  * an in-memory KV, a capture of everything hal_msg_send says, and an
@@ -168,7 +169,42 @@ const char* mock_reads(void){ return g_reads; }
 int mock_reads_count(void){ return g_reads_n; }
 void mock_reads_clear(void){ g_reads[0]=0; g_reads_n=0; }
 int32_t hal_xprs_read(const char* id,uint32_t l){ if(g_hk_read) return g_hk_read(id,l); (void)l; size_t u=strlen(g_reads); snprintf(g_reads+u,sizeof(g_reads)-u,"[%s]",id); g_reads_n++; return 0; }
-int32_t hal_xprs_history(const char* q,uint32_t ql,char* o,uint32_t cap){ (void)q;(void)ql; uint32_t n=strlen(g_history); if(n>cap) return -(int32_t)n; memcpy(o,g_history,n); return n; }
+/* The room a row is in, as the core files it: the scope word before m:. */
+static const char* mock_row_scope(const char* row, size_t len){
+  const char* w=memmem(row,len,"\"wire\":\"",8); if(!w) return "global";
+  const char* e=memmem(w,len-(size_t)(w-row)," m:",3); size_t hl=e?(size_t)(e-w):len-(size_t)(w-row);
+  if(memmem(w,hl," scope:local",12)) return "local";
+  if(memmem(w,hl," scope:regional",15)) return "regional";
+  return "global";
+}
+/* Answers what the core's hal_xprs_history answers for `scope`: only the rows
+ * of that room. Without a scope, everything, as the old core did. */
+int32_t hal_xprs_history(const char* q,uint32_t ql,char* o,uint32_t cap){
+  char scope[16]=""; const char* sq=q?memmem(q,ql,"\"scope\":\"",9):0;
+  if(sq){ sq+=9; size_t i=0; while(i<sizeof(scope)-1&&sq[i]&&sq[i]!='"'&&sq<q+ql){ scope[i]=sq[i]; i++; } scope[i]=0; }
+  /* And the window: the core answers the newest `limit` rows and no more,
+   * which is what makes a room that out-talks another able to hide it. */
+  int limit=200; const char* lq=q?memmem(q,ql,"\"limit\":",8):0; if(lq) limit=atoi(lq+8);
+  static char out[sizeof(g_history)]; size_t n=0; out[n++]='['; int taken=0;
+  const char* p=g_history; int depth=0, instr=0; const char* start=0; int first=1;
+  for(; *p; p++){
+    if(instr){ if(*p=='\\'&&p[1]) p++; else if(*p=='"') instr=0; continue; }
+    if(*p=='"'){ instr=1; continue; }
+    if(*p=='{'){ if(depth++==0) start=p; continue; }
+    if(*p=='}'&&--depth==0&&start){
+      size_t len=(size_t)(p-start)+1;
+      if(taken<limit&&(!scope[0]||strcmp(mock_row_scope(start,len),scope)==0)){
+        taken++;
+        if(!first) out[n++]=','; first=0;
+        if(n+len>=sizeof(out)-2) break;
+        memcpy(out+n,start,len); n+=len;
+      }
+      start=0;
+    }
+  }
+  out[n++]=']'; out[n]=0;
+  if(n>cap) return -(int32_t)n; memcpy(o,out,n); return (int32_t)n;
+}
 static char g_groups[2048] = "[]";
 void mock_set_groups(const char* json){ snprintf(g_groups,sizeof(g_groups),"%s",json&&json[0]?json:"[]"); }
 int32_t hal_xprs_groups(char* o,uint32_t cap){ if(g_hk_groups) return g_hk_groups(o,cap); uint32_t n=strlen(g_groups); if(n>cap) return -(int32_t)n; memcpy(o,g_groups,n); return n; }
