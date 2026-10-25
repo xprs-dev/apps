@@ -494,6 +494,9 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
   if (v && v->edited) s_cat(m, ",\"edited\":true", sizeof(m));
   if (v && v->edited && v->by[0]) { s_cat(m, ",\"by\":\"", sizeof(m)); jesc(m, sizeof(m), v->by); s_cat(m, "\"", sizeof(m)); }
   if (v && v->deleted) s_cat(m, ",\"deleted\":true", sizeof(m));
+  /* The sender's epoch, beside the clock-face time: the host places a bubble
+   * that arrives out of order (an archive replays newest first) by it. */
+  { char tsn[24]; u_itoa((unsigned)ts, tsn); s_cat(m, ",\"ts\":", sizeof(m)); s_cat(m, tsn, sizeof(m)); }
   s_cat(m, ",\"backfill\":true}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
@@ -1131,7 +1134,13 @@ static void emit_tail(const char *id, int h) {
   while (limit >= 12) {
     pj_t p; pj_init(&p); pj_int(&p, limit);
     n = db_query(h, "SELECT mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys,obf,nver,deleted FROM "
-                    "(SELECT * FROM messages ORDER BY seq DESC LIMIT ?) ORDER BY seq ASC",
+                    /* In the order things were SAID, not the order they got here:
+                     * an archive replays newest first (XPRS.md 11.2.1), so a
+                     * room filled by a catch-up was drawn upside down when it
+                     * followed seq. seq breaks ties, and still orders a row that
+                     * carries no sender time (ts is then its arrival). */
+                    "(SELECT * FROM messages ORDER BY ts DESC, seq DESC LIMIT ?) "
+                    "ORDER BY ts ASC, seq ASC",
                  pj_done(&p), g_q, sizeof(g_q));
     if (n != -2) break;
     limit /= 2;
@@ -1161,7 +1170,7 @@ static void emit_tail(const char *id, int h) {
   /* Hearts on those bubbles. */
   pj_t p; pj_init(&p); pj_int(&p, limit);
   n = db_query(h, "SELECT mid,who FROM reactions WHERE mid IN "
-                  "(SELECT mid FROM messages ORDER BY seq DESC LIMIT ?) LIMIT 200",
+                  "(SELECT mid FROM messages ORDER BY ts DESC, seq DESC LIMIT ?) LIMIT 200",
                pj_done(&p), g_q, sizeof(g_q));
   if (n <= 0) return;
   cur = g_q;

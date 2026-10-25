@@ -293,6 +293,37 @@ TEST(a_busy_room_does_not_hide_a_quiet_one) {
   mock_set_history("[]");
 }
 
+/* An archive replays NEWEST FIRST (XPRS.md 11.2.1), and a catch-up's rows
+ * arrive live in that order. Drawn by arrival they stood upside down: the
+ * phone at home showed the fetched week with the oldest message at the
+ * bottom. A room is drawn in the order things were said. */
+TEST(a_room_is_drawn_in_the_order_things_were_said) {
+  fresh();
+  static const char *when[] = { "10:02:00", "10:01:00", "10:00:00" };
+  static const char *text[] = { "third", "second", "first" };
+  for (int i = 0; i < 3; i++) {
+    char row[600];
+    snprintf(row, sizeof(row),
+      "{\"id\":\"o%d\",\"type\":\"message\",\"from\":\"X1PEER\",\"to\":\"\","
+      "\"fields\":[[\"t\",\"message\"],[\"f\",\"X1PEER\"],[\"ts\",\"2026-09-04_%s\"],[\"scope\",\"local\"],[\"m\",\"%s\"]],"
+      "\"forUs\":false,\"sealed\":false,\"scope\":\"local\",\"bearer\":\"ble\",\"sig\":\"verified\"}",
+      i, when[i], text[i]);
+    event_push("xprs.message", row);
+    module_handle_event();
+  }
+  cap_clear(); log_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  int ia = -1, ib = -1, ic = -1;
+  for (int i = 0; i < cap_n(); i++) {
+    if (ia < 0 && strstr(cap_nth(i), "\"text\":\"first\"")) ia = i;
+    if (ib < 0 && strstr(cap_nth(i), "\"text\":\"second\"")) ib = i;
+    if (ic < 0 && strstr(cap_nth(i), "\"text\":\"third\"")) ic = i;
+  }
+  CHECK(ia >= 0 && ib >= 0 && ic >= 0);
+  CHECK(ia < ib && ib < ic);
+}
+
 TEST(replay_from_the_archive_is_silent) {
   fresh();
   mock_set_history(
@@ -1773,6 +1804,7 @@ int main(void) {
   run_open_repaints_from_the_database_newest_fifty();
   run_a_message_for_the_open_room_does_not_count();
   run_the_archive_catch_up_waits_for_the_first_event();
+  run_a_room_is_drawn_in_the_order_things_were_said();
   run_replay_from_the_archive_is_silent();
   run_a_busy_room_does_not_hide_a_quiet_one();
   run_a_backfilled_redaction_keeps_its_bars();
