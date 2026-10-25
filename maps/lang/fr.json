@@ -1,0 +1,28 @@
+{
+  "_meta": {
+    "language": "Français",
+    "reviewed": false
+  },
+  "screen.map": "Carte",
+  "screen.map_tip": "Parcourez l'imagerie satellite. Glissez pour déplacer, faites défiler pour zoomer.",
+  "screen.settings": "Réglages",
+  "screen.settings_tip": "Réglages d'affichage de la carte.",
+  "group.controls": "Commandes",
+  "group.tiles": "Tuiles",
+  "group.tiles_tip": "Configuration du serveur de tuiles.",
+  "group.cache": "Cache",
+  "group.cache_tip": "Réglages du cache de tuiles hors ligne.",
+  "field.tile_source": "Source des tuiles",
+  "field.cache_enabled": "Activer le cache",
+  "field.cache_enabled_tip": "Conserver les tuiles téléchargées pour un usage hors ligne.",
+  "field.cache_max": "Taille maximale du cache",
+  "field.cache_max_tip": "Taille maximale du cache de tuiles en mégaoctets.",
+  "option.satellite": "Satellite (ESRI)",
+  "option.osm": "OpenStreetMap",
+  "option.topo": "Topographique (ESRI)",
+  "action.save": "Enregistrer",
+  "action.save_tip": "Appliquer les réglages.",
+  "action.cancel": "Annuler",
+  "action.zoom_in_tip": "Zoom avant",
+  "action.zoom_out_tip": "Zoom arrière"
+}

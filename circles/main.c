@@ -9,6 +9,8 @@
 #include "xprs_wasm_hal.h"
 #include "circle.h"
 #include "util.h"
+#define WTR_CAP 400u
+#include "../sdk/wapp_i18n.h"
 
 static char g_pending[72];   /* circle awaiting an "add member" npub */
 static char g_panel[72];     /* circle whose Edit/Share/People panel is open */
@@ -18,7 +20,8 @@ static char g_role[48];      /* role being edited ("" = creating a new one) */
 static void notify(const char *level, const char *body) {
   char m[300] = "{\"type\":\"notify\",\"level\":\"";
   s_cat(m, level, sizeof(m));
-  s_cat(m, "\",\"title\":\"Circles\",\"body\":\"", sizeof(m));
+  s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("screen.circles", "Circles"));
+  s_cat(m, "\",\"body\":\"", sizeof(m));
   jesc(m, sizeof(m), body);
   s_cat(m, "\"}", sizeof(m));
   hal_msg_send(m, s_len(m));
@@ -52,25 +55,37 @@ static int resolve_identifier(const char *inp, char *out, unsigned cap) {
 }
 
 /* ── prompts ──────────────────────────────────────────────────────────── */
+/* `"key":"<translated>"` appended to a JSON message being built. */
+static void jkv(char *m, unsigned cap, const char *jsonKey, const char *key, const char *en) {
+  s_cat(m, "\"", cap); s_cat(m, jsonKey, cap); s_cat(m, "\":\"", cap);
+  jesc(m, cap, wtr(key, en)); s_cat(m, "\"", cap);
+}
 static void prompt_new_circle(void) {
-  const char *m = "{\"type\":\"ui.prompt\",\"id\":\"newcircle\",\"title\":\"New circle\","
-    "\"body\":\"Name your circle. You can add people to it afterwards.\","
-    "\"input\":{\"hint\":\"Circle name\",\"max\":40},\"confirm\":\"Create\"}";
+  char m[1024] = "{\"type\":\"ui.prompt\",\"id\":\"newcircle\",";
+  jkv(m, sizeof(m), "title", "prompt.new_circle.title", "New circle"); s_cat(m, ",", sizeof(m));
+  jkv(m, sizeof(m), "body", "prompt.new_circle.body", "Name your circle. You can add people to it afterwards."); s_cat(m, ",", sizeof(m));
+  s_cat(m, "\"input\":{", sizeof(m));
+  jkv(m, sizeof(m), "hint", "prompt.new_circle.hint", "Circle name");
+  s_cat(m, ",\"max\":40},", sizeof(m));
+  jkv(m, sizeof(m), "confirm", "prompt.new_circle.confirm", "Create"); s_cat(m, "}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
 static void prompt_join(void) {
-  const char *m = "{\"type\":\"ui.prompt\",\"id\":\"joincode\",\"title\":\"Find a circle\","
-    "\"body\":\"Enter the circle's short id (e.g. ab1-9xz). We'll find it across the "
-    "network and ask the owner to let you in. A full circle key or scanned QR works too.\","
-    "\"input\":{\"hint\":\"ab1-9xz\",\"max\":120},\"confirm\":\"Find\"}";
+  char m[1536] = "{\"type\":\"ui.prompt\",\"id\":\"joincode\",";
+  jkv(m, sizeof(m), "title", "prompt.join.title", "Find a circle"); s_cat(m, ",", sizeof(m));
+  jkv(m, sizeof(m), "body", "prompt.join.body", "Enter the circle's short id (e.g. ab1-9xz). We'll find it across the "
+    "network and ask the owner to let you in. A full circle key or scanned QR works too."); s_cat(m, ",", sizeof(m));
+  s_cat(m, "\"input\":{\"hint\":\"ab1-9xz\",\"max\":120},", sizeof(m));
+  jkv(m, sizeof(m), "confirm", "prompt.join.confirm", "Find"); s_cat(m, "}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
 static void prompt_add_member(const char *circleId) {
   s_cpy(g_pending, circleId, sizeof(g_pending));
   char cj[16384];
   int n = hal_contacts_query("", 0, cj, sizeof(cj));
-  char m[20000] = "{\"type\":\"ui.prompt\",\"id\":\"addmember\",\"title\":\"Add member\",";
-  s_cat(m, "\"body\":\"Pick someone you know, or type a callsign, nickname or npub.\",", sizeof(m));
+  char m[20000] = "{\"type\":\"ui.prompt\",\"id\":\"addmember\",";
+  jkv(m, sizeof(m), "title", "prompt.add_member.title", "Add member"); s_cat(m, ",", sizeof(m));
+  jkv(m, sizeof(m), "body", "prompt.add_member.body", "Pick someone you know, or type a callsign, nickname or npub."); s_cat(m, ",", sizeof(m));
   if (n > 0 && cj[0] == '[' && cj[1] != ']') {
     s_cat(m, "\"chips\":[", sizeof(m));
     const char *cur = cj; char obj[512]; int first = 1, cnt = 0;
@@ -91,8 +106,10 @@ static void prompt_add_member(const char *circleId) {
     }
     s_cat(m, "],\"chipMode\":\"select\",", sizeof(m));
   }
-  s_cat(m, "\"input\":{\"hint\":\"Callsign, nickname or npub1…\",\"max\":80},"
-          "\"confirm\":\"Add\"}", sizeof(m));
+  s_cat(m, "\"input\":{", sizeof(m));
+  jkv(m, sizeof(m), "hint", "prompt.add_member.hint", "Callsign, nickname or npub1…");
+  s_cat(m, ",\"max\":80},", sizeof(m));
+  jkv(m, sizeof(m), "confirm", "action.add", "Add"); s_cat(m, "}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
 
@@ -101,8 +118,9 @@ static void prompt_member_role(const char *circleId, const char *memberPub) {
   s_cpy(g_panel, circleId, sizeof(g_panel));
   s_cpy(g_member, memberPub, sizeof(g_member));
   char roles[512]; circle_roles_csv(circleId, roles, sizeof(roles));
-  char m[2048] = "{\"type\":\"ui.prompt\",\"id\":\"memberrole\",\"title\":\"Member\",";
-  s_cat(m, "\"body\":\"Choose a role, or remove this person.\",\"chips\":[", sizeof(m));
+  char m[2048] = "{\"type\":\"ui.prompt\",\"id\":\"memberrole\",";
+  jkv(m, sizeof(m), "title", "prompt.member.title", "Member"); s_cat(m, ",", sizeof(m));
+  jkv(m, sizeof(m), "body", "prompt.member.body", "Choose a role, or remove this person."); s_cat(m, ",\"chips\":[", sizeof(m));
   const char *p = roles; int first = 1;
   while (*p) {
     char nm[48]; unsigned ni = 0;
@@ -116,8 +134,9 @@ static void prompt_member_role(const char *circleId, const char *memberPub) {
     s_cat(m, "\"}", sizeof(m));
   }
   if (!first) s_cat(m, ",", sizeof(m));
-  s_cat(m, "{\"label\":\"Remove from circle\",\"value\":\"remove\"}],", sizeof(m));
-  s_cat(m, "\"chipMode\":\"select\",\"confirm\":\"Apply\"}", sizeof(m));
+  s_cat(m, "{", sizeof(m)); jkv(m, sizeof(m), "label", "prompt.member.remove", "Remove from circle");
+  s_cat(m, ",\"value\":\"remove\"}],\"chipMode\":\"select\",", sizeof(m));
+  jkv(m, sizeof(m), "confirm", "prompt.member.confirm", "Apply"); s_cat(m, "}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
 
@@ -134,7 +153,7 @@ static void on_prompt(const char *buf) {
     char npub[120] = "";
     if (val[0]) s_cpy(npub, val, sizeof(npub));           /* picked a contact */
     else if (inp[0] && !resolve_identifier(inp, npub, sizeof(npub))) {
-      notify("error", "No contact matches — paste their npub instead");
+      notify("error", wtr("msg.no_contact_matches_paste_their_npub_inst", "No contact matches — paste their npub instead"));
     }
     if (npub[0] && g_pending[0]) circle_add_member(g_pending, npub);
     g_pending[0] = 0;

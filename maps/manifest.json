@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.maps",
-  "version":         "1.0.3",
+  "version":         "1.0.4",
   "kind":            "app",
   "title":           "Maps",
   "description":     "Satellite maps that also work offline.",

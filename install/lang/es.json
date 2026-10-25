@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "language": "Español",
+    "reviewed": false
+  },
+  "screen.store": "Tienda",
+  "screen.store_tip": "Aplicaciones publicadas en xprs.dev/apps. Instala con un toque; el icono de la papelera quita una instalada.",
+  "screen.settings": "Ajustes",
+  "screen.settings_tip": "Gestiona los repositorios de los que la tienda lee su catálogo.",
+  "screen.sources": "Repositorios",
+  "group.sources_name": "Fuentes",
+  "group.sources_tip": "La tienda empieza con https://xprs.dev/apps. Añade otro repositorio como URL (debe responder con un catalog.json o un index.json) o como clave de carpeta Reticulum (npub... o rns:npub...). Solo se descarga el catálogo; tú eliges qué instalar."
+}

@@ -40,6 +40,7 @@
  */
 #include <stdint.h>
 #include "xprs_wasm_hal.h"
+#include "../sdk/wapp_i18n.h"
 #include "db.h"
 #include "room.h"
 #include "thread.h"
@@ -152,9 +153,9 @@ static int xgroup_may_post(const char *call) {
 }
 /* What a room is called on the rail. */
 static void room_title(const char *id, char *out, unsigned osz) {
-  if (s_eq(id, XROOM_LOCAL)) { s_cpy(out, "Local chat", osz); return; }
-  if (s_eq(id, XROOM_REGIONAL)) { s_cpy(out, "Regional chat", osz); return; }
-  if (s_eq(id, XROOM_GLOBAL)) { s_cpy(out, "Global chat", osz); return; }
+  if (s_eq(id, XROOM_LOCAL)) { s_cpy(out, wtr("room.local", "Local chat"), osz); return; }
+  if (s_eq(id, XROOM_REGIONAL)) { s_cpy(out, wtr("room.regional", "Regional chat"), osz); return; }
+  if (s_eq(id, XROOM_GLOBAL)) { s_cpy(out, wtr("room.global", "Global chat"), osz); return; }
   if (xgroup_is(id)) {
     /* Name AND callsign: the name is a label anybody can choose; the X5
      * callsign is derived from the key and is what identifies the group. */
@@ -225,20 +226,26 @@ static void join_offer(const char *call, int force) {
   int folders = 0;
   for (int i = 0; i < g_xgroup_n; i++)
     if (s_eq(g_xgroup[i].role, "invited") && xgroup_below(g_xgroup[i].call, call)) folders++;
-  char m[440] = "{\"type\":\"ui.prompt\",\"id\":\"xgjoin:";
+  char m[600] = "{\"type\":\"ui.prompt\",\"id\":\"xgjoin:";
   jesc(m, sizeof(m), id);
-  s_cat(m, "\",\"title\":\"Group invitation\",\"body\":\"You were invited to ", sizeof(m));
+  s_cat(m, "\",\"title\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.invite_title", "Group invitation"));
+  s_cat(m, "\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.invite_body", "You were invited to "));
   jesc(m, sizeof(m), t);
   if (folders) {
     char nb[8]; u_itoa((unsigned)folders, nb);
-    s_cat(m, ". Join to read and post in it and in its ", sizeof(m));
+    jesc(m, sizeof(m), wtr("prompt.invite_folders", ". Join to read and post in it and in its "));
     s_cat(m, nb, sizeof(m));
-    s_cat(m, folders == 1 ? " folder" : " folders", sizeof(m));
-    s_cat(m, "; until then you are only invited.\",\"confirm\":\"Join\"}", sizeof(m));
+    jesc(m, sizeof(m), folders == 1 ? wtr("prompt.folder_one", " folder")
+                                    : wtr("prompt.folder_many", " folders"));
+    jesc(m, sizeof(m), wtr("prompt.invite_until", "; until then you are only invited."));
   } else {
-    s_cat(m, ". Join to read and post in it; until then you are only invited.\","
-             "\"confirm\":\"Join\"}", sizeof(m));
+    jesc(m, sizeof(m), wtr("prompt.invite_plain", ". Join to read and post in it; until then you are only invited."));
   }
+  s_cat(m, "\",\"confirm\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.join", "Join"));
+  s_cat(m, "\"}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
 static void xgroup_room(const char *id, const char *t) {
@@ -495,12 +502,17 @@ static void send_message(const char *id, const char *text_in) {
   if ((xroom_is(id) || xgroup_is(id) || xprs_is_station(id)) &&
       s_find(text, "((") && s_find(text, "))")) {
     s_cpy(g_redact_text, text, sizeof(g_redact_text));
-    char pm[384] = "{\"type\":\"ui.prompt\",\"id\":\"xrmk:";
+    char pm[560] = "{\"type\":\"ui.prompt\",\"id\":\"xrmk:";
     s_cat(pm, id, sizeof(pm));
-    s_cat(pm, "\",\"title\":\"Hide part of this message\",\"body\":\"Enter a "
-              "passphrase (leave blank for the default), or pick one you have used "
-              "before.\",\"passphrases\":true,\"confirm\":\"Hide\",\"input\":{\"hint\":"
-              "\"passphrase\",\"max\":64}}", sizeof(pm));
+    s_cat(pm, "\",\"title\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.hide_title", "Hide part of this message"));
+    s_cat(pm, "\",\"body\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.hide_body", "Enter a passphrase (leave blank for the default), or pick one you have used before."));
+    s_cat(pm, "\",\"passphrases\":true,\"confirm\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.hide", "Hide"));
+    s_cat(pm, "\",\"input\":{\"hint\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.passphrase_hint", "passphrase"));
+    s_cat(pm, "\",\"max\":64}}", sizeof(pm));
     hal_msg_send(pm, s_len(pm));
     return;
   }
@@ -520,7 +532,7 @@ static void send_message(const char *id, const char *text_in) {
       }
       s_cat(wire, unlike ? " remove:like" : " add:like", sizeof(wire));
       s_cat(wire, " r:", sizeof(wire)); s_cat(wire, lmid, sizeof(wire));
-      if (hal_xprs_send(wire, s_len(wire)) != 0) { notify("warning", "Could not send"); return; }
+      if (hal_xprs_send(wire, s_len(wire)) != 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
       room_react(id, lmid, g_call, unlike, 1);
       return;
     }
@@ -529,7 +541,7 @@ static void send_message(const char *id, const char *text_in) {
     char mid[8] = "";
     if (hal_xprs_broadcast(text, s_len(text), scope, s_len(scope), parent, s_len(parent),
                            mid, sizeof(mid)) != 2 || !mid[0]) {
-      notify("warning", "Could not send");
+      notify("warning", wtr("msg.could_not_send", "Could not send"));
       return;
     }
     admit(id, mid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0, 0, "");
@@ -556,8 +568,8 @@ static void send_message(const char *id, const char *text_in) {
         s_cat(wire, unlike ? " remove:like" : " add:like", sizeof(wire));
         s_cat(wire, " r:", sizeof(wire)); s_cat(wire, lmid, sizeof(wire));
         int32_t rc = hal_xprs_send(wire, s_len(wire));
-        if (rc == -2) { notify("warning", "You can post here once you accept the invitation"); return; }
-        if (rc != 0) { notify("warning", "Could not send"); return; }
+        if (rc == -2) { notify("warning", wtr("msg.accept_first", "You can post here once you accept the invitation")); return; }
+        if (rc != 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
         room_react(id, lmid, g_call, unlike, 1);   /* our own heart, now */
         return;
       }
@@ -571,12 +583,12 @@ static void send_message(const char *id, const char *text_in) {
     s_cat(wire, " ts:", sizeof(wire)); s_cat(wire, ts, sizeof(wire));
     if (parent[0]) { s_cat(wire, " r:", sizeof(wire)); s_cat(wire, parent, sizeof(wire)); }
     s_cat(wire, " m:", sizeof(wire)); s_cat(wire, text, sizeof(wire));
-    if (s_len(wire) > 250) { notify("warning", "Message too long"); return; }
+    if (s_len(wire) > 250) { notify("warning", wtr("msg.too_long", "Message too long")); return; }
     /* Whether we may post here is the CORE's decision (26.7), given back as
      * the send result; this wapp only says it in words. */
     int32_t rc = hal_xprs_send(wire, s_len(wire));
-    if (rc == -2) { notify("warning", "You can post here once you accept the invitation"); return; }
-    if (rc != 0) { notify("warning", "Could not send"); return; }
+    if (rc == -2) { notify("warning", wtr("msg.accept_first", "You can post here once you accept the invitation")); return; }
+    if (rc != 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
     char gmid[7]; xprs_id(wire, s_len(wire), gmid);
     admit(id, gmid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0, 0, "");
     return;
@@ -587,9 +599,9 @@ static void send_message(const char *id, const char *text_in) {
   if (id[0] == '#') {
     char wire[900];
     if (!xprs_pack(wire, sizeof(wire), g_call, id, text, hal_time_epoch())) {
-      notify("warning", "Could not send"); return;
+      notify("warning", wtr("msg.could_not_send", "Could not send")); return;
     }
-    if (hal_xprs_send(wire, s_len(wire)) != 0) { notify("warning", "Could not send"); return; }
+    if (hal_xprs_send(wire, s_len(wire)) != 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
     char lmid[70]; int unlike; const char *ck; char tgt[5];
     if (votemark_parse(text, lmid, &unlike, &ck)) { room_react(id, lmid, g_call, unlike, 1); return; }
     if (like_parse(text, tgt, &unlike)) { room_react(id, tgt, g_call, unlike, 1); return; }
@@ -616,7 +628,7 @@ static void send_message(const char *id, const char *text_in) {
       s_cat(wire, " d:", sizeof(wire)); s_cat(wire, id, sizeof(wire));
       s_cat(wire, unlike ? " remove:like" : " add:like", sizeof(wire));
       s_cat(wire, " r:", sizeof(wire)); s_cat(wire, lmid, sizeof(wire));
-      if (hal_xprs_send(wire, s_len(wire)) != 0) { notify("warning", "Could not send"); return; }
+      if (hal_xprs_send(wire, s_len(wire)) != 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
       room_react(id, lmid, g_call, unlike, 1);
       return;
     }
@@ -630,9 +642,8 @@ static void send_message(const char *id, const char *text_in) {
   int32_t form = hal_xprs_message(id, s_len(id), text, s_len(text),
                                   priv ? 1u : 0u, mid, sizeof(mid));
   if (form == -1) {
-    sysnote(id, "No key for this contact yet - asked for it. Your message was "
-                "NOT sent; try again in a moment.");
-    notify("warning", "No key for this contact yet");
+    sysnote(id, wtr("msg.no_key_note", "No key for this contact yet - asked for it. Your message was NOT sent; try again in a moment."));
+    notify("warning", wtr("msg.no_key", "No key for this contact yet"));
     return;
   }
   if (form == -3) {
@@ -643,22 +654,19 @@ static void send_message(const char *id, const char *text_in) {
     room_set_private(id, 0);
     {
       const char *net = xprs_network_name(id);
-      char line[240], warn[64];
-      s_cpy(line, "This contact is on ", sizeof line);
+      char line[400], warn[120];
+      s_cpy(line, wtr("msg.foreign_sealed_a", "This contact is on "), sizeof line);
       s_cat(line, net, sizeof line);
-      s_cat(line, ", which cannot open a sealed message. Your message was "
-                  "NOT sent. The conversation is now plain text and crosses "
-                  "a public channel anyone nearby can read; send again if "
-                  "that is fine.", sizeof line);
-      s_cpy(warn, "Not sent: a ", sizeof warn);
+      s_cat(line, wtr("msg.foreign_sealed_b", ", which cannot open a sealed message. Your message was NOT sent. The conversation is now plain text and crosses a public channel anyone nearby can read; send again if that is fine."), sizeof line);
+      s_cpy(warn, wtr("msg.not_sent_foreign_a", "Not sent: a "), sizeof warn);
       s_cat(warn, net, sizeof warn);
-      s_cat(warn, " contact cannot be sealed to", sizeof warn);
+      s_cat(warn, wtr("msg.not_sent_foreign_b", " contact cannot be sealed to"), sizeof warn);
       sysnote(id, line);
       notify("warning", warn);
     }
     return;
   }
-  if (form <= 0) { notify("warning", "Could not send"); return; }
+  if (form <= 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
   if (form == 3) {
     /* Plain, through a gateway onto another network's public channel. Said
      * once per conversation while the wapp runs, not on every bubble. */
@@ -669,12 +677,12 @@ static void send_message(const char *id, const char *text_in) {
       s_cpy(told[told_n % 8], id, sizeof told[0]);
       told_n++;
       const char *net = xprs_network_name(id);
-      char line[200];
-      s_cpy(line, "Sent through a gateway to ", sizeof line);
+      char line[320];
+      s_cpy(line, wtr("msg.gateway_a", "Sent through a gateway to "), sizeof line);
       s_cat(line, net, sizeof line);
-      s_cat(line, ", on a public channel: anyone nearby with a ", sizeof line);
+      s_cat(line, wtr("msg.gateway_b", ", on a public channel: anyone nearby with a "), sizeof line);
       s_cat(line, net, sizeof line);
-      s_cat(line, " radio can read it.", sizeof line);
+      s_cat(line, wtr("msg.gateway_c", " radio can read it."), sizeof line);
       sysnote(id, line);
     }
   }
@@ -713,20 +721,20 @@ static void edit_message(const char *id, const char *orig, const char *text_in) 
   if (!id[0] || !orig[0] || !text[0] || !room_renderable(id)) return;
   char author[24] = "";
   if (!room_message_sender(id, orig, author, sizeof(author))) {
-    notify("warning", "That message is gone");
+    notify("warning", wtr("msg.gone", "That message is gone"));
     return;
   }
   uint64_t now = hal_time_epoch();
   if (!is_self_call(author)) {
     /* Somebody else's: only a moderator or the admin of a closed group may
      * (10.4.1), and only for somebody they outrank. */
-    if (!xgroup_is(id)) { notify("warning", "Only its author can edit this"); return; }
+    if (!xgroup_is(id)) { notify("warning", wtr("msg.only_author_edit", "Only its author can edit this")); return; }
     int mine = my_role_in(id);
     int theirs = (int)hal_xprs_group_role_at(id + 1, s_len(id + 1), author, s_len(author), (uint32_t)now);
-    if (mine < 3 || mine <= theirs) { notify("warning", "You cannot edit that message"); return; }
+    if (mine < 3 || mine <= theirs) { notify("warning", wtr("msg.cannot_edit", "You cannot edit that message")); return; }
     int rc = hal_xprs_group_moderate(id + 1, s_len(id + 1), orig, s_len(orig), text, s_len(text), 1);
-    if (rc == -2) { notify("warning", "Only a moderator or the admin can do that"); return; }
-    if (rc != 0) { notify("warning", "Could not edit (too long?)"); return; }
+    if (rc == -2) { notify("warning", wtr("msg.mod_only", "Only a moderator or the admin can do that")); return; }
+    if (rc != 0) { notify("warning", wtr("msg.could_not_edit_long", "Could not edit (too long?)")); return; }
     room_moderation_sync(id);
     return;
   }
@@ -735,20 +743,20 @@ static void edit_message(const char *id, const char *orig, const char *text_in) 
   if (xprs_is_station(id) && !xgroup_is(id)) {
     int32_t form = hal_xprs_edit(id, s_len(id), orig, s_len(orig), text, s_len(text),
                                  room_is_private(id) ? 1u : 0u, eid, sizeof(eid));
-    if (form == -1) { notify("warning", "No key for this contact yet. Not edited"); return; }
-    if (form == -3) { notify("warning", "This contact cannot open a sealed message. Not edited"); return; }
-    if (form <= 0 || !eid[0]) { notify("warning", "Could not edit"); return; }
+    if (form == -1) { notify("warning", wtr("msg.no_key_not_edited", "No key for this contact yet. Not edited")); return; }
+    if (form == -3) { notify("warning", wtr("msg.sealed_not_edited", "This contact cannot open a sealed message. Not edited")); return; }
+    if (form <= 0 || !eid[0]) { notify("warning", wtr("msg.could_not_edit", "Could not edit")); return; }
     enc = form == 1;
     room_tx_note(eid, id);
   } else if (xgroup_is(id) || xroom_is(id)) {
     char wire[400];
-    if (!wire_for_room(id, orig, text, wire, sizeof(wire))) { notify("warning", "Message too long"); return; }
+    if (!wire_for_room(id, orig, text, wire, sizeof(wire))) { notify("warning", wtr("msg.too_long", "Message too long")); return; }
     int32_t rc = hal_xprs_send(wire, s_len(wire));
-    if (rc == -2) { notify("warning", "You can post here once you accept the invitation"); return; }
-    if (rc != 0) { notify("warning", "Could not edit"); return; }
+    if (rc == -2) { notify("warning", wtr("msg.accept_first", "You can post here once you accept the invitation")); return; }
+    if (rc != 0) { notify("warning", wtr("msg.could_not_edit", "Could not edit")); return; }
     xprs_id(wire, s_len(wire), eid);
   } else {
-    notify("warning", "Editing is not available in this room");
+    notify("warning", wtr("msg.no_edit_here", "Editing is not available in this room"));
     return;
   }
   room_version_add(id, orig, eid, VER_EDIT, g_call, now, text, enc, eid[0] && xprs_is_station(id) ? eid : "",
@@ -758,29 +766,29 @@ static void edit_message(const char *id, const char *orig, const char *text_in) 
 static void unsend_message(const char *id, const char *orig) {
   if (!id[0] || !orig[0] || !room_renderable(id)) return;
   char author[24] = "";
-  if (!room_message_sender(id, orig, author, sizeof(author))) { notify("warning", "That message is gone"); return; }
+  if (!room_message_sender(id, orig, author, sizeof(author))) { notify("warning", wtr("msg.gone", "That message is gone")); return; }
   uint64_t now = hal_time_epoch();
   if (!is_self_call(author)) {
-    if (!xgroup_is(id)) { notify("warning", "Only its author can delete this"); return; }
+    if (!xgroup_is(id)) { notify("warning", wtr("msg.only_author_delete", "Only its author can delete this")); return; }
     int mine = my_role_in(id);
     int theirs = (int)hal_xprs_group_role_at(id + 1, s_len(id + 1), author, s_len(author), (uint32_t)now);
-    if (mine < 3 || mine <= theirs) { notify("warning", "You cannot delete that message"); return; }
+    if (mine < 3 || mine <= theirs) { notify("warning", wtr("msg.cannot_delete", "You cannot delete that message")); return; }
     int rc = hal_xprs_group_moderate(id + 1, s_len(id + 1), orig, s_len(orig), "", 0, 2);
-    if (rc == -2) { notify("warning", "Only a moderator or the admin can do that"); return; }
-    if (rc != 0) { notify("warning", "Could not delete"); return; }
+    if (rc == -2) { notify("warning", wtr("msg.mod_only", "Only a moderator or the admin can do that")); return; }
+    if (rc != 0) { notify("warning", wtr("msg.could_not_delete", "Could not delete")); return; }
     room_moderation_sync(id);
     return;
   }
   if (xprs_is_station(id) && !xgroup_is(id)) {
-    if (hal_xprs_withdraw(id, s_len(id), orig, s_len(orig)) != 0) { notify("warning", "Could not delete"); return; }
+    if (hal_xprs_withdraw(id, s_len(id), orig, s_len(orig)) != 0) { notify("warning", wtr("msg.could_not_delete", "Could not delete")); return; }
   } else if (xgroup_is(id) || xroom_is(id)) {
     char wire[300];
-    if (!wire_for_room(id, orig, 0, wire, sizeof(wire))) { notify("warning", "Could not delete"); return; }
+    if (!wire_for_room(id, orig, 0, wire, sizeof(wire))) { notify("warning", wtr("msg.could_not_delete", "Could not delete")); return; }
     int32_t rc = hal_xprs_send(wire, s_len(wire));
-    if (rc == -2) { notify("warning", "You can post here once you accept the invitation"); return; }
-    if (rc != 0) { notify("warning", "Could not delete"); return; }
+    if (rc == -2) { notify("warning", wtr("msg.accept_first", "You can post here once you accept the invitation")); return; }
+    if (rc != 0) { notify("warning", wtr("msg.could_not_delete", "Could not delete")); return; }
   } else {
-    notify("warning", "Deleting is not available in this room");
+    notify("warning", wtr("msg.no_delete_here", "Deleting is not available in this room"));
     return;
   }
   char vid[12] = "w"; s_cat(vid, orig, sizeof(vid));
@@ -1061,12 +1069,17 @@ static void on_xr_unlock(const char *row) {
     room_reveal(id, text);
     return;
   }
-  char pm[256] = "{\"type\":\"ui.prompt\",\"id\":\"xrpw:";
+  char pm[400] = "{\"type\":\"ui.prompt\",\"id\":\"xrpw:";
   s_cat(pm, id, sizeof(pm));
-  s_cat(pm, "\",\"title\":\"Hidden text\",\"body\":\"Enter the passphrase to "
-            "reveal this message.\",\"confirm\":\"Reveal\",\"input\":{\"hint\":"
-            "\"passphrase\",\"max\":64}}",
-        sizeof(pm));
+  s_cat(pm, "\",\"title\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.reveal_title", "Hidden text"));
+  s_cat(pm, "\",\"body\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.reveal_body", "Enter the passphrase to reveal this message."));
+  s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.reveal", "Reveal"));
+  s_cat(pm, "\",\"input\":{\"hint\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.passphrase_hint", "passphrase"));
+  s_cat(pm, "\",\"max\":64}}", sizeof(pm));
   hal_msg_send(pm, s_len(pm));
 }
 
@@ -1082,7 +1095,7 @@ static void on_xr_redacted(const char *row) {
   /* The core refused it (too long to fit, or no standing in that group): there
    * is no packet and there will be no bubble, so say so rather than leave the
    * composer looking like it swallowed the message. */
-  if (!jbool_def(row, "ok", 1)) { notify("warning", "Could not send"); return; }
+  if (!jbool_def(row, "ok", 1)) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
   if (!convo[0] || !id[0]) return;
   admit(convo, id, "out", g_call, m, "", "", "verified", 0, 0, "", "", 0, 1, "");
 }
@@ -1293,21 +1306,24 @@ static void push_members_page(int offset, int header, int reset) {
      * ignores deeper. A member gets the list alone. */
     s_cat(o, ",\"actions\":[", sz);
     if (xgroup_is_admin(g_mp_gid + 1)) {
-      s_cat(o, "{\"id\":\"inv\",\"label\":\"Invite\",\"icon\":\"person_add\",\"primary\":true}", sz);
-      if (xgroup_depth(g_mp_gid + 1) < 5)
-        s_cat(o, ",{\"id\":\"fold\",\"label\":\"New folder\",\"icon\":\"create_new_folder\"}", sz);
-      s_cat(o, ",{\"id\":\"pic\",\"label\":\"Picture\",\"icon\":\"image\"}", sz);
+      s_cat(o, "{\"id\":\"inv\",\"label\":\"", sz); jesc(o, sz, wtr("label.invite", "Invite")); s_cat(o, "\",\"icon\":\"person_add\",\"primary\":true}", sz);
+      if (xgroup_depth(g_mp_gid + 1) < 5) {
+        s_cat(o, ",{\"id\":\"fold\",\"label\":\"", sz);
+        jesc(o, sz, wtr("label.new_folder", "New folder"));
+        s_cat(o, "\",\"icon\":\"create_new_folder\"}", sz);
+      }
+      s_cat(o, ",{\"id\":\"pic\",\"label\":\"", sz); jesc(o, sz, wtr("label.picture", "Picture")); s_cat(o, "\",\"icon\":\"image\"}", sz);
     }
-    s_cat(o, "],\"filters\":[{\"id\":\"\",\"label\":\"All\",\"count\":", sz);
+    s_cat(o, "],\"filters\":[{\"id\":\"\",\"label\":\"", sz); jesc(o, sz, wtr("label.all", "All")); s_cat(o, "\",\"count\":", sz);
     u_lltoa((unsigned long long)(n_all + n_inv), nb); s_cat(o, nb, sz);
     /* A chip only for a kind the group has: the core can list its admin as a
      * plain member, and "Admins 0" would only be wrong. */
     if (n_adm) {
-      s_cat(o, "},{\"id\":\"admin\",\"label\":\"Admins\",\"count\":", sz);
+      s_cat(o, "},{\"id\":\"admin\",\"label\":\"", sz); jesc(o, sz, wtr("label.admins", "Admins")); s_cat(o, "\",\"count\":", sz);
       u_lltoa((unsigned long long)n_adm, nb); s_cat(o, nb, sz);
     }
     if (n_inv) {
-      s_cat(o, "},{\"id\":\"invited\",\"label\":\"Invited\",\"count\":", sz);
+      s_cat(o, "},{\"id\":\"invited\",\"label\":\"", sz); jesc(o, sz, wtr("label.invited", "Invited")); s_cat(o, "\",\"count\":", sz);
       u_lltoa((unsigned long long)n_inv, nb); s_cat(o, nb, sz);
     }
     s_cat(o, "}]", sz);
@@ -1330,7 +1346,7 @@ static void members_open(const char *gid) {
   s_cpy(g_mp_gid, gid, sizeof(g_mp_gid));
   g_mp_q[0] = 0; g_mp_filter[0] = 0; g_mp_roster_ok = 0;
   push_members_page(0, 1, 1);
-  screen_open("Group");
+  screen_open("@screen.group");
 }
 
 /* A new closed group (26.1). The name is all the wapp has to say: the core
@@ -1343,7 +1359,7 @@ static void group_create(const char *nick) {
   char call[16] = "";
   int n = hal_xprs_group_create(nick, s_len(nick), call, sizeof(call) - 1);
   if (n <= 0 || n >= (int)sizeof(call)) {
-    notify("warning", "Could not create the group");
+    notify("warning", wtr("msg.group_failed", "Could not create the group"));
     return;
   }
   call[n] = 0;
@@ -1352,7 +1368,7 @@ static void group_create(const char *nick) {
   char title[48]; room_title(id, title, sizeof(title));
   room_start(id, title);
   push_group_members(id);
-  notify("info", "Group created");
+  notify("info", wtr("msg.group_created", "Group created"));
 }
 
 /* Offer [folder] to everyone who belongs to [gid] now (10.2: membership
@@ -1386,7 +1402,7 @@ static void folder_create(const char *gid, const char *nick) {
   int n = hal_xprs_group_folder(gid + 1, s_len(gid + 1), nick, s_len(nick),
                                 call, sizeof(call) - 1);
   if (n <= 0 || n >= (int)sizeof(call)) {
-    notify("warning", "Could not create the folder");
+    notify("warning", wtr("msg.folder_failed", "Could not create the folder"));
     return;
   }
   call[n] = 0;
@@ -1396,7 +1412,7 @@ static void folder_create(const char *gid, const char *nick) {
   char title[48]; room_title(id, title, sizeof(title));
   room_start(id, title);
   push_group_members(id);
-  notify("info", "Folder created");
+  notify("info", wtr("msg.folder_created", "Folder created"));
 }
 
 /* A group's or a folder's picture. The host picks it and makes the
@@ -1405,10 +1421,10 @@ static void folder_create(const char *gid, const char *nick) {
 static void picture_set(const char *gid, const char *token) {
   if (!xgroup_is(gid) || !token[0]) return;
   if (hal_xprs_group_picture(gid + 1, s_len(gid + 1), token, s_len(token)) != 0) {
-    notify("warning", "Only the group's admin can change its picture");
+    notify("warning", wtr("msg.admin_picture", "Only the group's admin can change its picture"));
     return;
   }
-  notify("info", "Picture changed");
+  notify("info", wtr("msg.picture_changed", "Picture changed"));
 }
 
 /* The answer to join_offer: the core signs our acceptance, and the roster
@@ -1416,7 +1432,7 @@ static void picture_set(const char *gid, const char *token) {
 static void group_join(const char *gid) {
   if (!xgroup_is(gid)) return;
   if (hal_xprs_group_accept(gid + 1, s_len(gid + 1)) != 0) {
-    notify("warning", "Could not join: the invitation is no longer open");
+    notify("warning", wtr("msg.invite_closed", "Could not join: the invitation is no longer open"));
     return;
   }
   /* The folders below it that we were offered too, which the prompt named. */
@@ -1445,18 +1461,18 @@ static void invite_open(const char *gid) {
   pf_hide_groups = 1;
   render_people("inviteuser", "", 0);
   pf_hide_groups = 0;
-  screen_open("Invite");
+  screen_open("@screen.invite");
 }
 static void invite_pick(const char *buf) {
   char call[24] = "";
   if (!pf_pick(buf, "inviteuser", call, sizeof(call)) || call[0] == '#') return;
   if (!g_invite_gid[0]) return;
   if (call[0] == 'X' && call[1] == '5') {
-    notify("warning", "A group cannot be invited, only a station");
+    notify("warning", wtr("msg.invite_station_only", "A group cannot be invited, only a station"));
     return;
   }
   if (hal_xprs_group_invite(g_invite_gid, s_len(g_invite_gid), call, s_len(call)) != 0) {
-    notify("warning", "Only the group's admin can invite");
+    notify("warning", wtr("msg.admin_invite", "Only the group's admin can invite"));
     return;
   }
   /* And into the folders below it that we keep: a group's topics are part of
@@ -1501,18 +1517,19 @@ static void profile_show(const char *call) {
   jesc(m, sizeof(m), c);
   s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), c);
   s_cat(m, "\",\"body\":\"", sizeof(m));
-  s_cat(m, blocked ? "Blocked - their messages are hidden." : "An XPRS station.", sizeof(m));
-  s_cat(m, "\",\"chips\":[", sizeof(m));
-  s_cat(m, blocked ? "{\"label\":\"Unblock\",\"value\":\"unblock\"}"
-                   : "{\"label\":\"Block\",\"value\":\"block\"}", sizeof(m));
+  jesc(m, sizeof(m), blocked ? wtr("msg.blocked_hidden", "Blocked - their messages are hidden.")
+                             : wtr("msg.a_station", "An XPRS station."));
+  s_cat(m, "\",\"chips\":[{\"label\":\"", sizeof(m));
+  jesc(m, sizeof(m), blocked ? wtr("label.unblock", "Unblock") : wtr("label.block", "Block"));
+  s_cat(m, blocked ? "\",\"value\":\"unblock\"}" : "\",\"value\":\"block\"}", sizeof(m));
   s_cat(m, "]}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
 static void do_block(const char *call) {
-  if (block_add(call)) { host_block_state(call, 1); notify("info", "Blocked - you won't see their messages"); }
+  if (block_add(call)) { host_block_state(call, 1); notify("info", wtr("msg.blocked_now", "Blocked - you won't see their messages")); }
 }
 static void do_unblock(const char *call) {
-  if (block_remove(call)) { host_block_state(call, 0); notify("info", "Unblocked"); }
+  if (block_remove(call)) { host_block_state(call, 0); notify("info", wtr("msg.unblocked", "Unblocked")); }
 }
 
 /* THE WIDGET IS CALLED "rooms", SO ITS FIELDS ARE rooms_*. The older
@@ -1666,7 +1683,7 @@ void module_handle_event(void) {
         status_admit(mid, g_call, hal_time_epoch(), text, 1);
         status_publish();
       } else {
-        notify("warning", "Could not post the status");
+        notify("warning", wtr("msg.status_failed", "Could not post the status"));
       }
     }
   }
@@ -1677,21 +1694,21 @@ void module_handle_event(void) {
   /* The three-dots menu on a row of the list. */
   else if (s_eq(cmd, "rooms_archive")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
-    if (id[0]) { room_archive(id, 1); notify("info", "Chat archived"); }
+    if (id[0]) { room_archive(id, 1); notify("info", wtr("msg.archived", "Chat archived")); }
   }
   else if (s_eq(cmd, "rooms_unarchive")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
-    if (id[0]) { room_archive(id, 0); notify("info", "Chat unarchived"); }
+    if (id[0]) { room_archive(id, 0); notify("info", wtr("msg.unarchived", "Chat unarchived")); }
   }
   else if (s_eq(cmd, "rooms_delete")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
-    if (id[0]) { room_delete(id); notify("info", "Chat deleted"); }
+    if (id[0]) { room_delete(id); notify("info", wtr("msg.deleted", "Chat deleted")); }
   }
   /* The "Archived" row at the top of the list, and a tap on one of them:
    * it comes back to the list and opens. */
   else if (s_eq(cmd, "rooms_archived")) {
     room_archived_publish();
-    screen_open("Archived");
+    screen_open("@screen.archived");
   }
   else if (s_eq(cmd, "archived_tap")) {
     char id[64] = ""; jstr(buf, "archived_id", id, sizeof(id));
@@ -1717,22 +1734,26 @@ void module_handle_event(void) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
     if (id[0] && id[0] != '#') {
       int on = room_set_private(id, !room_is_private(id));
-      if (on >= 0) notify("info", on ? "Messages to this station are sealed"
-                                    : "Messages to this station are plain text");
+      if (on >= 0) notify("info", on ? wtr("msg.sealed_on", "Messages to this station are sealed")
+                                    : wtr("msg.sealed_off", "Messages to this station are plain text"));
     }
   }
   else if (s_eq(cmd, "rooms_newchat")) {
     g_find_q[0] = 0;
     render_people("finduser", "", 0);
-    screen_open("New chat");
+    screen_open("@screen.newchat");
   }
   else if (s_eq(cmd, "rooms_newgroup")) {
-    static const char pm[] =
-      "{\"type\":\"ui.prompt\",\"id\":\"xgnew:\",\"title\":\"New group\","
-      "\"body\":\"A closed group: only the people you invite can post in it. "
-      "The name is a label; the group's callsign comes from its own key.\","
-      "\"confirm\":\"Create\",\"input\":{\"hint\":\"group name\",\"max\":24}}";
-    hal_msg_send(pm, sizeof(pm) - 1);
+    char pm[560] = "{\"type\":\"ui.prompt\",\"id\":\"xgnew:\",\"title\":\"";
+    jesc(pm, sizeof(pm), wtr("prompt.newgroup_title", "New group"));
+    s_cat(pm, "\",\"body\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.newgroup_body", "A closed group: only the people you invite can post in it. The name is a label; the group's callsign comes from its own key."));
+    s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.create", "Create"));
+    s_cat(pm, "\",\"input\":{\"hint\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.group_name_hint", "group name"));
+    s_cat(pm, "\",\"max\":24}}", sizeof(pm));
+    hal_msg_send(pm, s_len(pm));
   }
   else if (s_eq(cmd, "rooms_members")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
@@ -1751,12 +1772,17 @@ void module_handle_event(void) {
     char id[16] = ""; jstr(buf, "members_id", id, sizeof(id));
     if (s_eq(id, "inv")) invite_open(g_mp_gid);
     else if (s_eq(id, "fold") && xgroup_is(g_mp_gid)) {
-      char pm[400] = "{\"type\":\"ui.prompt\",\"id\":\"xgfold:";
+      char pm[560] = "{\"type\":\"ui.prompt\",\"id\":\"xgfold:";
       jesc(pm, sizeof(pm), g_mp_gid);
-      s_cat(pm, "\",\"title\":\"New folder\",\"body\":\"A folder for one topic "
-                "inside this group. Its members are invited to it.\","
-                "\"confirm\":\"Create\",\"input\":{\"hint\":\"folder name\",\"max\":24}}",
-            sizeof(pm));
+      s_cat(pm, "\",\"title\":\"", sizeof(pm));
+      jesc(pm, sizeof(pm), wtr("prompt.newfolder_title", "New folder"));
+      s_cat(pm, "\",\"body\":\"", sizeof(pm));
+      jesc(pm, sizeof(pm), wtr("prompt.newfolder_body", "A folder for one topic inside this group. Its members are invited to it."));
+      s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
+      jesc(pm, sizeof(pm), wtr("prompt.create", "Create"));
+      s_cat(pm, "\",\"input\":{\"hint\":\"", sizeof(pm));
+      jesc(pm, sizeof(pm), wtr("prompt.folder_name_hint", "folder name"));
+      s_cat(pm, "\",\"max\":24}}", sizeof(pm));
       hal_msg_send(pm, s_len(pm));
     }
     else if (s_eq(id, "pic") && xgroup_is(g_mp_gid)) {
@@ -1781,7 +1807,7 @@ void module_handle_event(void) {
   else if (s_eq(cmd, "rooms_search")) {
     g_sa_q[0] = 0;
     render_people("searchall", "", 1);
-    screen_open("Search");
+    screen_open("@screen.search");
   }
   else if (s_eq(cmd, "searchall_search")) {
     jstr(buf, "searchall_query", g_sa_q, sizeof(g_sa_q));
@@ -1795,7 +1821,7 @@ void module_handle_event(void) {
     pf_render_ex("searchall", g_sa_q, 1, chats);
   }
   else if (s_eq(cmd, "searchall_tap")) go_tap(buf, "searchall_id");
-  else if (s_eq(cmd, "rooms_settings")) screen_open("Settings");
+  else if (s_eq(cmd, "rooms_settings")) screen_open("@screen.settings");
   else if (s_eq(cmd, "profile")) {
     char c[16] = ""; jstr(buf, "profile_call", c, sizeof(c));
     profile_show(c);
@@ -1860,7 +1886,7 @@ void module_handle_event(void) {
     g_chan_local = jbool_def(buf, "chan_local", 1);
     chan_save();
     room_set_local_enabled(g_chan_local);
-    notify("info", g_chan_local ? "Local chat is on" : "Local chat is off");
+    notify("info", g_chan_local ? wtr("msg.local_on", "Local chat is on") : wtr("msg.local_off", "Local chat is off"));
   }
 }
 

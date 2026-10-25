@@ -1,0 +1,21 @@
+{
+  "_meta": {
+    "language": "Français",
+    "reviewed": false
+  },
+  "screen.forum": "Forum",
+  "screen.forum_tip": "Parcourez les sections, les fils et les réponses.",
+  "screen.compose": "Rédiger",
+  "screen.compose_tip": "Écrire un nouveau fil ou une réponse.",
+  "field.title": "Titre",
+  "field.title_tip": "Titre d'un nouveau fil (ignoré pour une réponse).",
+  "field.body": "Message",
+  "field.body_tip": "Le texte de votre message. Le Markdown est conservé tel quel.",
+  "action.post": "Publier",
+  "action.post_tip": "Envoyer le message. Signé avec vos clés NOSTR si disponibles.",
+  "action.cancel": "Annuler",
+  "action.back": "Retour",
+  "action.refresh": "Actualiser",
+  "action.new_thread": "Nouveau fil",
+  "empty.forum": "Pas encore de collection de forum. Créez-en une depuis le client natif pour commencer."
+}

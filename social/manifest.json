@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.social",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "kind": "app",
   "title": "Status",
   "description": "Post a status and see what people around you are saying.",

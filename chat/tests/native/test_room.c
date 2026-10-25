@@ -897,7 +897,7 @@ TEST(actions_reach_their_handlers) {
   fresh();
   inbox_set("{\"type\":\"action\",\"action\":\"rooms_search\"}");
   module_handle_event();
-  CHECK(cap_contains("\"ui.screen.open\",\"name\":\"Search\""));
+  CHECK(cap_contains("\"ui.screen.open\",\"name\":\"@screen.search\""));
   cap_clear();
   inbox_set("{\"command\":\"searchall_search\",\"searchall_query\":\"#news\"}");
   module_handle_event();
@@ -1029,7 +1029,7 @@ TEST(archive_takes_a_room_off_the_list_and_keeps_it_quiet) {
   module_handle_event();
   CHECK(cap_contains("\"field\":\"archived\""));
   CHECK(cap_contains("arc:#LOCAL"));
-  CHECK(cap_contains("\"name\":\"Archived\""));
+  CHECK(cap_contains("\"name\":\"@screen.archived\""));
   cap_clear();
   inbox_set("{\"command\":\"archived_tap\",\"archived_id\":\"arc:#LOCAL\"}");
   module_handle_event();
@@ -1310,7 +1310,7 @@ TEST(the_member_panel_lists_the_roster_when_the_people_button_is_tapped) {
   cap_clear();
   inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5ROOM\"}");
   module_handle_event();
-  CHECK(cap_contains("\"ui.screen.open\",\"name\":\"Group\""));
+  CHECK(cap_contains("\"ui.screen.open\",\"name\":\"@screen.group\""));
   const char *m = cap_find("ui.members.set");
   CHECK(m && strstr(m, "\"field\":\"members\""));
   CHECK(m && strstr(m, "X1ARKL") && strstr(m, "X16JK8") && strstr(m, "X1WATT"));
@@ -1431,7 +1431,7 @@ TEST(the_admin_invites_from_the_member_panel_and_the_core_signs) {
   cap_clear();
   inbox_set("{\"command\":\"members_action\",\"members_id\":\"inv\"}");
   module_handle_event();
-  CHECK(cap_contains("\"ui.screen.open\",\"name\":\"Invite\""));
+  CHECK(cap_contains("\"ui.screen.open\",\"name\":\"@screen.invite\""));
   { const char *m = cap_find("ui.people.set"); CHECK(m && strstr(m, "inviteuser") && strstr(m, "go:X1NEAR")); }
   /* A tap asks the core to offer membership, and says so. */
   cap_clear();

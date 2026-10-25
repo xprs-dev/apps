@@ -2,6 +2,7 @@
 #include "db.h"
 #include "xprs.h"
 #include "xprs_wasm_hal.h"
+#include "../sdk/wapp_i18n.h"
 
 /* The three rooms by range (XPRS.md 9.11): what is said undirected, filed
  * by the scope its author gave it. Local is Bluetooth, ESP-NOW and the LAN;
@@ -188,7 +189,7 @@ static const char *via_label(const char *via) {
   if (s_eq(via, "uhf"))     return "UHF";
   if (s_eq(via, "hf"))      return "HF";
   if (s_eq(via, "rns"))     return "Reticulum";
-  if (s_eq(via, "custody")) return "Carried";
+  if (s_eq(via, "custody")) return wtr("label.carried", "Carried");
   return via;
 }
 
@@ -356,7 +357,9 @@ static int room_resolve(int h, const char *room, const char *mid, room_view_t *v
   if (v->deleted) { v->text[0] = 0; v->edited = 0; }
   if (hist && have_mod && !viewer_mod) {
     s_cpy(g_ht, hist + mod_off, sizeof(g_ht));
-    s_cpy(hist, "{\"note\":\"Earlier versions were removed by a moderator\"},", hcap);
+    s_cpy(hist, "{\"note\":\"", hcap);
+    jesc(hist, hcap, wtr("label.mod_removed", "Earlier versions were removed by a moderator"));
+    s_cat(hist, "\"},", hcap);
     s_cat(hist, g_ht, hcap);
   }
   return (v->edited || v->deleted) ? 1 : 0;
@@ -486,7 +489,7 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
   if (enc) s_cat(m, ",\"enc\":true", sizeof(m));
   else if (id[0] != '#' && !sys) s_cat(m, ",\"plain\":true", sizeof(m));
   if (priv) s_cat(m, ",\"private\":true", sizeof(m));
-  if (obf) s_cat(m, ",\"obfuscated\":true,\"tip\":\"Tap to reveal hidden text\"", sizeof(m));
+  if (obf) { s_cat(m, ",\"obfuscated\":true,\"tip\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("label.tap_reveal", "Tap to reveal hidden text")); s_cat(m, "\"", sizeof(m)); }
   if (sys) s_cat(m, ",\"sys\":true", sizeof(m));
   if (v && v->edited) s_cat(m, ",\"edited\":true", sizeof(m));
   if (v && v->edited && v->by[0]) { s_cat(m, ",\"by\":\"", sizeof(m)); jesc(m, sizeof(m), v->by); s_cat(m, "\"", sizeof(m)); }
@@ -640,7 +643,10 @@ void room_search_section(const char *q, char *out, unsigned cap) {
                           "AND (upper(id) LIKE ? OR upper(title) LIKE ?) "
                           "ORDER BY activity_ts DESC LIMIT 24", pj_done(&p), g_q, sizeof(g_q));
   if (n <= 0) return;
-  static const char *head[2] = { "Groups", "Chats" };
+  /* Section titles are words a person reads; the `tab` values are the raw
+   * labels of the screen's `tabs` list, which the host matches byte for byte,
+   * so they stay as written in home.ui.json. */
+  const char *head[2] = { wtr("label.groups", "Groups"), wtr("label.chats", "Chats") };
   static const char *tab[2] = { "Groups", "People" };
   for (int pass = 0; pass < 2; pass++) {
     const char *cur = g_q; char row[200]; int any = 0;
@@ -659,7 +665,7 @@ void room_search_section(const char *q, char *out, unsigned cap) {
       any = 1;
       s_cat(out, "{\"id\":\"go:", cap); jesc(out, cap, id);
       s_cat(out, "\",\"title\":\"", cap); jesc(out, cap, title[0] ? title : id);
-      s_cat(out, "\",\"subtitle\":\"Open this chat\"", cap);
+      s_cat(out, "\",\"subtitle\":\"", cap); jesc(out, cap, wtr("label.open_chat", "Open this chat")); s_cat(out, "\"", cap);
       if (id[0] == '#') s_cat(out, ",\"icon\":\"tag\"", cap);
       s_cat(out, "}", cap);
     }

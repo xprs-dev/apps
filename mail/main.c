@@ -52,6 +52,7 @@
  * Build: cd apps/mail && WASI_SDK_PATH=~/wasi-sdk make
  */
 #include "../hal/xprs_wasm_hal.h"
+#include "../sdk/wapp_i18n.h"
 
 /* ── String helpers (no libc: -nostartfiles) ─────────────────────────── */
 static unsigned str_len(const char *s) { unsigned n = 0; while (s[n]) n++; return n; }
@@ -733,7 +734,9 @@ static void blocked_render(void) {
     send_msg("{\"type\":\"ui.log.clear\",\"field\":\"blocked\"}");
     if (g_block_n == 0) {
         str_copy(g_msg, "{\"type\":\"ui.log.append\",\"field\":\"blocked\","
-                        "\"line\":\"nobody is blocked\"}", sizeof(g_msg));
+                        "\"line\":\"", sizeof(g_msg));
+        json_escape_cat(g_msg, wtr("msg.nobody_blocked", "nobody is blocked"), sizeof(g_msg));
+        str_cat(g_msg, "\"}", sizeof(g_msg));
         send_msg(g_msg);
         return;
     }
@@ -830,11 +833,12 @@ static void block_convo(const char *raw_id) {
 /* Unblock prompt: the blocked keys as one-tap chips. Nobody retypes a 64-char
  * key to undo a mistap. */
 static void prompt_unblock(void) {
-    if (g_block_n == 0) { status_line("nobody is blocked"); return; }
-    str_copy(g_msg,
-        "{\"type\":\"ui.prompt\",\"id\":\"unblock\",\"title\":\"Unblock\","
-        "\"body\":\"Pick someone to unblock — their messages start arriving "
-        "again.\",\"chips\":[", sizeof(g_msg));
+    if (g_block_n == 0) { status_line(wtr("msg.nobody_blocked", "nobody is blocked")); return; }
+    str_copy(g_msg, "{\"type\":\"ui.prompt\",\"id\":\"unblock\",\"title\":\"", sizeof(g_msg));
+    json_escape_cat(g_msg, wtr("prompt.unblock_title", "Unblock"), sizeof(g_msg));
+    str_cat(g_msg, "\",\"body\":\"", sizeof(g_msg));
+    json_escape_cat(g_msg, wtr("prompt.unblock_body", "Pick someone to unblock — their messages start arriving again."), sizeof(g_msg));
+    str_cat(g_msg, "\",\"chips\":[", sizeof(g_msg));
     for (int i = 0; i < g_block_n; i++) {
         char title[40];
         int p = peer_idx(g_block[i]);
@@ -1136,7 +1140,7 @@ static void do_send(const char *peer_hex, const char *text) {
 
     if (lane1 <= 0 && lane2 <= 0) {
         status_line("send FAILED: no relay reachable on either lane");
-        notify_new("Not sent", "No relay reachable — the message was not sent.",
+        notify_new(wtr("msg.not_sent", "Not sent"), wtr("msg.no_relay", "No relay reachable — the message was not sent."),
                    rmid, peer_hex);
     }
 }
@@ -1146,11 +1150,13 @@ static void prompt_new_message(void) {
     /* `input`, not `fields` — the host's ui.prompt takes ONE text input object
      * and hands it back as prompt_input (a `fields` array is silently ignored,
      * which left this prompt with chips and no way to type a key). */
-    str_copy(g_msg,
-        "{\"type\":\"ui.prompt\",\"id\":\"newmsg\",\"title\":\"New message\","
-        "\"fullscreen\":true,\"confirm\":\"Open\","
-        "\"input\":{\"hint\":\"npub1… , hex key, callsign, or email\",\"max\":80},"
-        "\"chips\":[", sizeof(g_msg));
+    str_copy(g_msg, "{\"type\":\"ui.prompt\",\"id\":\"newmsg\",\"title\":\"", sizeof(g_msg));
+    json_escape_cat(g_msg, wtr("prompt.newmsg_title", "New message"), sizeof(g_msg));
+    str_cat(g_msg, "\",\"fullscreen\":true,\"confirm\":\"", sizeof(g_msg));
+    json_escape_cat(g_msg, wtr("prompt.open", "Open"), sizeof(g_msg));
+    str_cat(g_msg, "\",\"input\":{\"hint\":\"", sizeof(g_msg));
+    json_escape_cat(g_msg, wtr("prompt.newmsg_hint", "npub1… , hex key, callsign, or email"), sizeof(g_msg));
+    str_cat(g_msg, "\",\"max\":80},\"chips\":[", sizeof(g_msg));
     /* Known people as one-tap chips — the common case is writing to someone you
      * already know, and nobody wants to paste a 64-char key for that. */
     for (int i = 0; i < g_peer_n && i < 12; i++) {
@@ -1523,7 +1529,7 @@ void module_handle_event(void) {
                 status_line(line);
             } else {
                 status_line("cannot send: that conversation has no usable key");
-                notify_new("Not sent", "No usable key for this conversation.",
+                notify_new(wtr("msg.not_sent", "Not sent"), wtr("msg.no_key", "No usable key for this conversation."),
                            "nokey", "");
             }
         }
@@ -1587,11 +1593,14 @@ void module_handle_event(void) {
     if (str_eq(cmd, "new_message")) { prompt_new_message(); return; }
     if (str_eq(cmd, "refresh_status")) { status_refresh(); return; }
     if (str_eq(cmd, "set_email")) {
-        send_msg("{\"type\":\"ui.prompt\",\"id\":\"setemail\",\"title\":\"My email "
-                 "address\",\"body\":\"The address people can reach you at. Its "
-                 "domain must list your key in /.well-known/nostr.json (NIP-05) "
-                 "— Verify checks that for you.\",\"confirm\":\"Save\","
-                 "\"input\":{\"hint\":\"you@yourdomain.com\",\"max\":80}}");
+        str_copy(g_msg, "{\"type\":\"ui.prompt\",\"id\":\"setemail\",\"title\":\"", sizeof(g_msg));
+        json_escape_cat(g_msg, wtr("prompt.email_title", "My email address"), sizeof(g_msg));
+        str_cat(g_msg, "\",\"body\":\"", sizeof(g_msg));
+        json_escape_cat(g_msg, wtr("prompt.email_body", "The address people can reach you at. Its domain must list your key in /.well-known/nostr.json (NIP-05) — Verify checks that for you."), sizeof(g_msg));
+        str_cat(g_msg, "\",\"confirm\":\"", sizeof(g_msg));
+        json_escape_cat(g_msg, wtr("prompt.save", "Save"), sizeof(g_msg));
+        str_cat(g_msg, "\",\"input\":{\"hint\":\"you@yourdomain.com\",\"max\":80}}", sizeof(g_msg));
+        send_msg(g_msg);
         return;
     }
     if (str_eq(cmd, "verify_email")) { email_verify_start(); return; }
@@ -1619,10 +1628,16 @@ void module_handle_event(void) {
     }
     if (str_eq(cmd, "unblock")) { prompt_unblock(); return; }
     if (str_eq(cmd, "block_key")) {
-        send_msg("{\"type\":\"ui.prompt\",\"id\":\"blockkey\",\"title\":\"Block "
-                 "someone\",\"body\":\"Their messages are dropped on arrival. "
-                 "Nothing is sent — they are not told.\",\"confirm\":\"Block\","
-                 "\"input\":{\"hint\":\"npub1… or hex key\",\"max\":80}}");
+        str_copy(g_msg, "{\"type\":\"ui.prompt\",\"id\":\"blockkey\",\"title\":\"", sizeof(g_msg));
+        json_escape_cat(g_msg, wtr("prompt.block_title", "Block someone"), sizeof(g_msg));
+        str_cat(g_msg, "\",\"body\":\"", sizeof(g_msg));
+        json_escape_cat(g_msg, wtr("prompt.block_body", "Their messages are dropped on arrival. Nothing is sent — they are not told."), sizeof(g_msg));
+        str_cat(g_msg, "\",\"confirm\":\"", sizeof(g_msg));
+        json_escape_cat(g_msg, wtr("prompt.block", "Block"), sizeof(g_msg));
+        str_cat(g_msg, "\",\"input\":{\"hint\":\"", sizeof(g_msg));
+        json_escape_cat(g_msg, wtr("prompt.block_hint", "npub1… or hex key"), sizeof(g_msg));
+        str_cat(g_msg, "\",\"max\":80}}", sizeof(g_msg));
+        send_msg(g_msg);
         return;
     }
     if (str_eq(cmd, "refresh_blocked")) { blocked_render(); return; }

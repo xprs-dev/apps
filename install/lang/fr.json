@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "language": "Français",
+    "reviewed": false
+  },
+  "screen.store": "Boutique",
+  "screen.store_tip": "Applications publiées sur xprs.dev/apps. Installez d'un geste ; l'icône corbeille retire une application installée.",
+  "screen.settings": "Réglages",
+  "screen.settings_tip": "Gérez les dépôts dans lesquels la boutique lit son catalogue.",
+  "screen.sources": "Dépôts",
+  "group.sources_name": "Sources",
+  "group.sources_tip": "La boutique démarre avec https://xprs.dev/apps. Ajoutez un autre dépôt sous forme d'URL (il doit répondre avec un catalog.json ou un index.json) ou de clé de dossier Reticulum (npub... ou rns:npub...). Seul le catalogue est récupéré ; vous choisissez quoi installer."
+}

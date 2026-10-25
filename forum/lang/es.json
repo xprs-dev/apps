@@ -1,0 +1,21 @@
+{
+  "_meta": {
+    "language": "Español",
+    "reviewed": false
+  },
+  "screen.forum": "Foro",
+  "screen.forum_tip": "Recorre secciones, hilos y respuestas.",
+  "screen.compose": "Redactar",
+  "screen.compose_tip": "Escribe un hilo nuevo o una respuesta.",
+  "field.title": "Título",
+  "field.title_tip": "Título de un hilo nuevo (se ignora al responder).",
+  "field.body": "Mensaje",
+  "field.body_tip": "El texto de tu mensaje. El Markdown se conserva tal cual.",
+  "action.post": "Publicar",
+  "action.post_tip": "Enviar el mensaje. Firmado con tus claves NOSTR cuando las hay.",
+  "action.cancel": "Cancelar",
+  "action.back": "Atrás",
+  "action.refresh": "Actualizar",
+  "action.new_thread": "Hilo nuevo",
+  "empty.forum": "Aún no hay una colección de foro. Crea una desde el cliente nativo para empezar."
+}

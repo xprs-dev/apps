@@ -1,0 +1,21 @@
+{
+  "_meta": {
+    "language": "Deutsch",
+    "reviewed": false
+  },
+  "screen.forum": "Forum",
+  "screen.forum_tip": "Bereiche, Themen und Antworten durchsehen.",
+  "screen.compose": "Verfassen",
+  "screen.compose_tip": "Ein neues Thema oder eine Antwort schreiben.",
+  "field.title": "Titel",
+  "field.title_tip": "Titel eines neuen Themas (beim Antworten ignoriert).",
+  "field.body": "Nachricht",
+  "field.body_tip": "Dein Nachrichtentext. Markdown bleibt unverändert erhalten.",
+  "action.post": "Veröffentlichen",
+  "action.post_tip": "Die Nachricht absenden. Mit deinen NOSTR-Schlüsseln signiert, wenn vorhanden.",
+  "action.cancel": "Abbrechen",
+  "action.back": "Zurück",
+  "action.refresh": "Aktualisieren",
+  "action.new_thread": "Neues Thema",
+  "empty.forum": "Noch keine Forumssammlung. Lege eine im nativen Client an, um zu beginnen."
+}

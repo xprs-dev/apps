@@ -1,8 +1,8 @@
 [
   {
     "$": "screen",
-    "name": "Mesh",
-    "tip": "The mesh — Reticulum and XPRS — as this node has observed it",
+    "name": "@screen.mesh",
+    "tip": "@screen.mesh_tip",
     "children": [
       {
         "$": "group",

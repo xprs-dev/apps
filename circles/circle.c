@@ -3,6 +3,8 @@
 #include "circle.h"
 #include "db.h"
 #include "util.h"
+#define WTR_CAP 400u
+#include "../sdk/wapp_i18n.h"
 
 /* The per-wapp datagram tag is the wapp id; the host adds it automatically, so
  * here we only ever build/parse the inner JSON datagram. */
@@ -81,7 +83,8 @@ static const char *find_sub(const char *hay, const char *needle) {
 static void notify(const char *level, const char *body) {
   char m[300] = "{\"type\":\"notify\",\"level\":\"";
   s_cat(m, level, sizeof(m));
-  s_cat(m, "\",\"title\":\"Circles\",\"body\":\"", sizeof(m));
+  s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("screen.circles", "Circles"));
+  s_cat(m, "\",\"body\":\"", sizeof(m));
   jesc(m, sizeof(m), body);
   s_cat(m, "\"}", sizeof(m));
   hal_msg_send(m, s_len(m));
@@ -687,7 +690,7 @@ static void handle_keyset(const char *json) {
                      "VALUES(?,?,?,?)", par);
     i = cache_add(cid, name);
     if (i < 0) return;
-    convo_upsert(cid, name, "Invited", 0);
+    convo_upsert(cid, name, wtr("preview.invited", "Invited"), 0);
     /* Fresh join: pull the existing message history (we hold no events yet, so
      * the key-only catch-up in circle_tick would never request it). */
     send_history_req(i, 0);
@@ -881,7 +884,7 @@ static void handle_req(const char *json) {
 void circle_init(void) {
   ensure_self();
   g_index = db_open("circles/index.sqlite3");
-  if (g_index < 0) { notify("error", "Storage unavailable"); return; }
+  if (g_index < 0) { notify("error", wtr("msg.storage_unavailable", "Storage unavailable")); return; }
   db_init_index(g_index);
   char rows[8192];
   if (db_query(g_index, "SELECT id,name FROM circles ORDER BY created", 0,
@@ -917,9 +920,9 @@ void circle_init(void) {
 
 int circle_create(const char *name) {
   ensure_self();
-  if (g_index < 0 || !g_self[0]) { notify("error", "No identity / storage"); return 0; }
+  if (g_index < 0 || !g_self[0]) { notify("error", wtr("msg.no_identity_storage", "No identity / storage")); return 0; }
   char kg[300];
-  if (hal_crypto_keygen(kg, sizeof(kg)) == 0) { notify("error", "Key generation failed"); return 0; }
+  if (hal_crypto_keygen(kg, sizeof(kg)) == 0) { notify("error", wtr("msg.key_generation_failed", "Key generation failed")); return 0; }
   char priv[80], pub[80];
   if (!jstr(kg, "priv", priv, sizeof(priv)) || !jstr(kg, "pub", pub, sizeof(pub))) return 0;
   long now = (long)hal_time_epoch();
@@ -948,8 +951,8 @@ int circle_create(const char *name) {
   s_cat(mp, "\",\"", sizeof(mp)); jesc(mp, sizeof(mp), g_prop); s_cat(mp, "\"]", sizeof(mp));
   db_exec(h, "INSERT OR REPLACE INTO members(pub,added_epoch,revoked_epoch,role,deliv,prop) "
              "VALUES(?,1,NULL,?,?,?)", mp);
-  convo_upsert(pub, name, "New circle", 1);
-  notify("info", "Circle created");
+  convo_upsert(pub, name, wtr("preview.new_circle", "New circle"), 1);
+  notify("info", wtr("msg.circle_created", "Circle created"));
   return 1;
 }
 
@@ -1019,14 +1022,14 @@ static int add_member_pub(int i, const char *memb) {
  * bootstrap: hand these to a circle owner so they can add us addressed). */
 int circle_add_member(const char *circleId, const char *npub) {
   int i = idx_by_id(circleId); if (i < 0) return 0;
-  if (!owned(i)) { notify("error", "Only the owner can add members"); return 0; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_add_members", "Only the owner can add members")); return 0; }
   unsigned char pk[32];
-  if (npub_decode(npub, pk) != 0) { notify("error", "Invalid npub"); return 0; }
+  if (npub_decode(npub, pk) != 0) { notify("error", wtr("msg.invalid_npub", "Invalid npub")); return 0; }
   char memb[64];
   if (b64url_encode(pk, 32, memb, sizeof(memb)) < 0) return 0;
   add_member_pub(i, memb);
   people_set_members(i); /* refresh the People panel if it's open */
-  notify("info", "Member added");
+  notify("info", wtr("msg.member_added", "Member added"));
   return 1;
 }
 
@@ -1055,7 +1058,7 @@ int circle_delete(const char *circleId) {
   char m[120] = "{\"type\":\"ui.convo.remove\",\"id\":\"";
   s_cat(m, circleId, sizeof(m)); s_cat(m, "\"}", sizeof(m));
   hal_msg_send(m, s_len(m));
-  notify("info", "Circle removed");
+  notify("info", wtr("msg.circle_removed", "Circle removed"));
   return 1;
 }
 
@@ -1065,7 +1068,7 @@ int circle_send(const char *circleId, const char *text) {
   int h = handle_for(i); if (h < 0) return 0;
   long e = meta_epoch(h);
   unsigned char key[32];
-  if (!epoch_key(i, e, key)) { notify("error", "No key for this circle yet"); return 0; }
+  if (!epoch_key(i, e, key)) { notify("error", wtr("msg.no_key_for_this_circle_yet", "No key for this circle yet")); return 0; }
   char body[MAX_TEXT + 1]; s_cpy(body, text, sizeof(body));
   if (!body[0]) return 0;
   /* encrypt */
@@ -1073,13 +1076,13 @@ int circle_send(const char *circleId, const char *text) {
   unsigned char ct[1024];
   uint32_t n = hal_crypto_aes_encrypt((const char *)key, 32, body, s_len(body),
                                       (char *)ct, sizeof(ct));
-  if (n == 0) { notify("error", "Encrypt failed"); return 0; }
+  if (n == 0) { notify("error", wtr("msg.encrypt_failed", "Encrypt failed")); return 0; }
   if (b64url_encode(ct, n, ctb, sizeof(ctb)) < 0) return 0;
   long ts = (long)hal_time_epoch();
   char canon[1024]; canonical(canon, sizeof(canon), c_id[i], e, g_self, ts, ctb);
   char sig[160];
   if (hal_identity_sign(canon, s_len(canon), sig, sizeof(sig)) == 0) {
-    notify("error", "Sign failed"); return 0;
+    notify("error", wtr("msg.sign_failed", "Sign failed")); return 0;
   }
   char id[20]; event_id(sig, id);
   event_store(h, id, e, g_self, ts, ctb, sig, body);
@@ -1172,25 +1175,25 @@ void circle_tick(void) {
 
 void circle_open_edit(const char *circleId) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can edit this circle"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_edit_this_circle", "Only the owner can edit this circle")); return; }
   int h = handle_for(i); if (h < 0) return;
   char v[1024];
   v[0] = 0; meta_get(h, "picture", v, sizeof(v)); field_set("edit_pic", v);
   field_set("edit_name", c_name[i]);
   v[0] = 0; meta_get(h, "description", v, sizeof(v)); field_set("edit_desc", v);
-  screen_open("Edit circle");
+  screen_open("@screen.edit_circle");
 }
 
 void circle_save_edit(const char *circleId, const char *name, const char *desc) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can edit this circle"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_edit_this_circle", "Only the owner can edit this circle")); return; }
   int h = handle_for(i); if (h < 0) return;
   if (name[0]) { meta_set(h, "name", name); s_cpy(c_name[i], name, sizeof(c_name[i])); }
   char d[260]; s_cpy(d, desc, sizeof(d)); if (s_len(d) > 250) d[250] = 0;
   meta_set(h, "description", d);
   convo_upsert(c_id[i], c_name[i], "", 0);
   broadcast_keyset(i);
-  notify("info", "Saved");
+  notify("info", wtr("msg.saved", "Saved"));
 }
 
 /* ── roles ────────────────────────────────────────────────────────────── */
@@ -1198,10 +1201,14 @@ static void roles_populate(int i) {
   int h = handle_for(i); if (h < 0) return;
   char defr[48]; if (!meta_get(h, "default_role", defr, sizeof(defr))) defr[0] = 0;
   char m[8192] = "{\"type\":\"ui.people.set\",\"field\":\"roles\",\"sections\":"
-                 "[{\"title\":\"Roles\",\"items\":[";
-  s_cat(m, "{\"id\":\"__add\",\"title\":\"Add role\",\"subtitle\":"
-           "\"Create a new role\",\"avatar\":\"+\",\"action\":\"role_add\","
-           "\"actionLabel\":\"Add\",\"actionStyle\":\"filled\"}", sizeof(m));
+                 "[{\"title\":\"";
+  jesc(m, sizeof(m), wtr("section.roles", "Roles"));
+  s_cat(m, "\",\"items\":[", sizeof(m));
+  s_cat(m, "{\"id\":\"__add\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("row.add_role", "Add role"));
+  s_cat(m, "\",\"subtitle\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("row.add_role_sub", "Create a new role"));
+  s_cat(m, "\",\"avatar\":\"+\",\"action\":\"role_add\",\"actionLabel\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("action.add", "Add"));
+  s_cat(m, "\",\"actionStyle\":\"filled\"}", sizeof(m));
   char rows[4096];
   if (db_query(h, "SELECT name,description FROM roles ORDER BY name", 0, rows, sizeof(rows)) > 0) {
     const char *cur = rows; char obj[512];
@@ -1223,9 +1230,9 @@ static void roles_populate(int i) {
 
 void circle_open_roles(const char *circleId) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can manage roles"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_manage_roles", "Only the owner can manage roles")); return; }
   roles_populate(i);
-  screen_open("Roles");
+  screen_open("@screen.roles");
 }
 
 void circle_role_open_edit(const char *circleId, const char *roleName) {
@@ -1242,15 +1249,15 @@ void circle_role_open_edit(const char *circleId, const char *roleName) {
   field_set("role_name", roleName);
   field_set("role_desc", desc);
   field_set_raw("role_default", isdef ? "true" : "false");
-  screen_open("Edit role");
+  screen_open("@screen.edit_role");
 }
 
 void circle_role_save(const char *circleId, const char *oldName,
                       const char *newName, const char *desc, int makeDefault) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can manage roles"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_manage_roles", "Only the owner can manage roles")); return; }
   int h = handle_for(i); if (h < 0) return;
-  if (!newName[0]) { notify("error", "Role needs a name"); return; }
+  if (!newName[0]) { notify("error", wtr("msg.role_needs_a_name", "Role needs a name")); return; }
   char par[400] = "[\""; jesc(par, sizeof(par), newName); s_cat(par, "\",\"", sizeof(par));
   jesc(par, sizeof(par), desc); s_cat(par, "\"]", sizeof(par));
   db_exec(h, "INSERT OR REPLACE INTO roles(name,description,created) VALUES(?,?,0)", par);
@@ -1266,13 +1273,13 @@ void circle_role_save(const char *circleId, const char *oldName,
   if (makeDefault) meta_set(h, "default_role", newName);
   broadcast_keyset(i);
   roles_populate(i);
-  screen_open("Roles");
-  notify("info", "Role saved");
+  screen_open("@screen.roles");
+  notify("info", wtr("msg.role_saved", "Role saved"));
 }
 
 void circle_role_remove(const char *circleId, const char *roleName) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can manage roles"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_manage_roles", "Only the owner can manage roles")); return; }
   int h = handle_for(i); if (h < 0) return;
   char pd[80] = "[\""; jesc(pd, sizeof(pd), roleName); s_cat(pd, "\"]", sizeof(pd));
   db_exec(h, "DELETE FROM roles WHERE name=?", pd);
@@ -1289,8 +1296,8 @@ void circle_role_remove(const char *circleId, const char *roleName) {
     meta_set(h, "default_role", fb);
   broadcast_keyset(i);
   roles_populate(i);
-  screen_open("Roles");
-  notify("info", "Role removed");
+  screen_open("@screen.roles");
+  notify("info", wtr("msg.role_removed", "Role removed"));
 }
 
 void circle_set_picture(const char *circleId, const char *token) {
@@ -1328,7 +1335,7 @@ void circle_open_share(const char *circleId) {
   /* Short reference (human shorthand). */
   char shortc[40]; circle_short_code(circleId, shortc, sizeof(shortc));
   field_set("share_short", shortc);
-  screen_open("Share circle");
+  screen_open("@screen.share_circle");
 }
 
 /* Resolve a circle reference to a full circleId among the circles this device
@@ -1391,6 +1398,20 @@ static void member_disp(const char *pub, char *out, unsigned cap) {
 
 /* Emit the members of one status into a section; returns the count written. The
  * caller wraps the section. [menu] is the JSON `"menu":[...]` string for rows. */
+/* One entry of a row's menu, its label in the person's language. */
+static void menu_item(char *out, unsigned cap, const char *key, const char *en,
+                      const char *value) {
+  if (out[s_len(out) - 1] != '[') s_cat(out, ",", cap);
+  s_cat(out, "{\"label\":\"", cap); jesc(out, cap, wtr(key, en));
+  s_cat(out, "\",\"value\":\"", cap); s_cat(out, value, cap); s_cat(out, "\"}", cap);
+}
+/* Open a section: `,{"title":"<translated>","items":[` (no comma when first). */
+static void section_open(char *m, unsigned cap, int first, const char *key, const char *en) {
+  s_cat(m, first ? "{\"title\":\"" : ",{\"title\":\"", cap);
+  jesc(m, cap, wtr(key, en));
+  s_cat(m, "\",\"items\":[", cap);
+}
+
 static int people_section(int h, char *m, unsigned cap, const char *status,
                           const char *menu) {
   char par[40] = "[\""; s_cat(par, status, sizeof(par)); s_cat(par, "\"]", sizeof(par));
@@ -1407,7 +1428,7 @@ static int people_section(int h, char *m, unsigned cap, const char *status,
     char disp[80]; member_disp(pub, disp, sizeof(disp));
     s_cat(m, ",{\"id\":\"", cap); jesc(m, cap, pub);
     s_cat(m, "\",\"title\":\"", cap); jesc(m, cap, disp);
-    s_cat(m, "\",\"subtitle\":\"", cap); jesc(m, cap, role[0] ? role : "member");
+    s_cat(m, "\",\"subtitle\":\"", cap); jesc(m, cap, role[0] ? role : wtr("row.member", "member"));
     s_cat(m, "\",", cap); s_cat(m, menu, cap);
     s_cat(m, "}", cap);
     count++;
@@ -1425,7 +1446,7 @@ static void people_set_members(int i) {
   int sfirst = 1;
 
   /* Candidates (pending applications) — Approve / Reject. */
-  s_cat(m, "{\"title\":\"Candidates\",\"items\":[", sizeof(m)); sfirst = 0;
+  section_open(m, sizeof(m), 1, "section.candidates", "Candidates"); sfirst = 0;
   char qrows[8192];
   if (db_query(h, "SELECT pub,nick FROM requests ORDER BY ts", 0, qrows, sizeof(qrows)) > 0) {
     const char *cur = qrows; char obj[256]; int first = 1;
@@ -1437,55 +1458,72 @@ static void people_set_members(int i) {
       if (!first) s_cat(m, ",", sizeof(m)); first = 0;
       s_cat(m, "{\"id\":\"", sizeof(m)); jesc(m, sizeof(m), pub);
       s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), disp);
-      s_cat(m, "\",\"subtitle\":\"wants to join\",\"buttons\":["
-               "{\"icon\":\"add\",\"action\":\"req_approve\",\"tip\":\"Approve\"},"
-               "{\"icon\":\"delete\",\"action\":\"req_reject\",\"tip\":\"Reject\"}]}", sizeof(m));
+      s_cat(m, "\",\"subtitle\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("row.wants_to_join", "wants to join"));
+      s_cat(m, "\",\"buttons\":[{\"icon\":\"add\",\"action\":\"req_approve\",\"tip\":\"", sizeof(m));
+      jesc(m, sizeof(m), wtr("action.approve", "Approve"));
+      s_cat(m, "\"},{\"icon\":\"delete\",\"action\":\"req_reject\",\"tip\":\"", sizeof(m));
+      jesc(m, sizeof(m), wtr("action.reject", "Reject"));
+      s_cat(m, "\"}]}", sizeof(m));
     }
   }
   s_cat(m, "]}", sizeof(m));
 
   /* Active — Add row + members, each with a management menu. */
-  s_cat(m, ",{\"title\":\"Active\",\"items\":[", sizeof(m));
-  s_cat(m, "{\"id\":\"__add\",\"title\":\"Add member\",\"subtitle\":"
-           "\"Invite by contact, callsign or npub\",\"avatar\":\"+\","
-           "\"action\":\"add_member\",\"actionLabel\":\"Add\"}", sizeof(m));
-  people_section(h, m, sizeof(m), "active",
-      "\"menu\":[{\"label\":\"Change role\",\"value\":\"mrole\"},"
-      "{\"label\":\"Make inactive\",\"value\":\"mstat:inactive\"},"
-      "{\"label\":\"Suspend\",\"value\":\"mstat:suspended\"},"
-      "{\"label\":\"Ban\",\"value\":\"mstat:banned\"},"
-      "{\"label\":\"Remove\",\"value\":\"mremove\"}]");
+  section_open(m, sizeof(m), 0, "section.active", "Active");
+  s_cat(m, "{\"id\":\"__add\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("row.add_member", "Add member"));
+  s_cat(m, "\",\"subtitle\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("row.add_member_sub", "Invite by contact, callsign or npub"));
+  s_cat(m, "\",\"avatar\":\"+\",\"action\":\"add_member\",\"actionLabel\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("action.add", "Add"));
+  s_cat(m, "\"}", sizeof(m));
+  /* The management menus, one per status; labels in the person's language. */
+  static char menu_active[512], menu_inactive[512], menu_suspended[512], menu_banned[256];
+  s_cpy(menu_active, "\"menu\":[", sizeof(menu_active));
+  menu_item(menu_active, sizeof(menu_active), "menu.change_role", "Change role", "mrole");
+  menu_item(menu_active, sizeof(menu_active), "menu.make_inactive", "Make inactive", "mstat:inactive");
+  menu_item(menu_active, sizeof(menu_active), "menu.suspend", "Suspend", "mstat:suspended");
+  menu_item(menu_active, sizeof(menu_active), "menu.ban", "Ban", "mstat:banned");
+  menu_item(menu_active, sizeof(menu_active), "menu.remove", "Remove", "mremove");
+  s_cat(menu_active, "]", sizeof(menu_active));
+  s_cpy(menu_inactive, "\"menu\":[", sizeof(menu_inactive));
+  menu_item(menu_inactive, sizeof(menu_inactive), "menu.reactivate", "Reactivate", "mstat:active");
+  menu_item(menu_inactive, sizeof(menu_inactive), "menu.suspend", "Suspend", "mstat:suspended");
+  menu_item(menu_inactive, sizeof(menu_inactive), "menu.ban", "Ban", "mstat:banned");
+  menu_item(menu_inactive, sizeof(menu_inactive), "menu.remove", "Remove", "mremove");
+  s_cat(menu_inactive, "]", sizeof(menu_inactive));
+  s_cpy(menu_suspended, "\"menu\":[", sizeof(menu_suspended));
+  menu_item(menu_suspended, sizeof(menu_suspended), "menu.reactivate", "Reactivate", "mstat:active");
+  menu_item(menu_suspended, sizeof(menu_suspended), "menu.ban", "Ban", "mstat:banned");
+  menu_item(menu_suspended, sizeof(menu_suspended), "menu.remove", "Remove", "mremove");
+  s_cat(menu_suspended, "]", sizeof(menu_suspended));
+  s_cpy(menu_banned, "\"menu\":[", sizeof(menu_banned));
+  menu_item(menu_banned, sizeof(menu_banned), "menu.unban", "Unban", "mstat:active");
+  menu_item(menu_banned, sizeof(menu_banned), "menu.remove", "Remove", "mremove");
+  s_cat(menu_banned, "]", sizeof(menu_banned));
+  people_section(h, m, sizeof(m), "active", menu_active);
   s_cat(m, "]}", sizeof(m));
 
   /* Inactive / Suspended / Banned — shown only when they have members. */
   static char tmp[12288];
   tmp[0] = 0;
-  if (people_section(h, tmp, sizeof(tmp), "inactive",
-      "\"menu\":[{\"label\":\"Reactivate\",\"value\":\"mstat:active\"},"
-      "{\"label\":\"Suspend\",\"value\":\"mstat:suspended\"},"
-      "{\"label\":\"Ban\",\"value\":\"mstat:banned\"},"
-      "{\"label\":\"Remove\",\"value\":\"mremove\"}]") > 0) {
-    s_cat(m, ",{\"title\":\"Inactive\",\"items\":[", sizeof(m));
+  if (people_section(h, tmp, sizeof(tmp), "inactive", menu_inactive) > 0) {
+    section_open(m, sizeof(m), 0, "section.inactive", "Inactive");
     s_cat(m, tmp[0] == ',' ? tmp + 1 : tmp, sizeof(m)); s_cat(m, "]}", sizeof(m));
   }
   tmp[0] = 0;
   if (people_section(h, tmp, sizeof(tmp), "suspended",
-      "\"menu\":[{\"label\":\"Reactivate\",\"value\":\"mstat:active\"},"
-      "{\"label\":\"Ban\",\"value\":\"mstat:banned\"},"
-      "{\"label\":\"Remove\",\"value\":\"mremove\"}]") > 0) {
-    s_cat(m, ",{\"title\":\"Suspended\",\"items\":[", sizeof(m));
+      menu_suspended) > 0) {
+    section_open(m, sizeof(m), 0, "section.suspended", "Suspended");
     s_cat(m, tmp[0] == ',' ? tmp + 1 : tmp, sizeof(m)); s_cat(m, "]}", sizeof(m));
   }
   tmp[0] = 0;
   if (people_section(h, tmp, sizeof(tmp), "banned",
-      "\"menu\":[{\"label\":\"Unban\",\"value\":\"mstat:active\"},"
-      "{\"label\":\"Remove\",\"value\":\"mremove\"}]") > 0) {
-    s_cat(m, ",{\"title\":\"Banned\",\"items\":[", sizeof(m));
+      menu_banned) > 0) {
+    section_open(m, sizeof(m), 0, "section.banned", "Banned");
     s_cat(m, tmp[0] == ',' ? tmp + 1 : tmp, sizeof(m)); s_cat(m, "]}", sizeof(m));
   }
 
   /* History — recent member-management actions (info rows, no controls). */
-  s_cat(m, ",{\"title\":\"History\",\"items\":[", sizeof(m));
+  section_open(m, sizeof(m), 0, "section.history", "History");
   char arows[8192]; int afirst = 1;
   if (db_query(h, "SELECT ts,action,who FROM audit ORDER BY id DESC LIMIT 50", 0,
                arows, sizeof(arows)) > 0) {
@@ -1513,7 +1551,7 @@ static void people_set_members(int i) {
 void circle_open_people(const char *circleId) {
   int i = idx_by_id(circleId); if (i < 0) return;
   people_set_members(i);
-  screen_open("People");
+  screen_open("@screen.people");
 }
 
 void circle_roles_csv(const char *circleId, char *out, unsigned cap) {
@@ -1534,20 +1572,20 @@ void circle_roles_csv(const char *circleId, char *out, unsigned cap) {
 void circle_member_set_role(const char *circleId, const char *memberPub,
                             const char *role) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can change roles"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_change_roles", "Only the owner can change roles")); return; }
   int h = handle_for(i); if (h < 0) return;
   char par[200] = "[\""; jesc(par, sizeof(par), role); s_cat(par, "\",\"", sizeof(par));
   jesc(par, sizeof(par), memberPub); s_cat(par, "\"]", sizeof(par));
   db_exec(h, "UPDATE members SET role=? WHERE pub=?", par);
   broadcast_keyset(i);
   people_set_members(i);
-  notify("info", "Role updated");
+  notify("info", wtr("msg.role_updated", "Role updated"));
 }
 
 void circle_member_remove(const char *circleId, const char *memberPub) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can remove people"); return; }
-  if (s_eq(memberPub, g_self)) { notify("error", "You can't remove yourself"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_remove_people", "Only the owner can remove people")); return; }
+  if (s_eq(memberPub, g_self)) { notify("error", wtr("msg.you_can_t_remove_yourself", "You can't remove yourself")); return; }
   int h = handle_for(i); if (h < 0) return;
   char par[80] = "[\""; jesc(par, sizeof(par), memberPub); s_cat(par, "\"]", sizeof(par));
   db_exec(h, "DELETE FROM members WHERE pub=?", par);
@@ -1555,7 +1593,7 @@ void circle_member_remove(const char *circleId, const char *memberPub) {
   audit_add(i, "removed", memberPub);
   broadcast_keyset(i);
   people_set_members(i);
-  notify("info", "Removed");
+  notify("info", wtr("msg.removed", "Removed"));
 }
 
 /* Change a member's status (active | inactive | suspended | banned). Suspending
@@ -1564,8 +1602,8 @@ void circle_member_remove(const char *circleId, const char *memberPub) {
 void circle_member_set_status(const char *circleId, const char *memberPub,
                              const char *status) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can do this"); return; }
-  if (s_eq(memberPub, g_self)) { notify("error", "You can't change your own status"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_do_this", "Only the owner can do this")); return; }
+  if (s_eq(memberPub, g_self)) { notify("error", wtr("msg.you_can_t_change_your_own_status", "You can't change your own status")); return; }
   int h = handle_for(i); if (h < 0) return;
   char par[160] = "[\""; jesc(par, sizeof(par), status); s_cat(par, "\",\"", sizeof(par));
   jesc(par, sizeof(par), memberPub); s_cat(par, "\"]", sizeof(par));
@@ -2000,7 +2038,7 @@ static char g_acc[40];    /* folder whose access editor is open */
 void circle_folder_view(const char *circleId, const char *folderId) {
   int i = idx_by_id(circleId); if (i < 0) return;
   if (folderId[0] && !folder_can_enter(i, folderId, g_self)) {
-    notify("info", "You don't have access to this folder"); return;
+    notify("info", wtr("msg.you_don_t_have_access_to_this_folder", "You don't have access to this folder")); return;
   }
   s_cpy(g_browse, folderId, sizeof(g_browse));
   s_cpy(g_chatfolder, folderId, sizeof(g_chatfolder));
@@ -2028,7 +2066,7 @@ void circle_folder_view(const char *circleId, const char *folderId) {
       }
     }
   }
-  screen_open_title("Folder view", title);
+  screen_open_title("@screen.folder_view", title);
 }
 void circle_open_room_rail(const char *circleId) {
   int i = idx_by_id(circleId); if (i < 0) return;
@@ -2041,7 +2079,7 @@ void circle_open_folders(const char *circleId) {
 
 void circle_folder_open_edit(const char *circleId, const char *folderId) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can manage folders"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_manage_folders", "Only the owner can manage folders")); return; }
   s_cpy(g_edit, folderId, sizeof(g_edit));
   char nm[64] = "", de[256] = "", ic[256] = "", ty[16] = "chat";
   if (folderId[0]) {
@@ -2056,18 +2094,18 @@ void circle_folder_open_edit(const char *circleId, const char *folderId) {
   field_set("folder_desc", de);
   field_set("folder_icon", ic);
   field_set("folder_type", ty);
-  screen_open("Folder editor");
+  screen_open("@screen.folder_editor");
 }
 void circle_folder_edit_current(const char *circleId) {
-  if (!g_browse[0]) { notify("info", "Open a folder first"); return; }
+  if (!g_browse[0]) { notify("info", wtr("msg.open_a_folder_first", "Open a folder first")); return; }
   circle_folder_open_edit(circleId, g_browse);
 }
 void circle_folder_save(const char *circleId, const char *name, const char *desc,
                         const char *icon, const char *type) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can manage folders"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_manage_folders", "Only the owner can manage folders")); return; }
   int h = handle_for(i); if (h < 0) return;
-  if (!name[0]) { notify("error", "Folder needs a name"); return; }
+  if (!name[0]) { notify("error", wtr("msg.folder_needs_a_name", "Folder needs a name")); return; }
   char ty[16]; s_cpy(ty, type[0] ? type : "chat", sizeof(ty));
   char ic[256]; s_cpy(ic, icon, sizeof(ic));   /* empty → host shows folder icon */
   if (g_edit[0]) {
@@ -2095,7 +2133,7 @@ void circle_folder_save(const char *circleId, const char *name, const char *desc
   }
   broadcast_keyset(i);
   rail_build(i, "conv_rail", "");        /* keep the in-circle rail fresh */
-  notify("info", "Folder saved");
+  notify("info", wtr("msg.folder_saved", "Folder saved"));
   if (g_browse[0]) circle_folder_view(circleId, g_browse); /* back to the folder */
   else screen_close();                      /* created at root → back to circle chat */
 }
@@ -2108,7 +2146,7 @@ static void folder_remove_internal(int i, const char *folderId) {
 }
 void circle_folder_delete_current(const char *circleId) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can manage folders"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_manage_folders", "Only the owner can manage folders")); return; }
   if (!g_edit[0]) return;
   /* where to land after deleting: the deleted folder's parent if we deleted the
    * folder we're viewing, else stay on the current view. */
@@ -2118,7 +2156,7 @@ void circle_folder_delete_current(const char *circleId) {
   folder_remove_internal(i, g_edit);
   broadcast_keyset(i);
   rail_build(i, "conv_rail", "");
-  notify("info", "Folder removed");
+  notify("info", wtr("msg.folder_removed", "Folder removed"));
   const char *land = deletingCurrent ? pa : g_browse;
   if (land[0]) circle_folder_view(circleId, land);
   else screen_close();   /* landed at the circle root → back to the circle chat */
@@ -2126,13 +2164,13 @@ void circle_folder_delete_current(const char *circleId) {
 
 void circle_folder_open_access(const char *circleId, const char *folderId) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can set access"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_set_access", "Only the owner can set access")); return; }
   s_cpy(g_acc, folderId, sizeof(g_acc));
   faccess_populate(i, folderId);
-  screen_open("Folder access");
+  screen_open("@screen.folder_access");
 }
 void circle_folder_access_current(const char *circleId) {
-  if (!g_browse[0]) { notify("info", "Open a folder first"); return; }
+  if (!g_browse[0]) { notify("info", wtr("msg.open_a_folder_first", "Open a folder first")); return; }
   circle_folder_open_access(circleId, g_browse);
 }
 void circle_folder_role_toggle(const char *circleId, const char *role) {
@@ -2168,22 +2206,22 @@ void circle_folder_member_cycle(const char *circleId, const char *m) {
 }
 int circle_folder_send(const char *circleId, const char *text) {
   int i = idx_by_id(circleId); if (i < 0) return 0;
-  if (!g_chatfolder[0]) { notify("info", "Open a folder to post"); return 0; }
+  if (!g_chatfolder[0]) { notify("info", wtr("msg.open_a_folder_to_post", "Open a folder to post")); return 0; }
   const char *folderId = g_chatfolder;
   ensure_self();
   int h = handle_for(i); if (h < 0) return 0;
-  if (!folder_can_enter(i, folderId, g_self)) { notify("error", "No access to this folder"); return 0; }
+  if (!folder_can_enter(i, folderId, g_self)) { notify("error", wtr("msg.no_access_to_this_folder", "No access to this folder")); return 0; }
   static char row[6000]; long e = 0; if (folder_row(i, folderId, row, sizeof(row))) jint(row, "epoch", &e);
   unsigned char key[32];
-  if (e <= 0 || !folder_key_get(i, folderId, e, key)) { notify("error", "No folder key yet"); return 0; }
+  if (e <= 0 || !folder_key_get(i, folderId, e, key)) { notify("error", wtr("msg.no_folder_key_yet", "No folder key yet")); return 0; }
   char body[MAX_TEXT + 1]; s_cpy(body, text, sizeof(body)); if (!body[0]) return 0;
   unsigned char ct[1024];
   uint32_t n = hal_crypto_aes_encrypt((const char *)key, 32, body, s_len(body), (char *)ct, sizeof(ct));
-  if (n == 0) { notify("error", "Encrypt failed"); return 0; }
+  if (n == 0) { notify("error", wtr("msg.encrypt_failed", "Encrypt failed")); return 0; }
   char ctb[1400]; if (b64url_encode(ct, n, ctb, sizeof(ctb)) < 0) return 0;
   long ts = (long)hal_time_epoch();
   static char canon[1600]; folder_canonical(canon, sizeof(canon), c_id[i], folderId, e, g_self, ts, ctb);
-  char sig[160]; if (hal_identity_sign(canon, s_len(canon), sig, sizeof(sig)) == 0) { notify("error", "Sign failed"); return 0; }
+  char sig[160]; if (hal_identity_sign(canon, s_len(canon), sig, sizeof(sig)) == 0) { notify("error", wtr("msg.sign_failed", "Sign failed")); return 0; }
   char id[20]; event_id(sig, id);
   folder_event_store(h, id, folderId, e, g_self, ts, ctb, sig, body);
   static char d[2400]; s_cpy(d, "{\"k\":\"fm\",\"c\":\"", sizeof(d));
@@ -2254,7 +2292,7 @@ static void handle_jr(const char *json) {
   s_cat(par, "\",\"", sizeof(par)); jesc(par, sizeof(par), pp); s_cat(par, "\"]", sizeof(par));
   db_exec(h, "INSERT OR REPLACE INTO requests(pub,nick,ts,deliv,prop) VALUES(?,?,?,?,?)", par);
   audit_add(i, "applied", frm);
-  notify("info", "Someone applied to join your circle");
+  notify("info", wtr("msg.someone_applied_to_join_your_circle", "Someone applied to join your circle"));
   people_set_members(i);                 /* refresh the People panel if open */
 }
 
@@ -2266,11 +2304,11 @@ static void handle_jr(const char *json) {
 static void short_seed_from_id(const char *id, char *out);
 
 static int send_join_request_to(const char *cid, const char *ownerDeliv) {
-  if (idx_by_id(cid) >= 0) { notify("info", "You're already in this circle"); return 0; }
+  if (idx_by_id(cid) >= 0) { notify("info", wtr("msg.you_re_already_in_this_circle", "You're already in this circle")); return 0; }
   char canon[160]; canon[0] = 0;
   s_cat(canon, cid, sizeof(canon)); s_cat(canon, "|", sizeof(canon)); s_cat(canon, g_self, sizeof(canon));
   char sig[160]; if (hal_identity_sign(canon, s_len(canon), sig, sizeof(sig)) == 0) {
-    notify("error", "Sign failed"); return 0;
+    notify("error", wtr("msg.sign_failed", "Sign failed")); return 0;
   }
   ensure_dests();
   /* No "nm": the owner shows the applicant's npub (derived from "frm"); dropping
@@ -2293,7 +2331,7 @@ static int send_join_request_to(const char *cid, const char *ownerDeliv) {
    * direct link push fails. */
   char seed[16]; short_seed_from_id(cid, seed);
   hal_rns_rv_send(seed, s_len(seed), d, s_len(d));
-  notify("info", "Application sent — waiting for the owner to approve");
+  notify("info", wtr("msg.application_sent_waiting_for_the_owner_t", "Application sent — waiting for the owner to approve"));
   return 1;
 }
 static int send_join_request(const char *cid) {
@@ -2400,7 +2438,7 @@ static void discovery_tick(void) {
   if (!g_find_on) return;
   if (g_find_tries >= 20) {
     g_find_on = 0;
-    notify("error", "Couldn't find that circle — check the code or that the owner is online");
+    notify("error", wtr("msg.couldn_t_find_that_circle_check_the_code", "Couldn't find that circle — check the code or that the owner is online"));
     return;
   }
   g_find_tries++;
@@ -2427,13 +2465,13 @@ static void discovery_tick(void) {
   int suf = (fullId[fn - 3] == g_find_last[0] && fullId[fn - 2] == g_find_last[1] && fullId[fn - 1] == g_find_last[2]);
   if (!(pre && suf)) return;
   g_find_on = 0;
-  notify("info", "Found the circle — applying to join");
+  notify("info", wtr("msg.found_the_circle_applying_to_join", "Found the circle — applying to join"));
   send_join_request_to(fullId, ownerDeliv);
 }
 
 int circle_apply_join(const char *ref) {
   ensure_self();
-  if (!g_self[0]) { notify("error", "No identity yet — set up your profile first"); return 0; }
+  if (!g_self[0]) { notify("error", wtr("msg.no_identity_yet_set_up_your_profile_firs", "No identity yet — set up your profile first")); return 0; }
   char cid[80];
   /* Full key (works for any circle, incl. ones we've never seen), or a short
    * code we already know locally — send the join request straight away. */
@@ -2445,16 +2483,16 @@ int circle_apply_join(const char *ref) {
   if (parse_short(ref, g_find_first, g_find_last)) {
     g_find_on = 1; g_find_tries = 0;
     discovery_tick();   /* kick off the rendezvous resolve immediately */
-    notify("info", "Searching for that circle across the network…");
+    notify("info", wtr("msg.searching_for_that_circle_across_the_net", "Searching for that circle across the network…"));
     return 1;
   }
-  notify("error", "Couldn't read that circle — enter a short code like ab1-9xz or the full key");
+  notify("error", wtr("msg.couldn_t_read_that_circle_enter_a_short", "Couldn't read that circle — enter a short code like ab1-9xz or the full key"));
   return 0;
 }
 
 void circle_approve_request(const char *circleId, const char *pub) {
   int i = idx_by_id(circleId); if (i < 0) return;
-  if (!owned(i)) { notify("error", "Only the owner can approve"); return; }
+  if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_approve", "Only the owner can approve")); return; }
   int h = handle_for(i); if (h < 0) return;
   /* Pull the applicant's RNS dests from the request so the keyset/key are
    * delivered ADDRESSED to them (reliable). */
@@ -2468,7 +2506,7 @@ void circle_approve_request(const char *circleId, const char *pub) {
   db_exec(h, "DELETE FROM requests WHERE pub=?", par);
   audit_add(i, "approved", pub);
   people_set_members(i);
-  notify("info", "Approved — they're in the circle");
+  notify("info", wtr("msg.approved_they_re_in_the_circle", "Approved — they're in the circle"));
 }
 
 void circle_reject_request(const char *circleId, const char *pub) {
@@ -2479,5 +2517,5 @@ void circle_reject_request(const char *circleId, const char *pub) {
   db_exec(h, "DELETE FROM requests WHERE pub=?", par);
   audit_add(i, "rejected", pub);
   people_set_members(i);
-  notify("info", "Request dismissed");
+  notify("info", wtr("msg.request_dismissed", "Request dismissed"));
 }

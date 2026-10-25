@@ -1,7 +1,7 @@
 [
   {
     "$": "screen",
-    "name": "Chat",
+    "name": "@screen.chat",
     "icon": "campaign",
     "children": [
       {
@@ -13,95 +13,95 @@
   },
   {
     "$": "screen",
-    "name": "Start a chat",
+    "name": "@screen.start",
     "menu": true,
     "popup": true,
     "icon": "person_add",
-    "tip": "Message a station by callsign.",
+    "tip": "@screen.start_tip",
     "children": [
       {
         "$": "action",
         "name": "rooms_newchat",
-        "label": "New chat",
+        "label": "@action.newchat",
         "icon": "person_add",
-        "tip": "Find a station and start a direct conversation."
+        "tip": "@action.newchat_tip"
       }
     ]
   },
   {
     "$": "screen",
-    "name": "New group",
+    "name": "@screen.newgroup",
     "menu": true,
     "popup": true,
     "icon": "group_add",
-    "tip": "Create a closed group that only invited people can post in.",
+    "tip": "@screen.newgroup_tip",
     "children": [
       {
         "$": "action",
         "name": "rooms_newgroup",
-        "label": "New group",
+        "label": "@action.newgroup",
         "icon": "group_add",
-        "tip": "Create a closed group and open its room."
+        "tip": "@action.newgroup_tip"
       }
     ]
   },
   {
     "$": "screen",
-    "name": "Find",
+    "name": "@screen.find",
     "menu": true,
     "popup": true,
     "appbar": true,
     "appbar_only": true,
     "icon": "search",
-    "tip": "Search people, messages and groups.",
+    "tip": "@screen.find_tip",
     "children": [
       {
         "$": "action",
         "name": "rooms_search",
-        "label": "Search",
+        "label": "@action.search",
         "icon": "search",
-        "tip": "Search people, messages and groups."
+        "tip": "@action.search_tip"
       }
     ]
   },
   {
     "$": "screen",
-    "name": "Search",
+    "name": "@screen.search",
     "hidden": true,
     "toolbar": true,
     "search": true,
     "tabs": "People,Messages,Groups",
-    "tip": "Type a name, a callsign, a word from a message or #GROUP.",
+    "tip": "@screen.search_tip",
     "children": [
       {
         "$": "field",
         "name": "searchall",
         "$type": "people",
-        "empty": "Nothing found.\nTry a callsign, a word from a message or #GROUP.",
-        "tip": "Tap a result to open it."
+        "empty": "@field.searchall_empty",
+        "tip": "@field.searchall_tip"
       }
     ]
   },
   {
     "$": "screen",
-    "name": "New chat",
+    "name": "@screen.newchat",
     "hidden": true,
     "toolbar": true,
     "search": true,
-    "tip": "Find a station and start a direct conversation.",
+    "tip": "@screen.newchat_tip",
     "children": [
       {
         "$": "field",
         "name": "finduser",
         "$type": "people",
-        "empty": "Nobody within reach yet.\nStations appear here as the radio hears them - or type a callsign to message one straight away.",
-        "tip": "Every XPRS station this device has heard of."
+        "empty": "@field.finduser_empty",
+        "tip": "@field.finduser_tip"
       }
     ]
   },
   {
     "$": "screen",
-    "name": "Group",
+    "name": "@screen.group",
     "hidden": true,
     "children": [
       { "$": "field", "name": "members", "$type": "members" }
@@ -109,66 +109,66 @@
   },
   {
     "$": "screen",
-    "name": "Invite",
+    "name": "@screen.invite",
     "hidden": true,
     "toolbar": true,
     "search": true,
-    "tip": "Pick a station to invite to this group.",
+    "tip": "@screen.invite_tip",
     "children": [
       {
         "$": "field",
         "name": "inviteuser",
         "$type": "people",
-        "empty": "Nobody within reach yet.\nType a callsign to invite a station you have not heard.",
-        "tip": "Tap a station to offer it membership. It joins once it accepts."
+        "empty": "@field.inviteuser_empty",
+        "tip": "@field.inviteuser_tip"
       }
     ]
   },
   {
     "$": "screen",
-    "name": "Archived",
+    "name": "@screen.archived",
     "hidden": true,
     "toolbar": true,
-    "tip": "Chats you archived. They keep receiving, quietly.",
+    "tip": "@screen.archived_tip",
     "children": [
       {
         "$": "field",
         "name": "archived",
         "$type": "people",
-        "empty": "No archived chats.",
-        "tip": "Tap a chat to bring it back to the list and open it."
+        "empty": "@field.archived_empty",
+        "tip": "@field.archived_tip"
       }
     ]
   },
   {
     "$": "screen",
-    "name": "Nearby devices",
+    "name": "@screen.nearby",
     "icon": "radar",
-    "tip": "Open the Mesh wapp - the live map of every node and station within reach.",
+    "tip": "@screen.nearby_tip",
     "open_wapp": "mesh",
     "children": [],
     "menu": true
   },
   {
     "$": "screen",
-    "name": "Settings",
+    "name": "@screen.settings",
     "menu": true,
     "icon": "settings",
-    "tip": "Which rooms this device listens to.",
+    "tip": "@screen.settings_tip",
     "children": [
       {
         "$": "group",
         "name": "channels",
-        "tip": "The Local room is everyone within radio range. Groups and conversations are always on.",
+        "tip": "@group.channels_tip",
         "children": [
           {
             "$": "field",
             "name": "chan_local",
             "$type": "bool",
-            "label": "Local chat (nearby devices)",
+            "label": "@field.chan_local",
             "default": true,
             "apply": "chan_apply",
-            "tip": "Chatter from devices around you, over Bluetooth and the local network. Off = the room leaves the rail and stops counting as unread."
+            "tip": "@field.chan_local_tip"
           }
         ]
       }

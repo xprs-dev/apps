@@ -1,0 +1,28 @@
+{
+  "_meta": {
+    "language": "Español",
+    "reviewed": false
+  },
+  "screen.map": "Mapa",
+  "screen.map_tip": "Explora imágenes de satélite. Arrastra para mover, desplaza para ampliar.",
+  "screen.settings": "Ajustes",
+  "screen.settings_tip": "Ajustes de presentación del mapa.",
+  "group.controls": "Controles",
+  "group.tiles": "Teselas",
+  "group.tiles_tip": "Configuración del servidor de teselas.",
+  "group.cache": "Caché",
+  "group.cache_tip": "Ajustes de la caché de teselas para uso sin conexión.",
+  "field.tile_source": "Origen de las teselas",
+  "field.cache_enabled": "Activar caché",
+  "field.cache_enabled_tip": "Guardar las teselas descargadas para usarlas sin conexión.",
+  "field.cache_max": "Tamaño máximo de la caché",
+  "field.cache_max_tip": "Tamaño máximo de la caché de teselas en megabytes.",
+  "option.satellite": "Satélite (ESRI)",
+  "option.osm": "OpenStreetMap",
+  "option.topo": "Topográfico (ESRI)",
+  "action.save": "Guardar",
+  "action.save_tip": "Aplicar los ajustes.",
+  "action.cancel": "Cancelar",
+  "action.zoom_in_tip": "Acercar",
+  "action.zoom_out_tip": "Alejar"
+}

@@ -1,56 +1,56 @@
 [
   {
     "$": "screen",
-    "name": "Mail",
+    "name": "@screen.mail",
     "icon": "mail",
-    "tip": "Encrypted direct messages. Every message is a NOSTR note addressed to a person's key, carried over both the internet and the Reticulum mesh.",
+    "tip": "@screen.mail_tip",
     "children": [
       {
         "$": "group",
         "name": "conversations",
         "$type": "conversations",
-        "label": "Messages",
+        "label": "@group.conversations",
         "children": [
           { "$": "action", "name": "new_message", "icon": "edit", "slot": "list",
-            "tip": "Start a conversation — npub, hex key, a callsign, or an email address to look up" }
+            "tip": "@action.new_message_tip" }
         ]
       }
     ]
   },
   {
     "$": "screen",
-    "name": "Email",
+    "name": "@screen.email",
     "icon": "alternate_email",
     "menu": true,
-    "tip": "Your email identity. People who only have your email address reach this device when the address's domain lists your key (NIP-05: /.well-known/nostr.json).",
+    "tip": "@screen.email_tip",
     "children": [
-      { "$": "field", "name": "email_status", "$type": "log", "label": "Email identity" },
-      { "$": "action", "name": "set_email", "label": "Set my email address", "icon": "edit" },
-      { "$": "action", "name": "verify_email", "label": "Verify", "icon": "verified" }
+      { "$": "field", "name": "email_status", "$type": "log", "label": "@field.email_status" },
+      { "$": "action", "name": "set_email", "label": "@action.set_email", "icon": "edit" },
+      { "$": "action", "name": "verify_email", "label": "@action.verify_email", "icon": "verified" }
     ]
   },
   {
     "$": "screen",
-    "name": "Blocked",
+    "name": "@screen.blocked",
     "icon": "block",
     "menu": true,
-    "tip": "People whose messages are dropped on arrival. Local only — nothing is sent, and they are not told.",
+    "tip": "@screen.blocked_tip",
     "children": [
-      { "$": "field", "name": "blocked", "$type": "log", "label": "Blocked" },
-      { "$": "action", "name": "block_key", "label": "Block a key", "icon": "block" },
-      { "$": "action", "name": "unblock", "label": "Unblock", "icon": "person_add" },
-      { "$": "action", "name": "refresh_blocked", "label": "Refresh", "icon": "refresh" }
+      { "$": "field", "name": "blocked", "$type": "log", "label": "@field.blocked" },
+      { "$": "action", "name": "block_key", "label": "@action.block_key", "icon": "block" },
+      { "$": "action", "name": "unblock", "label": "@action.unblock", "icon": "person_add" },
+      { "$": "action", "name": "refresh_blocked", "label": "@action.refresh", "icon": "refresh" }
     ]
   },
   {
     "$": "screen",
-    "name": "Status",
+    "name": "@screen.status",
     "icon": "info",
     "menu": true,
-    "tip": "Where your messages are going, and what came back.",
+    "tip": "@screen.status_tip",
     "children": [
-      { "$": "field", "name": "status", "$type": "log", "label": "Delivery" },
-      { "$": "action", "name": "refresh_status", "label": "Refresh", "icon": "refresh" }
+      { "$": "field", "name": "status", "$type": "log", "label": "@field.delivery" },
+      { "$": "action", "name": "refresh_status", "label": "@action.refresh", "icon": "refresh" }
     ]
   }
 ]

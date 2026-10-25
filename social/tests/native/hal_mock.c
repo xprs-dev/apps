@@ -215,6 +215,8 @@ static int64_t g_now = 1788000000;
 void set_now(int64_t v) { g_now = v; }
 int32_t hal_time_utc_offset(void) { return 0; }
 int64_t hal_time_epoch(void) { return g_now; }
+/* No lang/ in the harness: every wtr() falls back to its English literal. */
+uint32_t hal_i18n_get(const char *k, uint32_t kl, char *o, uint32_t cap) { (void)k; (void)kl; (void)o; (void)cap; return 0; }
 void hal_log(int32_t level, const char *msg, uint32_t len) {
     (void)level; (void)msg; (void)len;
 }

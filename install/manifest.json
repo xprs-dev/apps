@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.install",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "kind": "system",
   "title": "Wapp Store",
   "description": "Find and install apps from xprs.dev.",

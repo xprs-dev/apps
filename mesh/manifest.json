@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.mesh",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "kind": "app",
   "title": "Mesh",
   "description": "See the mesh around you and manage the hubs you connect to.",

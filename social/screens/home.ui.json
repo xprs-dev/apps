@@ -1,64 +1,64 @@
 [
   {
     "$": "screen",
-    "name": "Activity",
+    "name": "@screen.activity",
     "icon": "home",
-    "tip": "Posts heard from nearby stations. Write one below and it goes out on every radio this device has.",
+    "tip": "@screen.activity_tip",
     "children": [
       {
         "$": "field",
         "name": "activity",
         "$type": "chat",
-        "hint": "What's happening?"
+        "hint": "@field.activity_hint"
       },
       {
         "$": "action",
         "name": "clear_feed",
-        "label": "Clear feed",
+        "label": "@action.clear_feed",
         "icon": "delete",
         "slot": "menu",
-        "tip": "Remove all posts currently in the feed"
+        "tip": "@action.clear_feed_tip"
       }
     ]
   },
   {
     "$": "screen",
-    "name": "Search",
+    "name": "@screen.search",
     "icon": "search",
     "menu": true,
     "appbar": true,
-    "tip": "Search the statuses this station archived, by words or by callsign.",
+    "tip": "@screen.search_tip",
     "children": [
       {
         "$": "field",
         "name": "search_input",
         "$type": "string",
-        "label": "Search",
-        "hint": "Words, or a callsign",
+        "label": "@field.search",
+        "hint": "@field.search_hint",
         "live": true
       },
       {
         "$": "field",
         "name": "search_kind",
         "$type": "enum",
-        "label": "Find",
+        "label": "@field.find",
         "default": "all",
         "apply": "search_kind_changed",
         "children": [
           {
             "$": "option",
             "name": "all",
-            "label": "Everything"
+            "label": "@option.everything"
           },
           {
             "$": "option",
             "name": "posts",
-            "label": "Posts"
+            "label": "@option.posts"
           },
           {
             "$": "option",
             "name": "people",
-            "label": "People"
+            "label": "@option.people"
           }
         ]
       },
@@ -66,29 +66,29 @@
         "$": "field",
         "name": "search_when",
         "$type": "enum",
-        "label": "When",
+        "label": "@field.when",
         "default": "any",
         "apply": "search_when_changed",
         "children": [
           {
             "$": "option",
             "name": "any",
-            "label": "Any time"
+            "label": "@option.any_time"
           },
           {
             "$": "option",
             "name": "day",
-            "label": "24 hours"
+            "label": "@option.day"
           },
           {
             "$": "option",
             "name": "week",
-            "label": "Week"
+            "label": "@option.week"
           },
           {
             "$": "option",
             "name": "month",
-            "label": "Month"
+            "label": "@option.month"
           }
         ]
       },
@@ -101,31 +101,31 @@
   },
   {
     "$": "screen",
-    "name": "Following",
+    "name": "@screen.following",
     "icon": "people",
     "menu": true,
-    "tip": "Callsigns you follow. The Following tab narrows the feed to them.",
+    "tip": "@screen.following_tip",
     "children": [
       {
         "$": "action",
         "name": "follow_add",
-        "label": "Follow a callsign",
+        "label": "@action.follow_add",
         "icon": "person_add",
         "style": "primary",
-        "tip": "Type a callsign to follow. Their posts will show under Following."
+        "tip": "@action.follow_add_tip"
       },
       {
         "$": "field",
         "name": "follow_input",
         "$type": "string",
-        "label": "Callsign",
+        "label": "@field.callsign",
         "hint": "X1ABCD"
       },
       {
         "$": "field",
         "name": "follows_list",
         "$type": "people",
-        "tip": "Callsigns you follow. Tap a row to open it."
+        "tip": "@field.follows_list_tip"
       }
     ],
     "toolbar": true

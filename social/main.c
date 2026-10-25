@@ -25,6 +25,7 @@
  * Build: cd apps/social && WASI_SDK_PATH=~/wasi-sdk make
  */
 #include "../hal/xprs_wasm_hal.h"
+#include "../sdk/wapp_i18n.h"
 
 /* ── String helpers ──────────────────────────────────────────────────── */
 static unsigned str_len(const char *s) { unsigned n = 0; while (s[n]) n++; return n; }
@@ -641,8 +642,9 @@ static void notify_about(const char *tag, const char *who, const char *what,
         str_cat(l, what, sizeof(l));
         hal_log(6, l, str_len(l));
     }
-    str_copy(g_msg, "{\"type\":\"notify\",\"level\":\"info\",\"title\":\"Status\",\"body\":\"",
-             sizeof(g_msg));
+    str_copy(g_msg, "{\"type\":\"notify\",\"level\":\"info\",\"title\":\"", sizeof(g_msg));
+    str_cat(g_msg, wtr("app.title", "Status"), sizeof(g_msg));
+    str_cat(g_msg, "\",\"body\":\"", sizeof(g_msg));
     str_cat(g_msg, who, sizeof(g_msg));
     str_cat(g_msg, what, sizeof(g_msg));
     str_cat(g_msg, "\",\"tag\":\"", sizeof(g_msg));
@@ -985,7 +987,7 @@ static void row_from_event(const char *row, int live, int draw) {
         if (draw) push_react(tgt, person, add, ours);
         /* Somebody liked something of ours. A card, not a buzz in a pocket. */
         if (live && add && !ours && my_thread(tgt))
-            notify_about(id, person, " liked your post", "app", tgt);
+            notify_about(id, person, wtr("msg.liked_your_post", " liked your post"), "app", tgt);
         return;
     }
     if (!str_eq(type, "status")) return;
@@ -1024,7 +1026,7 @@ static void row_from_event(const char *row, int live, int draw) {
     /* The thread is the parent's: opening it shows what was said and the
      * answer under it, which is the exchange the person was told about. */
     if (live && !ours && my_thread(parent))
-        notify_about(id, person, " replied to you", "both", parent);
+        notify_about(id, person, wtr("msg.replied_to_you", " replied to you"), "both", parent);
 }
 
 /* Which conversations are ours, learned from the spool at startup.
@@ -1078,7 +1080,9 @@ static void push_follows(void) {
     for (int i = 0; i < g_nfollow; i++) push_followstate(g_follow[i], 1);
 
     str_copy(g_msg, "{\"type\":\"ui.people.set\",\"field\":\"follows_list\",\"sections\":"
-                    "[{\"title\":\"Following (", sizeof(g_msg));
+                    "[{\"title\":\"", sizeof(g_msg));
+    str_cat(g_msg, wtr("section.following", "Following"), sizeof(g_msg));
+    str_cat(g_msg, " (", sizeof(g_msg));
     char cnt[8]; int v = g_nfollow, o = 0; char tmp[8];
     if (!v) { cnt[0] = '0'; cnt[1] = '\0'; }
     else { while (v) { tmp[o++] = (char)('0' + v % 10); v /= 10; } int k = 0; while (o) cnt[k++] = tmp[--o]; cnt[k] = '\0'; }
@@ -1090,7 +1094,9 @@ static void push_follows(void) {
         str_cat(g_msg, g_follow[i], sizeof(g_msg));
         str_cat(g_msg, "\",\"title\":\"", sizeof(g_msg));
         str_cat(g_msg, g_follow[i], sizeof(g_msg));
-        str_cat(g_msg, "\",\"subtitle\":\"heard over the air\"}", sizeof(g_msg));
+        str_cat(g_msg, "\",\"subtitle\":\"", sizeof(g_msg));
+        str_cat(g_msg, wtr("row.heard_over_the_air", "heard over the air"), sizeof(g_msg));
+        str_cat(g_msg, "\"}", sizeof(g_msg));
     }
     str_cat(g_msg, "]}]}", sizeof(g_msg));
     send_msg(g_msg);
@@ -1364,7 +1370,7 @@ int32_t module_handle_event(void) {
                             "verified", "", 1, "xprs", 0, 0);
             } else {
                 hal_log(4, "[social] post refused by the core", 33);
-                notify_about("", "", "Could not post", "app", "");
+                notify_about("", "", wtr("msg.could_not_post", "Could not post"), "app", "");
             }
         }
 

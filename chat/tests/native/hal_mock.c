@@ -78,6 +78,9 @@ void event_push(const char* topic, const char* row){
   if(g_ev_w-g_ev_r>=EVQ) return;
   g_ev_topic[g_ev_w%EVQ]=strdup(topic); g_ev_row[g_ev_w%EVQ]=strdup(row); g_ev_w++;
 }
+/* No lang/ files in the harness: every wtr() falls back to its English literal,
+ * which is also what the tests compare against. */
+uint32_t hal_i18n_get(const char* k,uint32_t kl,char* o,uint32_t oc){ (void)k;(void)kl;(void)o;(void)oc; return 0; }
 int32_t hal_event_subscribe(const char* t,uint32_t l){ (void)t;(void)l; return 0; }
 int32_t hal_event_unsubscribe(const char* t,uint32_t l){ (void)t;(void)l; return 0; }
 int32_t hal_event_publish(const char* t,uint32_t tl,const char* p,uint32_t pl){ (void)t;(void)tl;(void)p;(void)pl; return 0; }

@@ -1,0 +1,21 @@
+{
+  "_meta": {
+    "language": "Português (Portugal)",
+    "reviewed": false
+  },
+  "screen.forum": "Fórum",
+  "screen.forum_tip": "Percorra secções, tópicos e respostas.",
+  "screen.compose": "Escrever",
+  "screen.compose_tip": "Escrever um novo tópico ou uma resposta.",
+  "field.title": "Título",
+  "field.title_tip": "Título de um novo tópico (ignorado ao responder).",
+  "field.body": "Mensagem",
+  "field.body_tip": "O texto da sua mensagem. O Markdown é preservado tal e qual.",
+  "action.post": "Publicar",
+  "action.post_tip": "Enviar a mensagem. Assinada com as suas chaves NOSTR quando existem.",
+  "action.cancel": "Cancelar",
+  "action.back": "Voltar",
+  "action.refresh": "Atualizar",
+  "action.new_thread": "Novo tópico",
+  "empty.forum": "Ainda não há uma coleção de fórum. Crie uma no cliente nativo para começar."
+}

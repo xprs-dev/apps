@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.circles",
-  "version": "0.35.3",
+  "version": "0.35.4",
   "kind": "app",
   "title": "Circles",
   "description": "Private encrypted group chat over Reticulum.",

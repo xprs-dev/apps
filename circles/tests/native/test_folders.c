@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include "circle.h"  /* circle_apply_join and friends; gcc 14 refuses the implicit declaration */
 
 /* wapp entry points */
 void module_init(void);
@@ -91,7 +92,7 @@ int main(void){
   char c3[256]; snprintf(c3,sizeof(c3),"{\"command\":\"conv_rail_tap\",\"conv_rail_id\":\"%s\"}",fid);
   run(c3);
   const char* so=cap_find("\"type\":\"ui.screen.open\"");
-  ok("folder view opens", so && strstr(so,"Folder view"));
+  ok("folder view opens", so && strstr(so,"@screen.folder_view"));  /* screens are opened by key since lang/ */
   ok("folder view title is the folder name, not 'Folder view'", so && strstr(so,"\"title\":\"News\""));
   ok("folder chat area activated", cap_contains("\"field\":\"folderchat_active\",\"value\":true"));
 

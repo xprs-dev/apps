@@ -45,6 +45,9 @@ uint32_t hal_msg_recv(char* buf, uint32_t cap){ if(!g_inbox_set) return 0; uint3
 
 /* ---- misc HAL ---- */
 void hal_log(int32_t lvl,const char* m,uint32_t n){ (void)lvl;(void)m;(void)n; }
+/* No lang/ in the harness: every wtr() falls back to its English literal. */
+uint32_t hal_i18n_get(const char* k,uint32_t kl,char* o,uint32_t cap){ (void)k;(void)kl;(void)o;(void)cap; return 0; }
+int32_t hal_event_subscribe(const char* t,uint32_t n){ (void)t;(void)n; return 0; }
 uint64_t hal_time_ms(void){ return 0; }
 uint64_t hal_time_epoch(void){ return 1700000000ULL; }
 uint32_t hal_identity_pubkey(char* b,uint32_t cap){ const char* s="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; uint32_t n=strlen(s); if(n>cap)n=cap; memcpy(b,s,n); return n; }
