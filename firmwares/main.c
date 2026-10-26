@@ -20,7 +20,11 @@
  * cable on the phone) gets an XPRS image from xprs.dev written to it. The
  * core identifies the chip and what it runs, says which published boards
  * fit, downloads and writes the image and verifies it (hal_flash_*); this
- * wapp picks and draws.
+ * wapp picks and draws. While it still holds the cable the core also makes
+ * the board the active profile's, on its console (11.9: whoever holds the
+ * cable can reflash it anyway), so a board flashed here never waits for an
+ * owner on the air, where anybody nearby could answer first; it joins the
+ * list as yours when `core.flash` says so (on_claim).
  *
  * Every packet goes through hal_xprs_send and every secret through
  * hal_encrypt: the core owns the radio, the signature and the key, and this
@@ -1388,6 +1392,12 @@ typedef struct {
 static struct {
     char phase[16], message[200], error[200], note[120], board[24], part[32];
     int busy, scanning, supported;
+    /* The last cable claim (the core writes the owner on the board's
+     * console right after the image, XPRS.md 11.9): which station, for
+     * whom, whether it took, and its sequence number. */
+    char claim_station[12], claim_owner[16];
+    int claim_ok;
+    unsigned claim_seq;
     unsigned part_index, part_count;
     unsigned long long done, total;
     /* the probed device */
@@ -1438,6 +1448,15 @@ static void flash_read(void)
     g_fs.scanning = bool_of(j, "scanning");
     /* Absent (no state yet) reads as supported: the tab says nothing rash. */
     g_fs.supported = !(fw_json(j, "supported", g_obj, 8) && fw_eq(g_obj, "false"));
+    g_fs.claim_station[0] = g_fs.claim_owner[0] = 0;
+    g_fs.claim_ok = 0;
+    g_fs.claim_seq = 0;
+    if (fw_json_obj(j, "claim", g_obj, sizeof g_obj)) {
+        fw_json(g_obj, "station", g_fs.claim_station, sizeof g_fs.claim_station);
+        fw_json(g_obj, "owner", g_fs.claim_owner, sizeof g_fs.claim_owner);
+        g_fs.claim_ok = bool_of(g_obj, "ok");
+        g_fs.claim_seq = (unsigned)num_of(g_obj, "seq");
+    }
     g_fs.part_index = (unsigned)num_of(j, "partIndex");
     g_fs.part_count = (unsigned)num_of(j, "partCount");
     g_fs.done = num_of(j, "done");
@@ -1706,10 +1725,38 @@ static void choose(const char *id)
     }
 }
 
+/* A board the core just made ours over the cable (XPRS.md 11.9): on the
+ * list at once, as ours. It never asks to be claimed, so without this it
+ * would only turn up when discover() heard it, and a board with no WiFi yet
+ * is not heard by a desktop at all. Its key comes from the core once it is
+ * heard (key_from_core); the policy ask confirms what the cable set. Once
+ * per claim: the core numbers them. */
+static unsigned g_claim_seen;
+
+static void on_claim(void)
+{
+    if (!g_fs.claim_seq || g_fs.claim_seq == g_claim_seen) return;
+    g_claim_seen = g_fs.claim_seq;
+    if (!g_fs.claim_ok || !g_fs.claim_station[0]) return;
+    int i = add(g_fs.claim_station);
+    if (i < 0) return;
+    st_t *s = &g_st[i];
+    s->mine = 1; s->unowned = 0; s->theirs = 0;
+    fw_cpy(s->pol_owner, g_fs.claim_owner, sizeof s->pol_owner);
+    key_from_core(s, host_facts(s));
+    set_now(s, "Yours");
+    log_line(s->call, "Made yours over the USB cable");
+    save();
+    /* The Stations tab shows it under Yours now, not "Tap to claim it". */
+    push_list();
+    if (g_sel == i) push_hub();
+}
+
 /* The core moved: after a probe with one clear match, choose and fetch it. */
 static void on_flash(void)
 {
     flash_read();
+    on_claim();
     if (g_dev[0] && !g_board[0] && !g_fs.busy && probed() && g_fs.suggested[0]) {
         choose(g_fs.suggested);
         flash_read();

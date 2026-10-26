@@ -756,6 +756,38 @@ static void test_flash_writes_and_reports(void)
     CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "cancel"), "Stop cancels");
 }
 
+static void test_flash_claims_over_the_cable(void)
+{
+    /* The core wrote the owner on the board's console after the image
+     * (XPRS.md 11.9): the station is on the list as ours at once, once per
+     * claim, and a failed claim adds nothing. */
+    char st[4096];
+    snprintf(st, sizeof st, "{\"phase\":\"done\",\"busy\":false,\"message\":\"C3 written and verified. X3CABL is now yours (X1ME77), set over the cable.\",\"error\":\"\",\"supported\":true,"
+             "\"claim\":{\"station\":\"X3CABL\",\"ok\":true,\"already\":false,\"why\":\"\",\"owner\":\"X1ME77\",\"seq\":1},"
+             "\"devices\":[]," BOARDS("0.4.0", "1498736") "," PROBED ",\"board\":\"tdongle-s3\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
+    flash_state(st);
+    cap_clear();
+    flash_event();
+    int i = find("X3CABL");
+    CHECK(i >= 0 && g_st[i].mine && !g_st[i].unowned, "the claimed board is listed as ours");
+    CHECK(i >= 0 && !strcmp(g_st[i].pol_owner, "X1ME77"), "owned by this profile");
+    CHECK(cap_count("Made yours over the USB cable") == 1, "and the log says how");
+    const char *list = cap_last("\"field\":\"stations\"");
+    CHECK(list && strstr(list, "\"title\":\"Yours\"") && strstr(list, "X3CABL") && !strstr(list, "X3CABL\",\"title\":\"X3CABL\",\"subtitle\":\"Tap"),
+          "the Stations tab is redrawn with it under Yours: %s", list ? list : "");
+    flash_event();
+    CHECK(cap_count("Made yours over the USB cable") == 1, "once per claim, however often the state is read");
+
+    snprintf(st, sizeof st, "{\"phase\":\"done\",\"busy\":false,\"message\":\"written\",\"error\":\"\",\"supported\":true,"
+             "\"claim\":{\"station\":\"X3FAIL\",\"ok\":false,\"already\":false,\"why\":\"the board did not answer on its console\",\"owner\":\"X1ME77\",\"seq\":2},"
+             "\"devices\":[]," BOARDS("0.4.0", "1498736") "," PROBED ",\"board\":\"tdongle-s3\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
+    flash_state(st);
+    flash_event();
+    CHECK(find("X3FAIL") < 0, "a claim that did not take adds nothing: it will ask to be claimed");
+    command("{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"X3CABL\"}}");
+    command("{\"command\":\"forget\",\"fields\":{}}");
+}
+
 static void test_two_boards_fit_and_the_picture_picker(void)
 {
     /* A fresh device: the probe says an S3 with nothing known on it and two
@@ -943,6 +975,7 @@ int main(void)
     test_flash_tab_lists_the_cable();
     test_device_is_identified_and_the_match_is_chosen();
     test_flash_writes_and_reports();
+    test_flash_claims_over_the_cable();
     test_two_boards_fit_and_the_picture_picker();
     test_flash_refusals();
     printf("firmwares: %d checks, %d failed\n", g_checks, g_fail);

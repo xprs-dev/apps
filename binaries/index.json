@@ -316,6 +316,7 @@
   {"file":"firmwares/firmwares-0.3.10.wapp","id":"tools.xprs.firmwares","version":"0.3.10","size":85050,"title":"Firmwares","description":"Flash an XPRS board over USB and set it up."},
   {"file":"firmwares/firmwares-0.3.11.wapp","id":"tools.xprs.firmwares","version":"0.3.11","size":87827,"title":"Firmwares","description":"Flash an XPRS board over USB and set it up."},
   {"file":"firmwares/firmwares-0.3.17.wapp","id":"tools.xprs.firmwares","version":"0.3.17","size":91901,"title":"Firmwares","description":"Flash an XPRS board over USB and set it up."},
+  {"file":"firmwares/firmwares-0.3.19.wapp","id":"tools.xprs.firmwares","version":"0.3.19","size":93318,"title":"Firmwares","description":"Flash an XPRS board over USB and set it up."},
   {"file":"firmwares/firmwares-0.3.7.wapp","id":"tools.xprs.firmwares","version":"0.3.7","size":82598,"title":"Firmwares","description":"Firmwares - flash an XPRS board over USB, then set it up: claim it, put it on your WiFi, name it, and read how it is doing."},
   {"file":"firmwares/firmwares-0.3.8.wapp","id":"tools.xprs.firmwares","version":"0.3.8","size":83227,"title":"Firmwares","description":"Firmwares - flash an XPRS board over USB, then set it up: claim it, put it on your WiFi, name it, and read how it is doing."},
   {"file":"firmwares/firmwares-0.3.9.wapp","id":"tools.xprs.firmwares","version":"0.3.9","size":83152,"title":"Firmwares","description":"Flash an XPRS board over USB and set it up."},
