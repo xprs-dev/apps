@@ -76,11 +76,11 @@ uint32_t hal_rns_available(void){ return 0; }
 uint32_t hal_rns_recv(char* o,uint32_t cap){ (void)o;(void)cap; return 0; }
 int32_t  hal_contacts_query(const char* q,uint32_t ql,char* o,uint32_t cap){ (void)q;(void)ql; const char* s="[]"; uint32_t n=strlen(s); if(n>cap)return -2; memcpy(o,s,n); return n; }
 
-/* ---- sqlite-backed hal_sqlite_* ---- */
+/* ---- sqlite-backed hal_db_* ---- */
 #define MAXH 128
 static sqlite3* g_db[MAXH]; static int g_dbn=1; static char g_err[256];
 static void mkparents(const char* full){ char tmp[700]; strncpy(tmp,full,sizeof(tmp)-1); tmp[sizeof(tmp)-1]=0; for(char* p=tmp+1;*p;p++){ if(*p=='/'){ *p=0; mkdir(tmp,0777); *p='/'; } } }
-int32_t hal_sqlite_open(const char* path,uint32_t len){
+int32_t hal_db_open(const char* path,uint32_t len){
   char rel[512]; if(len>=sizeof(rel))return -1; memcpy(rel,path,len); rel[len]=0;
   char full[700]; snprintf(full,sizeof(full),"/tmp/ct/%s",rel); mkparents(full);
   sqlite3* db; if(sqlite3_open(full,&db)!=SOK) return -1;
@@ -94,13 +94,13 @@ static void bind_params(sqlite3_stmt* st,const char* params,uint32_t plen){
     else { char num[64]; int n=0; while(*p&&(*p=='-'||(*p>='0'&&*p<='9'))){ if(n<63)num[n++]=*p; p++; } num[n]=0; sqlite3_bind_int64(st,idx++,atoll(num)); }
   }
 }
-int32_t hal_sqlite_exec(int32_t h,const char* sql,uint32_t sl,const char* params,uint32_t pl){
+int32_t hal_db_exec(int32_t h,const char* sql,uint32_t sl,const char* params,uint32_t pl){
   if(h<=0||h>=MAXH||!g_db[h]) return -1; static char z[16384]; if(sl>=sizeof(z))return -1; memcpy(z,sql,sl); z[sl]=0;
   sqlite3_stmt* st; if(sqlite3_prepare_v2(g_db[h],z,-1,&st,0)!=SOK){ snprintf(g_err,sizeof(g_err),"%s",sqlite3_errmsg(g_db[h])); return -1; }
   bind_params(st,params,pl); int rc; while((rc=sqlite3_step(st))==SROW){} sqlite3_finalize(st);
   if(rc!=SDONE){ snprintf(g_err,sizeof(g_err),"%s",sqlite3_errmsg(g_db[h])); return -1; } return 0;
 }
-int32_t hal_sqlite_query(int32_t h,const char* sql,uint32_t sl,const char* params,uint32_t pl,char* out,uint32_t cap){
+int32_t hal_db_query(int32_t h,const char* sql,uint32_t sl,const char* params,uint32_t pl,char* out,uint32_t cap){
   if(h<=0||h>=MAXH||!g_db[h]) return -1; static char z[16384]; if(sl>=sizeof(z))return -1; memcpy(z,sql,sl); z[sl]=0;
   sqlite3_stmt* st; if(sqlite3_prepare_v2(g_db[h],z,-1,&st,0)!=SOK){ snprintf(g_err,sizeof(g_err),"%s",sqlite3_errmsg(g_db[h])); return -1; }
   bind_params(st,params,pl);
@@ -115,5 +115,5 @@ int32_t hal_sqlite_query(int32_t h,const char* sql,uint32_t sl,const char* param
   sqlite3_finalize(st); buf[o++]=']'; buf[o]=0;
   if((uint32_t)o>cap) return -2; memcpy(out,buf,o); return o;
 }
-uint32_t hal_sqlite_error(int32_t h,char* o,uint32_t cap){ (void)h; uint32_t n=strlen(g_err); if(n>cap)n=cap; memcpy(o,g_err,n); return n; }
-void hal_sqlite_close(int32_t h){ (void)h; }
+uint32_t hal_db_error(int32_t h,char* o,uint32_t cap){ (void)h; uint32_t n=strlen(g_err); if(n>cap)n=cap; memcpy(o,g_err,n); return n; }
+void hal_db_close(int32_t h){ (void)h; }

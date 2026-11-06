@@ -138,7 +138,7 @@ static int open_circle_db(const char *id) {
   char path[120]; path[0] = 0;
   s_cat(path, "circles/c_", sizeof(path));
   s_cat(path, id, sizeof(path));
-  s_cat(path, ".sqlite3", sizeof(path));
+  s_cat(path, ".zx", sizeof(path));
   int h = db_open(path);
   if (h >= 0) db_init_circle(h);
   return h;
@@ -883,7 +883,7 @@ static void handle_req(const char *json) {
 /* ── public API ───────────────────────────────────────────────────────── */
 void circle_init(void) {
   ensure_self();
-  g_index = db_open("circles/index.sqlite3");
+  g_index = db_open("circles/index.zx");
   if (g_index < 0) { notify("error", wtr("msg.storage_unavailable", "Storage unavailable")); return; }
   db_init_index(g_index);
   char rows[8192];
@@ -1036,7 +1036,7 @@ int circle_add_member(const char *circleId, const char *npub) {
 /* Remove a circle from THIS device: drops the index row + in-memory cache entry
  * and tells the host to drop the conversation. For an owned circle this deletes
  * it locally (other members keep their copy); for a joined one it's "leave". The
- * per-circle sqlite file is closed and orphaned (circle_init only loads circles
+ * per-circle database file is closed and orphaned (circle_init only loads circles
  * still in the index). Returns 1 on success. */
 int circle_delete(const char *circleId) {
   int i = idx_by_id(circleId);

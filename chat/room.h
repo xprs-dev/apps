@@ -4,8 +4,8 @@
  *
  * A room is a conversation: the Local room ("#LOCAL", always there), an open
  * group ("#NAME"), a closed group ("#X5ABCD", XPRS section 26) or a station
- * ("X16JK8"). Each room is its own sqlite database under rooms/, listed in
- * index.sqlite3. Nothing else remembers a message: not a ring in RAM, not a
+ * ("X16JK8"). Each room is its own database under rooms/, listed in
+ * index.zx. Nothing else remembers a message: not a ring in RAM, not a
  * key in KV, not the host. The host's conversation widget is a VIEW that this
  * unit paints from the database -- ui.convo.* out, never in.
  *

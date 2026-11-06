@@ -1,5 +1,5 @@
 /*
- * db.h — thin wrappers over the hal_sqlite_* HAL plus the circles schema.
+ * db.h — thin wrappers over the hal_db_* HAL plus the circles schema.
  * The index database lists the circles we belong to (and our master key for the
  * ones we own); each circle additionally has its own database file holding its
  * members, epoch keys and message events.

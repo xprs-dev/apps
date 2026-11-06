@@ -72,7 +72,7 @@ static int room_file(const char *id, char *out, unsigned cap) {
     else out[l++] = c;
     out[l] = 0;
   }
-  s_cat(out, ".sqlite3", cap);
+  s_cat(out, ".zx", cap);
   return 1;
 }
 
@@ -1520,8 +1520,8 @@ void room_init(const char *self) {
    * arriving message look "read on screen" when nothing is open. */
   g_open[0] = 0;
   for (int i = 0; i < ROOM_H_MAX; i++) { g_rh[i].h = -1; g_rh[i].id[0] = 0; }
-  g_idx = db_open("index.sqlite3");
-  if (g_idx < 0) { log1("[chat] index.sqlite3 would not open"); return; }
+  g_idx = db_open("index.zx");
+  if (g_idx < 0) { log1("[chat] index.zx would not open"); return; }
   db_init_index(g_idx);
   /* Clean slate. Every key an older build kept is gone, once: the rooms and
    * their history live here now, and nothing is imported. */

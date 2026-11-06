@@ -107,7 +107,7 @@ uint32_t hal_decrypt(const char *pubkey, uint32_t pubkey_len,
 
 /* ── Media archive + decentralized sharing (XPRS section 16 / Files wapp) ─────
  * The host keeps a device-wide content-addressed archive (sha256 → bytes,
- * media.sqlite3) plus a Blossom-compatible HTTP provider endpoint and a
+ * media.zx) plus a Blossom-compatible HTTP provider endpoint and a
  * BitTorrent seeder. Hashes are accepted as a full "file:<sha256>.<ext>"
  * token, a bare 43-char base64url digest, or 64-char hex. All JSON I/O. */
 
@@ -927,12 +927,15 @@ __attribute__((import_module("hal"), import_name("event_recv")))
 uint32_t hal_event_recv(char *topic_buf, uint32_t topic_buf_len,
                         char *data_buf, uint32_t data_buf_len);
 
-/* ── SQLite (per-wapp relational storage) ───────────────────────────── *
+/* ── Databases (per-wapp relational storage) ─────────────────────────── *
  *
- * Generic database access for wapps. `path` is RELATIVE to this wapp's
- * private data directory — a leading '/' and any ".." segment are
- * rejected, so a wapp can never reach another wapp's files or escape its
- * sandbox. The database is created if missing (WAL mode).
+ * Generic database access for wapps: a zxdb file (SQLite's SQL dialect,
+ * docs in the zx project: zxdb-sql.md; encrypted with the profile when the
+ * profile is). `path` is RELATIVE to this wapp's private data directory —
+ * a leading '/' and any ".." segment are rejected, so a wapp can never
+ * reach another wapp's files or escape its sandbox. The database is
+ * created if missing. A statement outside BEGIN/COMMIT is a commit of its
+ * own (about a millisecond): write several rows in one transaction.
  *
  * Binary values are NOT marshalled across the boundary: store binary as
  * base64 TEXT. Bind parameters are an optional JSON array matched to '?'
@@ -941,30 +944,30 @@ uint32_t hal_event_recv(char *topic_buf, uint32_t topic_buf_len,
  * objects (column name → value). */
 
 /* Open/create a database. Returns a handle (>=0) or -1 on error. */
-__attribute__((import_module("hal"), import_name("sqlite_open")))
-int32_t hal_sqlite_open(const char *path, uint32_t path_len);
+__attribute__((import_module("hal"), import_name("db_open")))
+int32_t hal_db_open(const char *path, uint32_t path_len);
 
 /* Run a non-SELECT statement (CREATE/INSERT/UPDATE/DELETE/PRAGMA).
- * Returns 0 on success, -1 on error (see hal_sqlite_error). */
-__attribute__((import_module("hal"), import_name("sqlite_exec")))
-int32_t hal_sqlite_exec(int32_t handle, const char *sql, uint32_t sql_len,
+ * Returns 0 on success, -1 on error (see hal_db_error). */
+__attribute__((import_module("hal"), import_name("db_exec")))
+int32_t hal_db_exec(int32_t handle, const char *sql, uint32_t sql_len,
                         const char *params_json, uint32_t params_len);
 
 /* Run a SELECT and write the result rows as a JSON array into out.
  * Returns bytes written (>=0), -1 on SQL error, or -2 if the buffer is
  * too small (retry with a larger one; use LIMIT to bound results). */
-__attribute__((import_module("hal"), import_name("sqlite_query")))
-int32_t hal_sqlite_query(int32_t handle, const char *sql, uint32_t sql_len,
+__attribute__((import_module("hal"), import_name("db_query")))
+int32_t hal_db_query(int32_t handle, const char *sql, uint32_t sql_len,
                          const char *params_json, uint32_t params_len,
                          char *out, uint32_t out_cap);
 
 /* Write the last error message for a handle into out. Returns bytes. */
-__attribute__((import_module("hal"), import_name("sqlite_error")))
-uint32_t hal_sqlite_error(int32_t handle, char *out, uint32_t out_cap);
+__attribute__((import_module("hal"), import_name("db_error")))
+uint32_t hal_db_error(int32_t handle, char *out, uint32_t out_cap);
 
 /* Close a database handle and release its resources. */
-__attribute__((import_module("hal"), import_name("sqlite_close")))
-void hal_sqlite_close(int32_t handle);
+__attribute__((import_module("hal"), import_name("db_close")))
+void hal_db_close(int32_t handle);
 
 /* ── Generic crypto (caller-supplied keys) ──────────────────────────── *
  *

@@ -4,20 +4,20 @@
 #include "util.h"
 
 int db_open(const char *relpath) {
-  return hal_sqlite_open(relpath, s_len(relpath));
+  return hal_db_open(relpath, s_len(relpath));
 }
 
 void db_close(int h) {
-  if (h >= 0) hal_sqlite_close(h);
+  if (h >= 0) hal_db_close(h);
 }
 
 int db_exec(int h, const char *sql, const char *params) {
-  return hal_sqlite_exec(h, sql, s_len(sql),
+  return hal_db_exec(h, sql, s_len(sql),
                          params ? params : "", params ? s_len(params) : 0);
 }
 
 int db_query(int h, const char *sql, const char *params, char *out, unsigned cap) {
-  return hal_sqlite_query(h, sql, s_len(sql),
+  return hal_db_query(h, sql, s_len(sql),
                           params ? params : "", params ? s_len(params) : 0,
                           out, cap);
 }
