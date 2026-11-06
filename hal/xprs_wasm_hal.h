@@ -263,7 +263,7 @@ uint32_t hal_folder_swarm(const char *folder_id, uint32_t id_len,
                           char *out_buf, uint32_t out_len);
 
 /* Pin/unpin a folder (on != 0): keep a full copy on this device, follow its
- * op-log, and advertise ourselves to the Indexers as a holder. Returns 1 when
+ * op-log, and advertise ourselves to the Archivers as a holder. Returns 1 when
  * accepted. */
 __attribute__((import_module("hal"), import_name("folder_pin")))
 uint32_t hal_folder_pin(const char *folder_id, uint32_t id_len, int32_t on);
@@ -1364,8 +1364,8 @@ int32_t hal_rns_nodes(const char *filter, uint32_t filter_len,
  * multi-hop, plus this node's own status. Overflow protocol: when the JSON
  * doesn't fit, the NEGATED required size is returned and nothing is written. */
 
-/* ── hal.node — the Indexer role (docs/NOSTR.md) ───────────────────────────
- * A role a person GRANTS, INSPECTS and REVOKES. An indexer answers "where can I
+/* ── hal.node — the Archiver role (docs/NOSTR.md) ───────────────────────────
+ * A role a person GRANTS, INSPECTS and REVOKES. An archiver answers "where can I
  * find npub X"; it holds pointers, never other people's posts.
  */
 __attribute__((import_module("hal"), import_name("node_status")))

@@ -382,7 +382,7 @@ static void push_directory(void) {
     json_raw(g_status, "querySpark", g_qSpark, sizeof(g_qSpark));
     /* Host key, not a label: hal_node_status still spells this one the old
      * way. What the tile below calls it is what the user reads. */
-    json_raw(g_status, "indexersKnown", ixKnown, sizeof(ixKnown));
+    json_raw(g_status, "archiversKnown", ixKnown, sizeof(ixKnown));
 
     str_copy(g_msg, "{\"type\":\"ui.stats.set\",\"field\":\"dir_dashboard\",\"tiles\":[",
              sizeof(g_msg));

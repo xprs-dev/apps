@@ -7,7 +7,7 @@
  * Files inside stay content-addressed (sha256), exactly like BitTorrent: the
  * directory is mutable, the bytes are not.
  *
- * The tracker is the Indexer mesh: it answers "who has this folder" with a list
+ * The tracker is the Archiver mesh: it answers "who has this folder" with a list
  * of devices and their physical profile (mains or battery, WiFi or cellular,
  * how recently we heard them), never with bytes. Pinning is how a device joins
  * the swarm: keep a full copy, follow the op-log, and advertise yourself as a
@@ -746,7 +746,7 @@ static const char *cat_label(const char *c) {
 /* The Search panel's results feed — the WHOLE network's, not this device's.
  *
  * hal_folder_search_global merges the local index with a mesh fan-out: every
- * published listing is already replicated to the indexer mesh as a signed
+ * published listing is already replicated to the archiver mesh as a signed
  * event, and a serve-node answers a full-text query against everything it
  * holds. The fan-out takes seconds, so the HAL answers from its snapshot and
  * says `busy` — the tick re-renders until the mesh has finished answering,
@@ -987,11 +987,11 @@ static void render_swarm(void) {
         s_cat(line, "  heard ", sizeof(line)); s_cat(line, ab, sizeof(line));
         s_cat(line, " ago", sizeof(line));
       }
-      /* Provenance is not decoration: after Indexer-to-Indexer sync the
+      /* Provenance is not decoration: after Archiver-to-Archiver sync the
        * freshness we are quoting is second-hand, and the age of the information
        * is not the age of the device. */
       s_cat(line, s_eq(prov, "direct") ? " (heard directly)"
-                                       : " (an Indexer told us)", sizeof(line));
+                                       : " (an Archiver told us)", sizeof(line));
       if (region[0]) {
         s_cat(line, "  region ", sizeof(line)); s_cat(line, region, sizeof(line));
       }
@@ -1257,7 +1257,7 @@ static void render_settings(void) {
   s_cat(l, " followed torrents", sizeof(l));
   log_line("settings_log", l);
   log_line("settings_log",
-           "A pinned torrent is held in full and announced to the Indexers, so "
+           "A pinned torrent is held in full and announced to the Archivers, so "
            "the swarm stops waking the publisher's phone.");
   log_line("settings_log",
            "Seeding continues while the app is in the background.");
@@ -1633,7 +1633,7 @@ void module_handle_event(void) {
       } else if (s_eq(val, "pin")) {
         hal_folder_pin(fid, s_len(fid), 1);
         stats_cache_clear();
-        notify("info", "Pinned: keeping a full copy and telling the Indexers");
+        notify("info", "Pinned: keeping a full copy and telling the Archivers");
       } else if (s_eq(val, "unpin")) {
         hal_folder_pin(fid, s_len(fid), 0);
         stats_cache_clear();

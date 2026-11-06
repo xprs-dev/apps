@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.archiver",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "kind": "app",
   "title": "Archive",
   "description": "Keep posts and files for people whose devices are offline.",

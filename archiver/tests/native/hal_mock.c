@@ -108,7 +108,7 @@ int32_t hal_archive_drop(const char *id, uint32_t len) { (void)id; (void)len; re
 int32_t hal_node_status(char *out, uint32_t cap) {
     const char *j = "{\"volunteer\":\"auto\",\"serving\":true,\"pointers\":12,"
         "\"authors\":0,\"syncPeers\":0,\"demoted\":0,\"queriesLastHour\":0,"
-        "\"queriesAvgPerHour\":0,\"querySpark\":[],\"indexersKnown\":21}";
+        "\"queriesAvgPerHour\":0,\"querySpark\":[],\"archiversKnown\":21}";
     int n = (int)strlen(j);
     if (n > (int)cap) return -n;
     memcpy(out, j, n);

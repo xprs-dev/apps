@@ -120,8 +120,8 @@
     "icon": "hub",
     "tip": "Who else has this torrent.",
     "children": [
-      { "$": "action", "name": "swarm_refresh", "label": "Refresh", "icon": "refresh", "style": "secondary", "tip": "Ask the Indexers again who is holding this folder." },
-      { "$": "field", "name": "swarm_log", "$type": "log", "label": "Holders", "tip": "Best holder first: an awake machine on mains and a real uplink beats a phone on battery and a metered data plan. \"direct\" = we heard this device ourselves; \"dht\" = an Indexer told us." }
+      { "$": "action", "name": "swarm_refresh", "label": "Refresh", "icon": "refresh", "style": "secondary", "tip": "Ask the Archivers again who is holding this folder." },
+      { "$": "field", "name": "swarm_log", "$type": "log", "label": "Holders", "tip": "Best holder first: an awake machine on mains and a real uplink beats a phone on battery and a metered data plan. \"direct\" = we heard this device ourselves; \"dht\" = an Archiver told us." }
     ]
   },
   {

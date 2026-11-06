@@ -7,7 +7,7 @@ protocol; this is the control surface over it.
 
 A torrent client whose **unit of sharing is a folder, not a file**, whose
 **address is a key** (`ntorrent1…`, docs/torrents.md §11) rather than a hash of
-the contents, and whose **tracker is the Indexer mesh** (aurora/docs/NOSTR.md).
+the contents, and whose **tracker is the Archiver mesh** (aurora/docs/NOSTR.md).
 Because the address is a key, the publisher can add or remove files and every
 holder converges on the new state under the *same link* — no new magnet, no dead
 torrent. The files inside stay content-addressed (sha256), exactly like
@@ -52,8 +52,8 @@ stays free of any app's vocabulary.
   does not fail silently.
 - **Swarm** — who else has the open torrent, best holder first. Each row is a
   device and what it is *made of*: mains or battery, WiFi or cellular, hop count,
-  how recently it was heard, and **whether we heard it ourselves or an Indexer
-  told us** — after Indexer-to-Indexer sync the freshness being quoted is
+  how recently it was heard, and **whether we heard it ourselves or an Archiver
+  told us** — after Archiver-to-Archiver sync the freshness being quoted is
   second-hand, and the age of the information is not the age of the device.
 - **Info** — the `ntorrent1…` link, the file count and size, and who holds the
   key. The link is copyable; the folder's *name* is deliberately not inside it
@@ -70,7 +70,7 @@ stays free of any app's vocabulary.
 ## Pinning is the whole point
 
 Downloading gets you the bytes. **Pinning** keeps them, follows the op-log, and
-tells the Indexers this device is a holder — which is what stops the publisher's
+tells the Archivers this device is a holder — which is what stops the publisher's
 phone from being the only copy. A pin is a vote that the thing should survive.
 
 Because of that, this wapp **autostarts in the background** (aurora's
