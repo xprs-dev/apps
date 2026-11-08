@@ -504,6 +504,61 @@ static int xroom_backfill_one(const char *room, const char *scope, int *read) {
 }
 
 /* ── Sending ──────────────────────────────────────────────────────────── */
+/* A message waits for [room]'s key: say so once per conversation while the
+ * wapp runs, and offer the one choice that is the person's to make -- send it
+ * now in the open (still signed, XPRS.md 6.1: signing needs only OUR key;
+ * sealing needs theirs) or keep waiting. */
+static void key_wait_offer(const char *room) {
+  static char told[8][16]; static unsigned told_n;
+  for (unsigned i = 0; i < told_n && i < 8; i++) if (s_eq(told[i], room)) return;
+  s_cpy(told[told_n % 8], room, sizeof told[0]);
+  told_n++;
+  sysnote(room, wtr("msg.key_wait_note", "This contact's key is not known yet. Your message waits in the outbox and will be sealed and sent as soon as the key arrives."));
+  char pm[900] = "{\"type\":\"ui.prompt\",\"id\":\"keyplain:";
+  jesc(pm, sizeof(pm), room);
+  s_cat(pm, "\",\"title\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.key_wait_title", "Waiting for the key"));
+  s_cat(pm, "\",\"body\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.key_wait_body", "Your message is in the outbox. It will be sealed and sent as soon as this contact's key arrives; the archivers have been asked for it. You can also send it now unsealed: it is still signed by you, but anyone who carries it can read it."));
+  s_cat(pm, "\",\"chips\":[{\"label\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("label.send_plain", "Send now, unsealed"));
+  s_cat(pm, "\",\"value\":\"plain\"},{\"label\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("label.wait_key", "Wait for the key"));
+  s_cat(pm, "\",\"value\":\"wait\"}]}", sizeof(pm));
+  hal_msg_send(pm, s_len(pm));
+}
+
+/* Take one waiting message back from the core's outbox and send it in the
+ * open instead. 1 sent. Nothing had been aired, so nothing is withdrawn on
+ * the wire (the core just drops its copy). */
+static int send_held_plain(const char *room, const char *held, const char *body) {
+  if (!held[0] || !body[0]) return 0;
+  if (hal_xprs_withdraw(room, s_len(room), held, s_len(held)) != 0) return 0;
+  char nid[8] = "";
+  int32_t form = hal_xprs_message(room, s_len(room), body, s_len(body), 0u, nid, sizeof(nid));
+  if (form <= 0 || !nid[0]) {
+    notify("warning", wtr("msg.could_not_send", "Could not send"));
+    return 0;
+  }
+  room_rekey(held, nid, 0);
+  return 1;
+}
+
+/* Every message of [room] still waiting for a key, sent in the open. */
+static void send_room_plain(const char *room) {
+  static char rows[8000];
+  int n = room_held(room, rows, sizeof(rows));
+  if (n <= 0) return;
+  const char *cur = rows; static char obj[1900];
+  int sent = 0;
+  while (next_object(&cur, obj, sizeof(obj))) {
+    char mid[24] = ""; static char body[900];
+    jstr(obj, "mid", mid, sizeof(mid)); jstr(obj, "body", body, sizeof(body));
+    sent += send_held_plain(room, mid, body);
+  }
+  if (sent) notify("info", wtr("msg.sent_plain", "Sent unsealed"));
+}
+
 static void send_message(const char *id, const char *text_in) {
   char text[900];
   s_cpy(text, text_in, sizeof(text));
@@ -655,9 +710,19 @@ static void send_message(const char *id, const char *text_in) {
    * as private (36.8). */
   int priv = room_is_private(id);
   char mid[8] = "";
+  /* Sealed by default (XPRS.md 6.4), and asking the core to KEEP the message
+   * while the key is unknown (bit 1) rather than refuse it: it waits in the
+   * core's outbox, the core looks for the key, and it leaves sealed. */
   int32_t form = hal_xprs_message(id, s_len(id), text, s_len(text),
-                                  priv ? 1u : 0u, mid, sizeof(mid));
+                                  priv ? 3u : 0u, mid, sizeof(mid));
+  if (form == 4 && mid[0]) {
+    room_tx_note(mid, id);
+    admit(id, mid, "out", g_call, text, "", "", "verified", 0, 0, mid, "key", 0, 0, "");
+    key_wait_offer(id);
+    return;
+  }
   if (form == -1) {
+    /* A core from before the outbox: it refused, and the words did not go. */
     sysnote(id, wtr("msg.no_key_note", "No key for this contact yet - asked for it. Your message was NOT sent; try again in a moment."));
     notify("warning", wtr("msg.no_key", "No key for this contact yet"));
     return;
@@ -979,9 +1044,16 @@ static void on_core_event(const char *topic, const char *row) {
   /* The outbound side of 13.7: what the core learned about a message WE
    * sent, keyed on the same section 5 identifier the bubble carries. */
   if (s_eq(topic, "xprs.status.tx")) {
-    char sid[24] = "", state[16] = "";
+    char sid[24] = "", state[16] = "", nid[24] = "";
     jstr(row, "id", sid, sizeof(sid));
     jstr(row, "state", state, sizeof(state));
+    /* A message that waited for its key went: from now on it is known by
+     * the identifier the core made when it sealed it. */
+    if (jstr(row, "newId", nid, sizeof(nid)) && nid[0]) {
+      room_rekey(sid, nid, jbool(row, "sealed"));
+      room_status(nid, state[0] ? state : "sent");
+      return;
+    }
     room_status(sid, state);
     return;
   }
@@ -1522,25 +1594,6 @@ static void go_tap(const char *buf, const char *key) {
   screen_close();
 }
 
-/* The sender's name tapped in a room: block or unblock them. */
-static void profile_show(const char *call) {
-  char c[16]; int j = 0;
-  for (int i = 0; call[i] && j < 15; i++) c[j++] = s_up(call[i]);
-  c[j] = 0;
-  if (!c[0] || is_self_call(c)) return;
-  int blocked = is_blocked(c);
-  char m[400] = "{\"type\":\"ui.prompt\",\"id\":\"prof:";
-  jesc(m, sizeof(m), c);
-  s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), c);
-  s_cat(m, "\",\"body\":\"", sizeof(m));
-  jesc(m, sizeof(m), blocked ? wtr("msg.blocked_hidden", "Blocked - their messages are hidden.")
-                             : wtr("msg.a_station", "An XPRS station."));
-  s_cat(m, "\",\"chips\":[{\"label\":\"", sizeof(m));
-  jesc(m, sizeof(m), blocked ? wtr("label.unblock", "Unblock") : wtr("label.block", "Block"));
-  s_cat(m, blocked ? "\",\"value\":\"unblock\"}" : "\",\"value\":\"block\"}", sizeof(m));
-  s_cat(m, "]}", sizeof(m));
-  hal_msg_send(m, s_len(m));
-}
 static void do_block(const char *call) {
   if (block_add(call)) { host_block_state(call, 1); notify("info", wtr("msg.blocked_now", "Blocked - you won't see their messages")); }
 }
@@ -1582,6 +1635,65 @@ static void do_open(const char *buf) {
     int i = xgroup_find(convo + 1);
     if (i >= 0 && s_eq(g_xgroup[i].role, "invited")) join_offer(convo + 1, 1);
   }
+}
+
+/* A message's Info page (the host's full panel): what this wapp stored about
+ * it -- the words as written, every version, who said it, how it was signed
+ * and sealed, its tick -- and what the core's archive holds of the packet
+ * itself, read by its section 5 identifier: the wire as it travelled, the
+ * bearer it arrived on, the signal, when it was heard and how many copies
+ * collapsed onto it. From the wire's own header: the stations that relayed
+ * it (`via:`, oldest first, 9), its reach (`scope:`), whether it came in
+ * parts (`n:`) and whether it carried a signature. Nothing here asks the
+ * network for anything. */
+static void info_publish(const char *room, const char *mid) {
+  static char stored[12000];
+  if (!room_info(room, mid, stored, sizeof(stored))) return;
+  static char out[17000];
+  s_cpy(out, "{\"type\":\"ui.convo.info\",\"id\":\"", sizeof(out));
+  jesc(out, sizeof(out), room);
+  s_cat(out, "\",\"mid\":\"", sizeof(out)); jesc(out, sizeof(out), mid);
+  s_cat(out, "\",\"stored\":", sizeof(out)); s_cat(out, stored, sizeof(out));
+  if (room[0] != '#') {
+    s_cat(out, room_is_private(room) ? ",\"sealedRoom\":true" : ",\"sealedRoom\":false", sizeof(out));
+  }
+  { char sender[24] = ""; jstr(stored, "sender", sender, sizeof(sender));
+    const char *net = xprs_network_name(sender);
+    if (net && net[0]) { s_cat(out, ",\"net\":\"", sizeof(out)); jesc(out, sizeof(out), net); s_cat(out, "\"", sizeof(out)); } }
+  /* The archived packet, when this station kept it. */
+  char q[80] = "{\"id\":\"";
+  s_cat(q, mid, sizeof(q)); s_cat(q, "\",\"limit\":1}", sizeof(q));
+  int32_t n = hal_xprs_history(q, s_len(q), g_hist, sizeof(g_hist) - 1);
+  if (n > 0 && n < (int)sizeof(g_hist)) {
+    g_hist[n] = 0;
+    const char *cur = g_hist; static char pk[3000];
+    if (next_object(&cur, pk, sizeof(pk))) {
+      s_cat(out, ",\"packet\":", sizeof(out)); s_cat(out, pk, sizeof(out));
+      /* The header alone: everything before " m:", so words in the message
+       * can never read as a field. */
+      static char wire[1200], head[1200];
+      jstr(pk, "wire", wire, sizeof(wire));
+      s_cpy(head, wire, sizeof(head));
+      for (unsigned i = 0; head[i]; i++)
+        if (head[i] == ' ' && head[i + 1] == 'm' && head[i + 2] == ':') { head[i] = 0; break; }
+      char v[200], tmp[80];
+      if (wire_key(head, "via", v, sizeof(v)) && v[0]) {
+        s_cat(out, ",\"relays\":\"", sizeof(out)); jesc(out, sizeof(out), v); s_cat(out, "\"", sizeof(out));
+      }
+      if (wire_key(head, "scope", tmp, sizeof(tmp)) && tmp[0]) {
+        s_cat(out, ",\"scope\":\"", sizeof(out)); jesc(out, sizeof(out), tmp); s_cat(out, "\"", sizeof(out));
+      }
+      if (wire_key(head, "n", tmp, sizeof(tmp)) && tmp[0]) {
+        s_cat(out, ",\"parts\":\"", sizeof(out)); jesc(out, sizeof(out), tmp); s_cat(out, "\"", sizeof(out));
+      }
+      if (wire_key(head, "sig", tmp, sizeof(tmp))) s_cat(out, ",\"signed\":true", sizeof(out));
+      if (wire_key(head, "x", tmp, sizeof(tmp))) s_cat(out, ",\"sealedWire\":true", sizeof(out));
+      { char nb[16]; u_itoa(s_len(wire), nb);
+        s_cat(out, ",\"bytes\":", sizeof(out)); s_cat(out, nb, sizeof(out)); }
+    }
+  }
+  s_cat(out, "}", sizeof(out));
+  hal_msg_send(out, s_len(out));
 }
 
 static int g_catchup_pending;
@@ -1663,6 +1775,28 @@ void module_handle_event(void) {
     cmd_field(buf, "convo", id, sizeof(id));
     cmd_field(buf, "mid", mid, sizeof(mid));
     unsend_message(id, mid);
+  }
+  else if (s_eq(cmd, "rooms_info")) {
+    char id[48] = "", mid[24] = "";
+    cmd_field(buf, "convo", id, sizeof(id));
+    cmd_field(buf, "mid", mid, sizeof(mid));
+    if (id[0] && mid[0]) info_publish(id, mid);
+  }
+  else if (s_eq(cmd, "rooms_sendplain")) {
+    /* One waiting message, from its menu: send it now in the open. */
+    char id[48] = "", mid[24] = "";
+    cmd_field(buf, "convo", id, sizeof(id));
+    cmd_field(buf, "mid", mid, sizeof(mid));
+    if (id[0] && mid[0]) {
+      static char ib[12000];
+      if (room_info(id, mid, ib, sizeof(ib))) {
+        static char body[900]; char st[16] = "";
+        jstr(ib, "status", st, sizeof(st));
+        jstr(ib, "body", body, sizeof(body));
+        if (s_eq(st, "key") && send_held_plain(id, mid, body))
+          notify("info", wtr("msg.sent_plain", "Sent unsealed"));
+      }
+    }
   }
   else if (s_eq(cmd, "rooms_history")) {
     char id[48] = "", mid[24] = "";
@@ -1782,7 +1916,13 @@ void module_handle_event(void) {
   }
   else if (s_eq(cmd, "members_tap")) {
     char id[48] = ""; jstr(buf, "members_id", id, sizeof(id));
-    if (s_pre(id, "go:") && !is_self_call(id + 3)) profile_show(id + 3);
+    /* A member tapped: talk to them. Blocking and the rest live on the
+     * person's messages, in the menu every bubble already has. */
+    if (s_pre(id, "go:") && !is_self_call(id + 3) && room_renderable(id + 3)) {
+      char title[48]; room_title(id + 3, title, sizeof(title));
+      room_start(id + 3, title);
+      screen_close();
+    }
   }
   else if (s_eq(cmd, "members_action") && g_mp_gid[0]) {
     char id[16] = ""; jstr(buf, "members_id", id, sizeof(id));
@@ -1838,10 +1978,6 @@ void module_handle_event(void) {
   }
   else if (s_eq(cmd, "searchall_tap")) go_tap(buf, "searchall_id");
   else if (s_eq(cmd, "rooms_settings")) screen_open("@screen.settings");
-  else if (s_eq(cmd, "profile")) {
-    char c[16] = ""; jstr(buf, "profile_call", c, sizeof(c));
-    profile_show(c);
-  }
   else if (s_eq(cmd, "profile_block")) {
     char c[16] = ""; jstr(buf, "profile_target", c, sizeof(c));
     if (c[0]) do_block(c);
@@ -1861,9 +1997,8 @@ void module_handle_event(void) {
     char pid[56] = "", val[24] = "";
     jstr(buf, "prompt_id", pid, sizeof(pid));
     jstr(buf, "prompt_value", val, sizeof(val));
-    if (s_pre(pid, "prof:")) {
-      if (s_eq(val, "block")) do_block(pid + 5);
-      else if (s_eq(val, "unblock")) do_unblock(pid + 5);
+    if (s_pre(pid, "keyplain:")) {
+      if (s_eq(val, "plain")) send_room_plain(pid + 9);
     }
     else if (s_pre(pid, "xgjoin:")) group_join(pid + 7);
     else if (s_eq(pid, "xgnew:")) {

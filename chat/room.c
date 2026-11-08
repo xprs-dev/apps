@@ -1128,12 +1128,100 @@ void room_history(const char *room, const char *mid) {
   hal_msg_send(m, s_len(m));
 }
 
+/* The columns a bubble is drawn from (emit_stored). */
+#define ROW_COLS "mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys,obf,nver,deleted"
+static void emit_stored(const char *id, int h, const char *row);
+
+/* A message that waited in the core's outbox for its recipient's key went at
+ * last, or the person sent it in the open instead: the bubble moves from the
+ * held id to the identifier it is known by now, so a receipt naming that id
+ * finds it. [enc] is whether it went sealed. 1 moved, 0 no such message. */
+int room_rekey(const char *held, const char *mid, int enc) {
+  if (!held[0] || !mid[0] || s_eq(held, mid)) return 0;
+  char row[160], room[48] = "";
+  { pj_t p; pj_init(&p); pj_str(&p, held);
+    if (db_query(g_idx, "SELECT room FROM tx WHERE rid=? LIMIT 1", pj_done(&p), row, sizeof(row)) > 0)
+      jstr(row, "room", room, sizeof(room)); }
+  if (!room[0]) return 0;
+  int h = room_handle(room);
+  if (h < 0) return 0;
+  { pj_t p; pj_init(&p); pj_str(&p, mid); pj_str(&p, mid); pj_int(&p, enc ? 1 : 0); pj_str(&p, held);
+    if (db_exec(h, "UPDATE messages SET mid=?, rid=?, status='sent', enc=? WHERE mid=?", pj_done(&p)) != 0)
+      return 0; }
+  { pj_t p; pj_init(&p); pj_str(&p, mid); pj_str(&p, room);
+    db_exec(g_idx, "INSERT OR REPLACE INTO tx(rid,room) VALUES(?,?)", pj_done(&p)); }
+  { pj_t p; pj_init(&p); pj_str(&p, held);
+    db_exec(g_idx, "DELETE FROM tx WHERE rid=?", pj_done(&p)); }
+  if (s_eq(room, g_open)) {
+    emit_remove(room, held);
+    static char one[1600];
+    pj_t p; pj_init(&p); pj_str(&p, mid);
+    if (db_query(h, "SELECT " ROW_COLS " FROM messages WHERE mid=? LIMIT 1", pj_done(&p),
+                 one, sizeof(one)) > 0) {
+      const char *cur = one; static char obj[1500];
+      if (next_object(&cur, obj, sizeof(obj))) emit_stored(room, h, obj);
+    }
+  }
+  return 1;
+}
+
+/* Our messages in [room] still waiting for a key, oldest first, as rows
+ * {mid,body} written into [out]. The number of bytes, or <= 0 for none. */
+int room_held(const char *room, char *out, unsigned cap) {
+  int h = room_handle(room);
+  if (h < 0) return 0;
+  return db_query(h, "SELECT mid,body FROM messages WHERE dir='out' AND status='key' "
+                     "ORDER BY seq ASC LIMIT 8", 0, out, cap);
+}
+
+/* One stored message of [room] with its versions, for the Info page:
+ * {"row":{...},"versions":[...]} written into [out]. 0 when there is none. */
+int room_info(const char *room, const char *mid, char *out, unsigned cap) {
+  int h = room_handle(room);
+  if (h < 0) return 0;
+  static char rowbuf[2000];
+  pj_t p; pj_init(&p); pj_str(&p, mid);
+  if (db_query(h, "SELECT mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys,obf,nver,deleted,seq "
+                  "FROM messages WHERE mid=? LIMIT 1", pj_done(&p), rowbuf, sizeof(rowbuf)) <= 0) return 0;
+  const char *cur = rowbuf; static char obj[1900];
+  if (!next_object(&cur, obj, sizeof(obj))) return 0;
+  static char hist[9000]; hist[0] = 0;
+  room_view_t v;
+  if (jint(obj, "nver") > 0 || jint(obj, "deleted"))
+    room_resolve(h, room, mid, &v, hist, sizeof(hist), g_open_mod);
+  s_cpy(out, "{\"row\":", cap); s_cat(out, obj, cap);
+  s_cat(out, ",\"versions\":[", cap); s_cat(out, hist, cap); s_cat(out, "]}", cap);
+  return 1;
+}
+
 /* ── opening ──────────────────────────────────────────────────────── */
+
+/* One stored row of room [id] (selected with ROW_COLS) as a bubble, drawn as
+ * it stands now. */
+static void emit_stored(const char *id, int h, const char *row) {
+  char mid[40], dir[8], sender[24], parent[40], via[16], auth[16], rid[40], status[16];
+  static char body[BODY_MAX + 1];
+  jstr(row, "mid", mid, sizeof(mid)); jstr(row, "dir", dir, sizeof(dir));
+  jstr(row, "sender", sender, sizeof(sender)); jstr(row, "body", body, sizeof(body));
+  jstr(row, "parent", parent, sizeof(parent)); jstr(row, "via", via, sizeof(via));
+  jstr(row, "auth", auth, sizeof(auth)); jstr(row, "rid", rid, sizeof(rid));
+  jstr(row, "status", status, sizeof(status));
+  /* Drawn as it stands: a message with corrections is resolved, one without
+   * costs nothing, and a withdrawn one is a place saying so. */
+  room_view_t view; int viewed = 0;
+  if (jint(row, "nver") > 0 || jint(row, "deleted")) {
+    if (room_resolve(h, id, mid, &view, 0, 0, 0) >= 0) viewed = 1;
+  }
+  emit_msg(id, mid, dir, sender, (unsigned long long)jint(row, "ts"), body, parent, via,
+           "", auth, (int)jint(row, "enc"), rid, status, (int)jint(row, "sys"), 0,
+           (int)jint(row, "obf"), viewed ? &view : 0);
+}
+
 static void emit_tail(const char *id, int h) {
   int limit = TAIL, n = -2;
   while (limit >= 12) {
     pj_t p; pj_init(&p); pj_int(&p, limit);
-    n = db_query(h, "SELECT mid,dir,sender,ts,body,parent,via,auth,enc,rid,status,sys,obf,nver,deleted FROM "
+    n = db_query(h, "SELECT " ROW_COLS " FROM "
                     /* In the order things were SAID, not the order they got here:
                      * an archive replays newest first (XPRS.md 11.2.1), so a
                      * room filled by a catch-up was drawn upside down when it
@@ -1149,24 +1237,7 @@ static void emit_tail(const char *id, int h) {
   if (n <= 0) return;
   const char *cur = g_q;
   static char row[1400];
-  while (next_object(&cur, row, sizeof(row))) {
-    char mid[40], dir[8], sender[24], parent[40], via[16], auth[16], rid[40], status[16];
-    static char body[BODY_MAX + 1];
-    jstr(row, "mid", mid, sizeof(mid)); jstr(row, "dir", dir, sizeof(dir));
-    jstr(row, "sender", sender, sizeof(sender)); jstr(row, "body", body, sizeof(body));
-    jstr(row, "parent", parent, sizeof(parent)); jstr(row, "via", via, sizeof(via));
-    jstr(row, "auth", auth, sizeof(auth)); jstr(row, "rid", rid, sizeof(rid));
-    jstr(row, "status", status, sizeof(status));
-    /* Drawn as it stands: a message with corrections is resolved, one without
-     * costs nothing, and a withdrawn one is a place saying so. */
-    room_view_t view; int viewed = 0;
-    if (jint(row, "nver") > 0 || jint(row, "deleted")) {
-      if (room_resolve(h, id, mid, &view, 0, 0, 0) >= 0) viewed = 1;
-    }
-    emit_msg(id, mid, dir, sender, (unsigned long long)jint(row, "ts"), body, parent, via,
-             "", auth, (int)jint(row, "enc"), rid, status, (int)jint(row, "sys"), 0,
-             (int)jint(row, "obf"), viewed ? &view : 0);
-  }
+  while (next_object(&cur, row, sizeof(row))) emit_stored(id, h, row);
   /* Hearts on those bubbles. */
   pj_t p; pj_init(&p); pj_int(&p, limit);
   n = db_query(h, "SELECT mid,who FROM reactions WHERE mid IN "

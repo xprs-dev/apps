@@ -127,5 +127,11 @@
   "label.invited": "Invités",
   "tab.people": "Personnes",
   "tab.messages": "Messages",
-  "tab.groups": "Groupes"
+  "tab.groups": "Groupes",
+  "msg.key_wait_note": "La clé de ce contact n'est pas encore connue. Le message attend dans la boîte d'envoi et sera scellé et envoyé dès que la clé arrivera.",
+  "prompt.key_wait_title": "En attente de la clé",
+  "prompt.key_wait_body": "Le message est dans la boîte d'envoi. Il sera scellé et envoyé dès que la clé de ce contact arrivera ; les archiveurs ont été interrogés. Vous pouvez aussi l'envoyer maintenant sans le sceller : il reste signé par vous, mais quiconque le transporte peut le lire.",
+  "label.send_plain": "Envoyer maintenant, non scellé",
+  "label.wait_key": "Attendre la clé",
+  "msg.sent_plain": "Envoyé non scellé"
 }

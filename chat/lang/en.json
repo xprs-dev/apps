@@ -127,5 +127,11 @@
   "label.invited": "Invited",
   "tab.people": "People",
   "tab.messages": "Messages",
-  "tab.groups": "Groups"
+  "tab.groups": "Groups",
+  "msg.key_wait_note": "This contact's key is not known yet. Your message waits in the outbox and will be sealed and sent as soon as the key arrives.",
+  "prompt.key_wait_title": "Waiting for the key",
+  "prompt.key_wait_body": "Your message is in the outbox. It will be sealed and sent as soon as this contact's key arrives; the archivers have been asked for it. You can also send it now unsealed: it is still signed by you, but anyone who carries it can read it.",
+  "label.send_plain": "Send now, unsealed",
+  "label.wait_key": "Wait for the key",
+  "msg.sent_plain": "Sent unsealed"
 }

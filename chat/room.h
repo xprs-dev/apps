@@ -69,6 +69,14 @@ int room_message_sender(const char *room, const char *mid, char *sender, unsigne
 void room_moderation_sync(const char *room);
 /* Send the versions of [mid] for the Info dialog. */
 void room_history(const char *room, const char *mid);
+/* A message that waited in the core's outbox for a key now has its real
+ * identifier [mid] (sealed when [enc]): move its bubble there. 1 moved. */
+int  room_rekey(const char *held, const char *mid, int enc);
+/* Our messages in [room] still waiting for a key: rows {mid,body}. */
+int  room_held(const char *room, char *out, unsigned cap);
+/* One stored message and its versions, for the Info page:
+ * {"row":{...},"versions":[...]}. 0 when it is not held. */
+int  room_info(const char *room, const char *mid, char *out, unsigned cap);
 /* We are a moderator or the admin of the open group (the host offers
  * moderation on other people's messages only then). */
 void room_set_mod(int mod, int say);

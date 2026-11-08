@@ -127,5 +127,11 @@
   "label.invited": "Invitados",
   "tab.people": "Personas",
   "tab.messages": "Mensajes",
-  "tab.groups": "Grupos"
+  "tab.groups": "Grupos",
+  "msg.key_wait_note": "Aún no se conoce la clave de este contacto. El mensaje espera en la bandeja de salida y se sellará y enviará en cuanto llegue la clave.",
+  "prompt.key_wait_title": "Esperando la clave",
+  "prompt.key_wait_body": "El mensaje está en la bandeja de salida. Se sellará y enviará en cuanto llegue la clave de este contacto; ya se ha pedido a los archivadores. También puedes enviarlo ahora sin sellar: sigue firmado por ti, pero cualquiera que lo transporte puede leerlo.",
+  "label.send_plain": "Enviar ya, sin sellar",
+  "label.wait_key": "Esperar la clave",
+  "msg.sent_plain": "Enviado sin sellar"
 }

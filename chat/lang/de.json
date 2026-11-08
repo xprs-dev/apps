@@ -127,5 +127,11 @@
   "label.invited": "Eingeladen",
   "tab.people": "Personen",
   "tab.messages": "Nachrichten",
-  "tab.groups": "Gruppen"
+  "tab.groups": "Gruppen",
+  "msg.key_wait_note": "Der Schlüssel dieses Kontakts ist noch nicht bekannt. Die Nachricht wartet im Postausgang und wird versiegelt und gesendet, sobald der Schlüssel eintrifft.",
+  "prompt.key_wait_title": "Warten auf den Schlüssel",
+  "prompt.key_wait_body": "Die Nachricht liegt im Postausgang. Sie wird versiegelt und gesendet, sobald der Schlüssel dieses Kontakts eintrifft; die Archivierer wurden bereits gefragt. Du kannst sie auch jetzt unversiegelt senden: Sie bleibt von dir signiert, aber jeder, der sie weiterträgt, kann sie lesen.",
+  "label.send_plain": "Jetzt unversiegelt senden",
+  "label.wait_key": "Auf den Schlüssel warten",
+  "msg.sent_plain": "Unversiegelt gesendet"
 }

@@ -1792,6 +1792,133 @@ TEST(a_bridged_meshtastic_message_carries_its_network_and_relay_path) {
   CHECK(o && !strstr(o, "\"net\":"));
 }
 
+
+/* ── A message that waits for its recipient's key (XPRS.md 6.2, 6.4) ───── */
+
+extern int32_t (*g_hk_message)(const char*,uint32_t,const char*,uint32_t,uint32_t,char*,uint32_t);
+static char g_nokey_last_priv[8];
+/* The core with no key for X1PEER: asked to wait (bit 1), it keeps the words
+ * and names them with a held id; asked for the open form, it sends. */
+static int32_t nokey_message(const char* to,uint32_t tl,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){
+  (void)to;(void)tl;(void)t;(void)l;
+  snprintf(g_nokey_last_priv,sizeof(g_nokey_last_priv),"%u",priv);
+  if (priv & 1) {
+    if (!(priv & 2)) return -1;
+    snprintf(id,cap,"hold01");
+    return 4;
+  }
+  snprintf(id,cap,"plain1");
+  return 2;
+}
+
+TEST(a_message_without_a_key_waits_in_the_outbox_and_moves_when_it_goes) {
+  fresh();
+  g_hk_message = nokey_message;
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"X1PEER\"}");
+  module_handle_event();
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"X1PEER\",\"rooms_input\":\"wait for me\"}");
+  module_handle_event();
+  /* Asked sealed, and asked to wait rather than be refused. */
+  CHECK(strcmp(g_nokey_last_priv, "3") == 0);
+  /* The words are on screen, marked as waiting -- never "not sent". */
+  { const char *m = find_msg("hold01");
+    CHECK(m && strstr(m, "wait for me") && strstr(m, "\"status\":\"key\"")); }
+  CHECK(!cap_contains("NOT sent"));
+  /* Said once, with the person's one choice offered. */
+  CHECK(cap_contains("\"id\":\"keyplain:X1PEER\"") && cap_contains("\"value\":\"plain\""));
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"X1PEER\",\"rooms_input\":\"and me\"}");
+  module_handle_event();
+  CHECK(!cap_contains("keyplain:"));
+  /* The key arrived and the core sealed and sent it: the bubble moves to the
+   * identifier a receipt will name, sealed. */
+  cap_clear();
+  event_push("xprs.status.tx", "{\"id\":\"hold01\",\"peer\":\"X1PEER\",\"state\":\"sent\",\"newId\":\"abc123\",\"sealed\":true}");
+  module_handle_event();
+  CHECK(cap_contains("\"type\":\"ui.convo.remove\"") && cap_contains("\"key\":\"hold01\""));
+  { const char *m = find_msg("abc123");
+    CHECK(m && strstr(m, "wait for me") && strstr(m, "\"enc\":true") && strstr(m, "\"status\":\"sent\"")); }
+  /* ...and a receipt naming the real id ticks it. */
+  cap_clear();
+  event_push("xprs.status.tx", "{\"id\":\"abc123\",\"peer\":\"X1PEER\",\"state\":\"delivered\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"rid\":\"abc123\"") && cap_contains("\"status\":\"delivered\""));
+  g_hk_message = 0;
+}
+
+TEST(a_waiting_message_can_be_sent_in_the_open_instead) {
+  fresh();
+  g_hk_message = nokey_message;
+  mock_edit_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"X1PEER\"}");
+  module_handle_event();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"X1PEER\",\"rooms_input\":\"go now\"}");
+  module_handle_event();
+  cap_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"keyplain:X1PEER\",\"prompt_value\":\"plain\"}");
+  module_handle_event();
+  /* Taken back from the core's outbox (nothing had been aired), then sent
+   * in the open: still signed, readable by anyone who carries it. */
+  CHECK(strcmp(mock_withdraw_ask(), "X1PEER|hold01") == 0);
+  CHECK(strcmp(g_nokey_last_priv, "0") == 0);
+  { const char *m = find_msg("plain1");
+    CHECK(m && strstr(m, "go now") && strstr(m, "\"plain\":true") && !strstr(m, "\"enc\":true")); }
+  CHECK(cap_contains("\"key\":\"hold01\""));
+  /* Keeping the wait sends nothing. */
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"X1PEER\",\"rooms_input\":\"later\"}");
+  module_handle_event();
+  mock_edit_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"keyplain:X1PEER\",\"prompt_value\":\"wait\"}");
+  module_handle_event();
+  CHECK(mock_withdraw_ask()[0] == 0);
+  /* And one message from its own menu. */
+  inbox_set("{\"command\":\"rooms_sendplain\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"hold01\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_withdraw_ask(), "X1PEER|hold01") == 0);
+  g_hk_message = 0;
+}
+
+TEST(tapping_a_member_opens_a_conversation_not_a_block_prompt) {
+  fresh();
+  cap_clear();
+  inbox_set("{\"command\":\"members_tap\",\"members_id\":\"go:X1PEER\"}");
+  module_handle_event();
+  CHECK(!cap_contains("\"id\":\"prof:"));
+  CHECK(cap_contains("X1PEER"));
+  /* The old profile command no longer answers with a Block-only prompt. */
+  cap_clear();
+  inbox_set("{\"command\":\"profile\",\"profile_call\":\"X1PEER\"}");
+  module_handle_event();
+  CHECK(!cap_contains("ui.prompt"));
+}
+
+TEST(info_tells_the_words_versions_and_how_the_packet_travelled) {
+  fresh();
+  dm("X1PEER", "aa1111", "the first words", 1, "", "", "verified", 1700000000);
+  dm("X1PEER", "aa2222", "the better words", 1, "aa1111", "", "verified", 1700000100);
+  mock_set_history(
+    "[{\"id\":\"aa1111\",\"ts\":1700000000,\"heardTs\":1700000042,\"bearer\":\"ble\",\"rssi\":-71,"
+    "\"from\":\"X1PEER\",\"to\":\"X1SELF\",\"type\":\"message\",\"sig\":\"verified\",\"heard\":3,"
+    "\"wire\":\"t:message f:X1PEER d:X1SELF ts:2023-11-14_22:13:20 via:X3RLY7,X32DVA n:1/2 sig:abc x:QQ\"}]");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_info\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"aa1111\"}");
+  module_handle_event();
+  const char *m = cap_find("\"type\":\"ui.convo.info\"");
+  CHECK(m != 0);
+  if (m) {
+    CHECK(strstr(m, "\"mid\":\"aa1111\""));
+    CHECK(strstr(m, "the first words"));              /* the original */
+    CHECK(strstr(m, "the better words"));             /* and its correction */
+    CHECK(strstr(m, "\"relays\":\"X3RLY7,X32DVA\""));  /* who carried it */
+    CHECK(strstr(m, "\"bearer\":\"ble\"") && strstr(m, "\"rssi\":-71"));
+    CHECK(strstr(m, "\"heard\":3"));
+    CHECK(strstr(m, "\"parts\":\"1/2\""));
+    CHECK(strstr(m, "\"signed\":true") && strstr(m, "\"sealedWire\":true"));
+  }
+  mock_set_history("[]");
+}
+
 int main(void) {
   run_a_bridged_meshtastic_message_carries_its_network_and_relay_path();
   run_the_rooms_by_range_exist_by_default_and_nothing_else();
@@ -1858,6 +1985,10 @@ int main(void) {
   run_people_are_learned_once_from_the_rooms_already_held();
   run_a_message_says_which_day_it_belongs_to();
   run_the_calendar_date_is_exact_at_every_awkward_boundary();
+  run_a_message_without_a_key_waits_in_the_outbox_and_moves_when_it_goes();
+  run_a_waiting_message_can_be_sent_in_the_open_instead();
+  run_tapping_a_member_opens_a_conversation_not_a_block_prompt();
+  run_info_tells_the_words_versions_and_how_the_packet_travelled();
   printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

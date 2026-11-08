@@ -1665,9 +1665,24 @@ int32_t hal_xprs_redact(const char *convo, uint32_t convo_len,
  * parks a custody copy and remembers the section 5 identifier so a receipt can
  * find it later. Not one of those is a content decision.
  *
+ * [want_private] is a set of bits. Bit 0 (1) asks for the sealed form. Bit 1
+ * (2) asks the core to KEEP the message while the recipient's key is unknown
+ * instead of refusing it: the core holds the words in its encrypted outbox,
+ * goes looking for the key (q:identity to the station, `cmd:history
+ * kind:identity` to the chosen archivers, XPRS.md 12.12.1), and seals and
+ * sends the message the moment the key arrives. The wapp is not told how.
+ *
  * Returns  1 sealed, 2 plain,
  *          3 plain, to a node of another network (section 3.2, `MT...`)
  *            through a gateway: the words cross a channel anybody can read,
+ *          4 held (bit 1 set, no key yet): [id_out] receives a HELD id of the
+ *            same shape as a section 5 identifier. Key the bubble on it. When
+ *            the message goes, `xprs.status.tx` arrives with `id` = the held
+ *            id, `state` "sent", `newId` = the real identifier and `sealed`
+ *            true: move the bubble to newId. `state` "expired" means it was
+ *            given up on. hal_xprs_withdraw on a held id takes it back
+ *            without anything having been aired (to send it in the open,
+ *            withdraw it and send again with bit 0 clear),
  *         -1 privacy asked for and not possible -- the recipient's key has not
  *            been heard; the core has just asked for it (18.1), so try again
  *            shortly,
@@ -1746,7 +1761,7 @@ int32_t hal_xprs_read(const char *id, uint32_t id_len);
  * across restarts. [query] is a JSON filter, "{}" for the latest:
  *   {"since":"YYYY-MM-DD_hh:mm:ss","until":"...","only":"CALL","limit":n,
  *    "to":["","X5A3F2"],"types":["observation"],"from":"CALL",
- *    "kind":"device","scope":"local"}
+ *    "kind":"device","scope":"local","id":"a1b2c3"}
  * since/until window on the packet's own ts:, only matches sender OR
  * addressee (or a hears: list). "types" keeps those packet types. "from" is
  * exactly that author, indexed: what one device said. "kind" (user, device)
@@ -1757,7 +1772,9 @@ int32_t hal_xprs_read(const char *id, uint32_t id_len);
  * re-airs, and a sieving caller's window carries nothing it can use. "scope"
  * (local, regional, global) is one chat room by the scope its author wrote
  * (XPRS.md 9.11.1); ask a room at a time, or a busy room fills the window
- * and a quiet one looks empty. A core older than the field ignores it. Reply, newest first:
+ * and a quiet one looks empty. A core older than the field ignores it. "id"
+ * is one packet by its section 5 identifier (the primary key, one row), what a
+ * message's Info page reads; it never sets off a fetch. Reply, newest first:
  *   [{ts,heardTs,bearer,rssi,from,to,type,id,mine,own,sig,heard,wire}]
  * `sig` is verified|forged|unverified|unsigned; `heard` counts collapsed
  * duplicate sightings. Returns bytes written, negated size if out is small. */
@@ -1827,7 +1844,9 @@ int32_t hal_xprs_edit(const char *to, uint32_t to_len,
  * remove:message`, a packet with no body that travels as the original did. A
  * carrier holding the original discards its copy on hearing it. 0 = aired,
  * -1 = not a valid request. A group or an open room is withdrawn from by a
- * wire through hal_xprs_send. */
+ * wire through hal_xprs_send. `orig` may also be a HELD id (hal_xprs_message
+ * returned 4): the message never left, so it is dropped from the core's
+ * outbox, nothing is aired, and the answer is 0. */
 __attribute__((import_module("hal"), import_name("xprs_withdraw")))
 int32_t hal_xprs_withdraw(const char *to, uint32_t to_len,
                           const char *orig, uint32_t orig_len);
