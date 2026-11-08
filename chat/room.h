@@ -108,6 +108,10 @@ void room_status(const char *rid, const char *state);
 void room_close(const char *id);
 /* The person archived [id] (on=1) or brought it back (on=0). */
 void room_archive(const char *id, int on);
+/* A room's notifications switch: 1 when a new message here notifies and
+ * counts in the launcher badge (default: every room but the Global one). */
+int  room_notifies(const char *id);
+int  room_set_notify(const char *id, int on);
 /* The person deleted [id]: its messages go, and nothing older than this
  * moment comes back from an archive refill. The Local room stays on the
  * rail, empty; any other conversation leaves the index until it is used

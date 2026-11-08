@@ -259,6 +259,11 @@ void db_init_index(int h) {
    * for a conversation somebody marked so, and every other row, old or new,
    * is sealed. */
   db_exec(h, "ALTER TABLE rooms ADD COLUMN plain INTEGER NOT NULL DEFAULT 0", 0);
+  /* Whether a new message here raises a notification and counts in the
+   * launcher badge. NULL is the room's default (room_notifies): the Global
+   * room is too busy to interrupt anybody, every other room does. 0 or 1 is
+   * what a person chose, and a later change of default leaves it alone. */
+  db_exec(h, "ALTER TABLE rooms ADD COLUMN notify INTEGER", 0);
   /* The people this station talks with: whoever wrote in one of its rooms,
    * and every 1:1. Their statuses (XPRS.md 27) head the conversation list. */
   db_exec(h, "CREATE TABLE IF NOT EXISTS people(call TEXT PRIMARY KEY)", 0);

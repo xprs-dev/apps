@@ -133,5 +133,7 @@
   "prompt.key_wait_body": "Your message is in the outbox. It will be sealed and sent as soon as this contact's key arrives; the archivers have been asked for it. You can also send it now unsealed: it is still signed by you, but anyone who carries it can read it.",
   "label.send_plain": "Send now, unsealed",
   "label.wait_key": "Wait for the key",
-  "msg.sent_plain": "Sent unsealed"
+  "msg.sent_plain": "Sent unsealed",
+  "msg.notify_on": "Notifications on for ",
+  "msg.notify_off": "Notifications off for "
 }

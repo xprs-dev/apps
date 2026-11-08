@@ -122,6 +122,16 @@ static int room_is_archived(const char *id) {
   return db_int(g_idx, "SELECT archived AS n FROM rooms WHERE id=? LIMIT 1", pj_done(&p), 0) == 1;
 }
 
+/* The notifications switch of a room, as SQL over a rooms row: what the
+ * person chose, else the default (on everywhere but the Global room). */
+#define NOTIFY_ON "COALESCE(notify, id<>'" GLOBAL "')"
+
+int room_notifies(const char *id) {
+  pj_t p; pj_init(&p); pj_str(&p, id);
+  return db_int(g_idx, "SELECT " NOTIFY_ON " AS n FROM rooms WHERE id=? LIMIT 1",
+                pj_done(&p), !s_eq(id, GLOBAL)) == 1;
+}
+
 /* ── time ─────────────────────────────────────────────────────────── */
 static int g_tz_min, g_tz_known;
 void fmt_time_at(char *b, unsigned long long e) {
@@ -197,7 +207,8 @@ static const char *via_label(const char *via) {
 static void emit_upsert(const char *id, int bump, int select) {
   pj_t p; pj_init(&p); pj_str(&p, id);
   char row[400];
-  if (db_query(g_idx, "SELECT title,unread,plain,last_line FROM rooms WHERE id=? LIMIT 1",
+  if (db_query(g_idx, "SELECT title,unread,plain,last_line," NOTIFY_ON " AS ntf "
+                      "FROM rooms WHERE id=? LIMIT 1",
                pj_done(&p), row, sizeof(row)) <= 0) return;
   char title[80], last[140];
   jstr(row, "title", title, sizeof(title));
@@ -212,6 +223,10 @@ static void emit_upsert(const char *id, int bump, int select) {
   s_cat(m, ",\"closed\":false,\"private\":", sizeof(m));
   /* A group is never sealed (6.3: no single key); a 1:1 is, unless marked. */
   s_cat(m, (id[0] != '#' && !jint(row, "plain")) ? "true" : "false", sizeof(m));
+  /* Stated on every row: the host draws the switch and drops a notification
+   * for a muted room in both engines (ConversationStore.mayNotifyFor). */
+  s_cat(m, ",\"muted\":", sizeof(m));
+  s_cat(m, jint(row, "ntf") ? "false" : "true", sizeof(m));
   /* The host offers moderation on other people's messages only where we have
    * the authority (10.4.1). Whether an act binds is judged per message. */
   if (g_open_mod && s_eq(id, g_open) && is_xgroup(id)) s_cat(m, ",\"mod\":true", sizeof(m));
@@ -540,10 +555,13 @@ static void unread_publish(void) {
   /* Two switches are four combinations, so the exclusions are appended rather
    * than written out: the pair of literals this replaced could only ever say
    * something about the Local room. */
+  /* A room with its notifications off does not pull attention app-wide
+   * either; its count still shows on its own row. */
   long long n = db_int(g_idx, g_local_on
-      ? "SELECT COALESCE(SUM(unread),0) AS n FROM rooms WHERE closed=0 AND archived=0"
+      ? "SELECT COALESCE(SUM(unread),0) AS n FROM rooms WHERE closed=0 AND archived=0 "
+        "AND " NOTIFY_ON "=1"
       : "SELECT COALESCE(SUM(unread),0) AS n FROM rooms WHERE closed=0 AND archived=0 "
-        "AND id<>'" LOCAL "'", 0, 0);
+        "AND " NOTIFY_ON "=1 AND id<>'" LOCAL "'", 0, 0);
   char m[96] = "{\"type\":\"unread\",\"intent\":\"chat\",\"count\":";
   char nb[24]; u_lltoa((unsigned long long)n, nb);
   s_cat(m, nb, sizeof(m)); s_cat(m, "}", sizeof(m));
@@ -959,7 +977,7 @@ int room_admit(const room_msg_t *m) {
     if (created > 0 || !s_eq(g_top, m->room)) room_rail();
     /* Not for an archived conversation: archiving is how a person says "do
      * not bother me with this one". */
-    if (in && !m->sys && !room_is_archived(m->room))
+    if (in && !m->sys && !room_is_archived(m->room) && room_notifies(m->room))
       notify_msg(m->room, sender, body, m->mid);
     unread_publish();
     /* A live 1:1 we just heard owes its sender an s:read once a person opens
@@ -1429,6 +1447,17 @@ void room_archive(const char *id, int on) {
   room_rail();
   unread_publish();
   room_archived_publish();
+}
+
+/* Turn a room's notifications on or off. Returns the new state, -1 for an
+ * unknown room. Off also takes the room out of the launcher badge. */
+int room_set_notify(const char *id, int on) {
+  if (!room_known(id)) return -1;
+  pj_t p; pj_init(&p); pj_int(&p, on ? 1 : 0); pj_str(&p, id);
+  db_exec(g_idx, "UPDATE rooms SET notify=? WHERE id=?", pj_done(&p));
+  emit_upsert(id, 0, 0);
+  unread_publish();
+  return on ? 1 : 0;
 }
 
 void room_delete(const char *id) {

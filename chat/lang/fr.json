@@ -133,5 +133,7 @@
   "prompt.key_wait_body": "Le message est dans la boîte d'envoi. Il sera scellé et envoyé dès que la clé de ce contact arrivera ; les archiveurs ont été interrogés. Vous pouvez aussi l'envoyer maintenant sans le sceller : il reste signé par vous, mais quiconque le transporte peut le lire.",
   "label.send_plain": "Envoyer maintenant, non scellé",
   "label.wait_key": "Attendre la clé",
-  "msg.sent_plain": "Envoyé non scellé"
+  "msg.sent_plain": "Envoyé non scellé",
+  "msg.notify_on": "Notifications activées pour ",
+  "msg.notify_off": "Notifications désactivées pour "
 }

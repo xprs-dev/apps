@@ -1919,7 +1919,65 @@ TEST(info_tells_the_words_versions_and_how_the_packet_travelled) {
   mock_set_history("[]");
 }
 
+/* The Global room is too busy to interrupt anybody: a message there is
+ * stored and counted on its own row, but raises no notification and stays
+ * out of the launcher badge, until a person turns it on. Local and Regional
+ * notify by default, and the same switch silences any room. */
+TEST(the_global_room_is_quiet_until_a_person_asks) {
+  fresh();
+  local_packet("X1PEER", "ntf001", "global chatter", "global");
+  CHECK(cap_count("ui.convo.msg") == 1);
+  CHECK(cap_count("\"type\":\"notify\"") == 0);
+  CHECK(cap_contains("\"count\":0"));
+  CHECK(cap_contains("\"id\":\"#GLOBAL\"") && cap_contains("\"muted\":true"));
+  CHECK(!room_notifies("#GLOBAL"));
+  CHECK(room_notifies("#LOCAL") && room_notifies("#REGIONAL"));
+  cap_clear();
+  local_packet("X1PEER", "ntf002", "regional words", "regional");
+  CHECK(cap_count("\"type\":\"notify\"") == 1);
+  { const char *u = cap_find("ui.convo.upsert");
+    CHECK(u && strstr(u, "\"muted\":false")); }
+  /* Turned on: Global notifies and counts like any room. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_notify\",\"rooms_convo\":\"#GLOBAL\"}");
+  module_handle_event();
+  CHECK(room_notifies("#GLOBAL"));
+  CHECK(cap_contains("\"muted\":false"));
+  CHECK(cap_contains("Notifications on for "));
+  cap_clear();
+  local_packet("X1PEER", "ntf003", "global again", "global");
+  CHECK(cap_count("\"type\":\"notify\"") == 1);
+  /* And off again. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_notify\",\"rooms_convo\":\"#GLOBAL\"}");
+  module_handle_event();
+  CHECK(!room_notifies("#GLOBAL"));
+  CHECK(cap_contains("\"muted\":true"));
+}
+
+TEST(any_room_can_be_silenced_with_the_same_switch) {
+  fresh();
+  local_packet("X1PEER", "ntf101", "hello", "local");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_notify\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  CHECK(!room_notifies("#LOCAL"));
+  CHECK(cap_contains("\"count\":0"));      /* out of the badge at once */
+  cap_clear();
+  local_packet("X1PEER", "ntf102", "still here", "local");
+  CHECK(cap_count("ui.convo.msg") == 1);    /* stored and shown */
+  CHECK(cap_count("\"type\":\"notify\"") == 0);
+  CHECK(cap_contains("\"count\":0"));
+  /* An unknown room is left alone. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_notify\",\"rooms_convo\":\"#NOSUCH\"}");
+  module_handle_event();
+  CHECK(!cap_contains("\"type\":\"notify\""));
+}
+
 int main(void) {
+  run_the_global_room_is_quiet_until_a_person_asks();
+  run_any_room_can_be_silenced_with_the_same_switch();
   run_a_bridged_meshtastic_message_carries_its_network_and_relay_path();
   run_the_rooms_by_range_exist_by_default_and_nothing_else();
   run_a_local_message_is_stored_and_shown_once();

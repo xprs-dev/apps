@@ -133,5 +133,7 @@
   "prompt.key_wait_body": "Die Nachricht liegt im Postausgang. Sie wird versiegelt und gesendet, sobald der Schlüssel dieses Kontakts eintrifft; die Archivierer wurden bereits gefragt. Du kannst sie auch jetzt unversiegelt senden: Sie bleibt von dir signiert, aber jeder, der sie weiterträgt, kann sie lesen.",
   "label.send_plain": "Jetzt unversiegelt senden",
   "label.wait_key": "Auf den Schlüssel warten",
-  "msg.sent_plain": "Unversiegelt gesendet"
+  "msg.sent_plain": "Unversiegelt gesendet",
+  "msg.notify_on": "Benachrichtigungen an für ",
+  "msg.notify_off": "Benachrichtigungen aus für "
 }

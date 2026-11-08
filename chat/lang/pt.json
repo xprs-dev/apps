@@ -133,5 +133,7 @@
   "prompt.key_wait_body": "A mensagem está na caixa de saída. Será selada e enviada assim que chegar a chave deste contacto; os arquivadores já foram consultados. Também pode enviá-la agora sem selar: continua assinada por si, mas quem a transportar pode lê-la.",
   "label.send_plain": "Enviar já, sem selar",
   "label.wait_key": "Esperar pela chave",
-  "msg.sent_plain": "Enviada sem selar"
+  "msg.sent_plain": "Enviada sem selar",
+  "msg.notify_on": "Notificações ativadas para ",
+  "msg.notify_off": "Notificações desativadas para "
 }

@@ -1850,6 +1850,20 @@ void module_handle_event(void) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
     if (id[0]) { room_archive(id, 0); notify("info", wtr("msg.unarchived", "Chat unarchived")); }
   }
+  /* The notifications switch of a room, from its row menu or its header. */
+  else if (s_eq(cmd, "rooms_notify")) {
+    char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
+    if (id[0]) {
+      int on = room_set_notify(id, !room_notifies(id));
+      if (on >= 0) {
+        char name[96]; room_title(id, name, sizeof(name));
+        char m[200];
+        s_cpy(m, on ? wtr("msg.notify_on", "Notifications on for ") : wtr("msg.notify_off", "Notifications off for "), sizeof(m));
+        s_cat(m, name, sizeof(m));
+        notify("info", m);
+      }
+    }
+  }
   else if (s_eq(cmd, "rooms_delete")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
     if (id[0]) { room_delete(id); notify("info", wtr("msg.deleted", "Chat deleted")); }
