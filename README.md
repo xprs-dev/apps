@@ -62,7 +62,7 @@ short:
 | `store/description.json` | optional | richer text shown in store cards |
 | `permissions.json` | optional | NDF access-control (Stage 3) |
 | `signature.json` | optional | publisher's NIP-78 NostrEvent |
-| `social.sqlite3` | optional | shipped reactions/comments seed |
+| `social.zx` | optional | shipped reactions/comments seed |
 
 ## Building
 

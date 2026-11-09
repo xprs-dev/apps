@@ -935,7 +935,7 @@ The engine reads the active profile's NOSTR identity (`npub`,
 - Authenticate `widget.request` calls when the target functionality
   requires it
 - Stamp social entries (reactions, comments) inside the wapp's
-  `social.sqlite3`
+  `social.zx`
 
 A wapp never sees the `nsec` directly. It asks the host to sign on
 its behalf via the `sign.schnorr` outbox message (see §15.1 below).
@@ -1130,7 +1130,7 @@ my-wapp.wapp (zip)
 ├── tests.wasm                 ← optional, runnable test suite (see §20)
 ├── signature.json             ← optional NIP-78 NostrEvent
 ├── permissions.json           ← optional NDF access control
-├── social.sqlite3             ← optional reactions+comments DB
+├── social.zx                 ← optional reactions+comments DB
 ├── screens/
 │   └── home.ui.json
 ├── media/

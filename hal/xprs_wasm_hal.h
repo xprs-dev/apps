@@ -927,44 +927,47 @@ __attribute__((import_module("hal"), import_name("event_recv")))
 uint32_t hal_event_recv(char *topic_buf, uint32_t topic_buf_len,
                         char *data_buf, uint32_t data_buf_len);
 
-/* ── SQLite (per-wapp relational storage) ───────────────────────────── *
+/* ── Database (hal.db: per-wapp SQL storage) ────────────────────────── *
  *
- * Generic database access for wapps. `path` is RELATIVE to this wapp's
- * private data directory — a leading '/' and any ".." segment are
- * rejected, so a wapp can never reach another wapp's files or escape its
- * sandbox. The database is created if missing (WAL mode).
+ * Generic database access for wapps: SQL in the SQLite dialect, run by the
+ * host's zx database engine. `path` is RELATIVE to this wapp's private data
+ * directory — a leading '/' and any ".." segment are rejected, so a wapp can
+ * never reach another wapp's files or escape its sandbox. The database is
+ * created if missing and stored as `<path>.zx` (a trailing .sqlite3, .sqlite
+ * or .db is replaced); inside an encrypted profile it is encrypted.
  *
  * Binary values are NOT marshalled across the boundary: store binary as
  * base64 TEXT. Bind parameters are an optional JSON array matched to '?'
  * placeholders in order (JSON string/number/null → TEXT/INTEGER-or-REAL/
  * NULL); pass len 0 for none. Query rows come back as a JSON array of
- * objects (column name → value). */
+ * objects (column name → value). Every statement outside BEGIN/COMMIT is
+ * its own commit: group a burst of writes in one transaction. */
 
 /* Open/create a database. Returns a handle (>=0) or -1 on error. */
-__attribute__((import_module("hal"), import_name("sqlite_open")))
-int32_t hal_sqlite_open(const char *path, uint32_t path_len);
+__attribute__((import_module("hal"), import_name("db_open")))
+int32_t hal_db_open(const char *path, uint32_t path_len);
 
-/* Run a non-SELECT statement (CREATE/INSERT/UPDATE/DELETE/PRAGMA).
- * Returns 0 on success, -1 on error (see hal_sqlite_error). */
-__attribute__((import_module("hal"), import_name("sqlite_exec")))
-int32_t hal_sqlite_exec(int32_t handle, const char *sql, uint32_t sql_len,
-                        const char *params_json, uint32_t params_len);
+/* Run a non-SELECT statement (CREATE/INSERT/UPDATE/DELETE/BEGIN/COMMIT).
+ * Returns 0 on success, -1 on error (see hal_db_error). */
+__attribute__((import_module("hal"), import_name("db_exec")))
+int32_t hal_db_exec(int32_t handle, const char *sql, uint32_t sql_len,
+                    const char *params_json, uint32_t params_len);
 
 /* Run a SELECT and write the result rows as a JSON array into out.
  * Returns bytes written (>=0), -1 on SQL error, or -2 if the buffer is
  * too small (retry with a larger one; use LIMIT to bound results). */
-__attribute__((import_module("hal"), import_name("sqlite_query")))
-int32_t hal_sqlite_query(int32_t handle, const char *sql, uint32_t sql_len,
-                         const char *params_json, uint32_t params_len,
-                         char *out, uint32_t out_cap);
+__attribute__((import_module("hal"), import_name("db_query")))
+int32_t hal_db_query(int32_t handle, const char *sql, uint32_t sql_len,
+                     const char *params_json, uint32_t params_len,
+                     char *out, uint32_t out_cap);
 
 /* Write the last error message for a handle into out. Returns bytes. */
-__attribute__((import_module("hal"), import_name("sqlite_error")))
-uint32_t hal_sqlite_error(int32_t handle, char *out, uint32_t out_cap);
+__attribute__((import_module("hal"), import_name("db_error")))
+uint32_t hal_db_error(int32_t handle, char *out, uint32_t out_cap);
 
 /* Close a database handle and release its resources. */
-__attribute__((import_module("hal"), import_name("sqlite_close")))
-void hal_sqlite_close(int32_t handle);
+__attribute__((import_module("hal"), import_name("db_close")))
+void hal_db_close(int32_t handle);
 
 /* ── Generic crypto (caller-supplied keys) ──────────────────────────── *
  *

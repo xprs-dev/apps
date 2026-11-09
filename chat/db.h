@@ -2,8 +2,8 @@
  * db.h — the chat wapp's storage door, and the small string/JSON kit every
  * unit here shares.
  *
- * Storage is hal_sqlite_*: a database file under this wapp's private data
- * dir, created on open, WAL, encrypted under an encrypted profile. The same
+ * Storage is hal_db_* (hal.db): a zx store under this wapp's private data
+ * dir, created on open, encrypted under an encrypted profile. The same
  * door the circles wapp uses, wrapped the same way. There is one index
  * database (the rooms, the blocked set, the hidden set) and one database PER
  * CONVERSATION -- see db_init_room and room.c.
@@ -41,14 +41,14 @@ int  next_object(const char **cur, char *out, unsigned cap);
 /* Append src to dst, JSON-escaped. */
 void jesc(char *dst, unsigned m, const char *src);
 
-/* A bind-parameter array for hal_sqlite: ["a",1,"b"]. */
+/* A bind-parameter array for hal_db: ["a",1,"b"]. */
 typedef struct { char b[2400]; int first; } pj_t;
 void        pj_init(pj_t *p);
 void        pj_str(pj_t *p, const char *s);
 void        pj_int(pj_t *p, long long v);
 const char *pj_done(pj_t *p);
 
-/* ── sqlite ───────────────────────────────────────────────────────── */
+/* ── database ───────────────────────────────────────────────────────── */
 int  db_open(const char *relpath);            /* handle or -1 */
 void db_close(int h);
 int  db_exec(int h, const char *sql, const char *params);       /* 0 / -1 */

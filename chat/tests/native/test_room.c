@@ -169,7 +169,7 @@ TEST(the_local_room_sends_and_votes_with_scope_local) {
 TEST(an_index_that_lost_the_global_room_gets_it_back) {
   fresh();
   module_destroy();
-  { int h = db_open("index.sqlite3");
+  { int h = db_open("index.zx");
     db_exec(h, "DELETE FROM rooms WHERE id='#GLOBAL'", 0);
     db_exec(h, "INSERT OR REPLACE INTO meta(k,v) VALUES('global_gone','1')", 0);
     db_close(h); }
@@ -1189,7 +1189,7 @@ TEST(people_are_learned_once_from_the_rooms_already_held) {
   fresh();
   local_packet("X1OLD", "po0001", "from before", "local");
   module_destroy();
-  { int h = db_open("index.sqlite3");
+  { int h = db_open("index.zx");
     db_exec(h, "DELETE FROM people", 0);
     db_exec(h, "DELETE FROM meta WHERE k='people_v1'", 0);
     db_close(h); }
@@ -1244,7 +1244,7 @@ TEST(a_room_file_name_is_safe_and_stable) {
   CHECK(room_ensure("bad/id", "x") == -1);
   CHECK(room_ensure("#a b", "x") == -1);
   CHECK(!room_renderable("nomad"));
-  CHECK(access("/tmp/chat_native_test/rooms/_hLOCAL.sqlite3", 0) == 0);
+  CHECK(access("/tmp/chat_native_test/rooms/_hLOCAL.zx", 0) == 0);
 }
 
 TEST(a_1to1_like_is_a_directed_reaction_65) {

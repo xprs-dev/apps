@@ -200,17 +200,17 @@ void pj_int(pj_t *p, long long v) {
 }
 const char *pj_done(pj_t *p) { s_cat(p->b, "]", sizeof(p->b)); return p->b; }
 
-/* ── sqlite ───────────────────────────────────────────────────────── */
+/* ── database ───────────────────────────────────────────────────────── */
 int db_open(const char *relpath) {
-  return hal_sqlite_open(relpath, s_len(relpath));
+  return hal_db_open(relpath, s_len(relpath));
 }
-void db_close(int h) { if (h >= 0) hal_sqlite_close(h); }
+void db_close(int h) { if (h >= 0) hal_db_close(h); }
 int db_exec(int h, const char *sql, const char *params) {
-  return hal_sqlite_exec(h, sql, s_len(sql),
+  return hal_db_exec(h, sql, s_len(sql),
                          params ? params : "", params ? s_len(params) : 0);
 }
 int db_query(int h, const char *sql, const char *params, char *out, unsigned cap) {
-  int n = hal_sqlite_query(h, sql, s_len(sql),
+  int n = hal_db_query(h, sql, s_len(sql),
                            params ? params : "", params ? s_len(params) : 0,
                            out, cap - 1);
   if (n >= 0 && (unsigned)n < cap) out[n] = 0; else out[0] = 0;
@@ -239,7 +239,7 @@ void db_init_index(int h) {
   db_exec(h,
           "CREATE TABLE IF NOT EXISTS rooms("
           "id TEXT PRIMARY KEY,"           /* "#LOCAL", "#NAME", "X5ABCD", "X16JK8" */
-          "file TEXT NOT NULL,"            /* rooms/<encoded>.sqlite3, written once */
+          "file TEXT NOT NULL,"            /* rooms/<encoded>.zx, written once */
           "title TEXT NOT NULL DEFAULT '',"
           "activity_ts INTEGER NOT NULL DEFAULT 0,"
           "unread INTEGER NOT NULL DEFAULT 0,"

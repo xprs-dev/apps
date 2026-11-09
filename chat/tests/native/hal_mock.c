@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 /*
- * A native HAL for the chat wapp's tests: real sqlite3 behind hal_sqlite_*,
+ * A native HAL for the chat wapp's tests: real sqlite3 behind hal_db_*,
  * an in-memory KV, a capture of everything hal_msg_send says, and an
  * injectable event queue for module_handle_event. Modelled on
  * circles/tests/native/hal_mock.c.
@@ -296,17 +296,17 @@ int32_t hal_xprs_stations(char* o,uint32_t cap){ const char* s="[{\"title\":\"He
 int32_t hal_mesh_devices(char* o,uint32_t cap){ const char* s="[{\"title\":\"Nearby\",\"items\":[{\"id\":\"X1NEAR\",\"title\":\"X1NEAR\",\"subtitle\":\"phone\"}]},{\"title\":\"Multi-hop\",\"items\":[{\"id\":\"X1FAR\",\"title\":\"X1FAR\"}]}]"; uint32_t n=strlen(s); if(n>cap) return -(int32_t)n; memcpy(o,s,n); return n; }
 int32_t hal_people_directory(const char* q,uint32_t ql,char* o,uint32_t cap){ (void)q;(void)ql; const char* s="[{\"kind\":\"xprs\",\"callsign\":\"X1PEER\",\"nick\":\"Peer\",\"live\":true}]"; uint32_t n=strlen(s); if(n>cap) return -2; memcpy(o,s,n); return n; }
 
-/* ---- sqlite-backed hal_sqlite_* ---- */
+/* ---- sqlite-backed hal_db_* ---- */
 #define MAXH 128
 static sqlite3* g_db[MAXH]; static int g_dbn=1; static char g_err[256];
 static uint32_t g_query_cap_limit=0;   /* tests can force -2 */
 void mock_query_cap(uint32_t c){ g_query_cap_limit=c; }
 static void mkparents(const char* full){ char tmp[700]; strncpy(tmp,full,sizeof(tmp)-1); tmp[sizeof(tmp)-1]=0; for(char* p=tmp+1;*p;p++){ if(*p=='/'){ *p=0; mkdir(tmp,0777); *p='/'; } } }
-int32_t hal_sqlite_open(const char* path,uint32_t len){
+int32_t hal_db_open(const char* path,uint32_t len){
   char rel[512]; if(len>=sizeof(rel))return -1; memcpy(rel,path,len); rel[len]=0;
   char full[700]; snprintf(full,sizeof(full),"%s/%s",g_root,rel); mkparents(full);
   sqlite3* db; if(sqlite3_open(full,&db)!=SOK) return -1;
-  /* Reuse a closed slot. hal_sqlite_close() frees g_db[h] but g_dbn only ever
+  /* Reuse a closed slot. hal_db_close() frees g_db[h] but g_dbn only ever
    * went up, so a run was capped at MAXH opens TOTAL rather than at MAXH open
    * at once: adding one more always-present room made the later tests get -1
    * from here and fail with no captures and no explanation. */
@@ -321,13 +321,13 @@ static void bind_params(sqlite3_stmt* st,const char* params,uint32_t plen){
     else { char num[64]; int n=0; while(*p&&(*p=='-'||(*p>='0'&&*p<='9'))){ if(n<63)num[n++]=*p; p++; } num[n]=0; sqlite3_bind_int64(st,idx++,atoll(num)); }
   }
 }
-int32_t hal_sqlite_exec(int32_t h,const char* sql,uint32_t sl,const char* params,uint32_t pl){
+int32_t hal_db_exec(int32_t h,const char* sql,uint32_t sl,const char* params,uint32_t pl){
   if(h<=0||h>=MAXH||!g_db[h]) return -1; static char z[16384]; if(sl>=sizeof(z))return -1; memcpy(z,sql,sl); z[sl]=0;
   sqlite3_stmt* st; if(sqlite3_prepare_v2(g_db[h],z,-1,&st,0)!=SOK){ snprintf(g_err,sizeof(g_err),"%s",sqlite3_errmsg(g_db[h])); return -1; }
   bind_params(st,params,pl); int rc; while((rc=sqlite3_step(st))==SROW){} sqlite3_finalize(st);
   if(rc!=SDONE){ snprintf(g_err,sizeof(g_err),"%s",sqlite3_errmsg(g_db[h])); return -1; } return 0;
 }
-int32_t hal_sqlite_query(int32_t h,const char* sql,uint32_t sl,const char* params,uint32_t pl,char* out,uint32_t cap){
+int32_t hal_db_query(int32_t h,const char* sql,uint32_t sl,const char* params,uint32_t pl,char* out,uint32_t cap){
   if(h<=0||h>=MAXH||!g_db[h]) return -1; static char z[16384]; if(sl>=sizeof(z))return -1; memcpy(z,sql,sl); z[sl]=0;
   sqlite3_stmt* st; if(sqlite3_prepare_v2(g_db[h],z,-1,&st,0)!=SOK){ snprintf(g_err,sizeof(g_err),"%s",sqlite3_errmsg(g_db[h])); return -1; }
   bind_params(st,params,pl);
@@ -343,5 +343,5 @@ int32_t hal_sqlite_query(int32_t h,const char* sql,uint32_t sl,const char* param
   if(g_query_cap_limit && (uint32_t)o>g_query_cap_limit) return -2;
   if((uint32_t)o>cap) return -2; memcpy(out,buf,o); return o;
 }
-uint32_t hal_sqlite_error(int32_t h,char* o,uint32_t cap){ (void)h; uint32_t n=strlen(g_err); if(n>cap)n=cap; memcpy(o,g_err,n); return n; }
-void hal_sqlite_close(int32_t h){ if(h>0&&h<MAXH&&g_db[h]){ sqlite3_close(g_db[h]); g_db[h]=0; } }
+uint32_t hal_db_error(int32_t h,char* o,uint32_t cap){ (void)h; uint32_t n=strlen(g_err); if(n>cap)n=cap; memcpy(o,g_err,n); return n; }
+void hal_db_close(int32_t h){ if(h>0&&h<MAXH&&g_db[h]){ sqlite3_close(g_db[h]); g_db[h]=0; } }

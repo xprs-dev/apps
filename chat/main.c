@@ -11,7 +11,7 @@
  * Every message -- heard live, sent by us, replayed from the core's archive,
  * or a system note -- enters through room_admit() in room.c, which decides
  * once whether it is blocked, hidden or already held, writes it to that
- * room's own sqlite database, and paints the host's view from what it wrote.
+ * room's own database, and paints the host's view from what it wrote.
  * The host draws; it remembers nothing. "Already held" is the message id
  * being a primary key. There is no seen-ring, no membership list in RAM and
  * no key in KV: the database is the only memory this wapp has, and it is

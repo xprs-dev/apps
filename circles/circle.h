@@ -2,7 +2,7 @@
  * circle.h — the Circles model: identities, membership keysets, epoch keys,
  * encrypted message events, and the peer-to-peer sync protocol. All circle
  * logic lives here (and in main.c's UI glue); the host only provides the generic
- * sqlite / crypto / rns HAL primitives.
+ * db / crypto / rns HAL primitives.
  *
  * A Circle is a secp256k1 keypair (circleId = its x-only public key, hex). The
  * owner holds the master private key and signs the membership keyset. Members
