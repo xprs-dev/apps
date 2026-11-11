@@ -997,7 +997,7 @@ static void push_map(void)
             al_cat(mid, id, sizeof mid);
             al_cpy(detail, w, sizeof detail);
             if (title[0]) { al_cat(detail, " \xC2\xB7 ", sizeof detail); al_cat(detail, title, sizeof detail); }
-            marker(mid, pos, st, "#111111", detail);
+            marker(mid, pos, st, "#FAFAFA", detail);
             box_add(pos);
         }
     }

@@ -784,7 +784,8 @@ happens while nobody is looking. A headless engine has no page and ignores it.
 
 One map per wapp. Attributes on the group: `tile-url` (`{z}/{x}/{y}`
 template), `tile-style` (`mono`: black and white; `mono-dark`: the same
-inverted; absent: as served), `radius` / `chat` / `search` (the coverage
+inverted; `dark`: an OpenStreetMap-style tile repainted in the Protomaps "dark"
+palette, near-black land and blue-grey water; absent: as served), `radius` / `chat` / `search` (the coverage
 circle, the geo-chat and the address search; each on unless false), `default-lat`, `default-lon`, `default-zoom`,
 `min-zoom`, `max-zoom`, `label-url`, `label-max-zoom`. Tiles are kept on disk
 as they are seen, so an area once viewed works off-grid.

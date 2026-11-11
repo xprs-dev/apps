@@ -11,7 +11,7 @@
         "name": "checkin-map",
         "$type": "map",
         "tile-url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        "tile-style": "mono",
+        "tile-style": "dark",
         "default-lat": 38.7223,
         "default-lon": -9.1393,
         "default-zoom": 3,
