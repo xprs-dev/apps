@@ -265,6 +265,7 @@
   {"file":"checkin/checkin-0.2.7.wapp","id":"tools.xprs.checkin","version":"0.2.7","size":64269,"title":"Check-in","description":"Chase stations in person and collect their check-ins and badges."},
   {"file":"checkin/checkin-0.2.8.wapp","id":"tools.xprs.checkin","version":"0.2.8","size":64907,"title":"Check-in","description":"Chase stations in person and collect their check-ins and badges."},
   {"file":"checkin/checkin-0.2.9.wapp","id":"tools.xprs.checkin","version":"0.2.9","size":64980,"title":"Check-in","description":"Chase stations in person and collect their check-ins and badges."},
+  {"file":"checkin/checkin-0.3.0.wapp","id":"tools.xprs.checkin","version":"0.3.0","size":72809,"title":"Check-in","description":"Chase stations in person and collect their check-ins and badges."},
   {"file":"circles/circles-0.1.0.wapp","id":"tools.geogram.circles","version":"0.1.0","size":46172,"title":"Circles","description":"Private, encrypted group chat over Reticulum."},
   {"file":"circles/circles-0.10.0.wapp","id":"tools.geogram.circles","version":"0.10.0","size":82551,"title":"Circles","description":"Private, encrypted group chat over Reticulum."},
   {"file":"circles/circles-0.11.0.wapp","id":"tools.geogram.circles","version":"0.11.0","size":86688,"title":"Circles","description":"Private, encrypted group chat over Reticulum."},
