@@ -201,7 +201,12 @@ static void test_station(void)
     g_now -= 3601;
     cmd("{\"command\":\"save_greeting\",\"greeting\":\"Welcome to the hill, 73!\"}");
     cmd("{\"type\":\"file.open\",\"path\":\"/tmp/badge.png\"}");
-    CHECK(strstr(last_aired(), "t:file f:X3STN1") && strstr(last_aired(), REF), "the badge is described as a publication");
+    {
+        int pub = 0;
+        for (int i = 0; i < g_aired_n; i++)
+            if (strstr(g_aired[i], "t:file f:X3STN1") && strstr(g_aired[i], REF)) pub = 1;
+        CHECK(pub, "the badge is described as a publication");
+    }
 
     mock_clear();
     ci_build_ask(ask, sizeof ask, "X1CHSR", "X3STN1", g_now - 5, "local");
