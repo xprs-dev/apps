@@ -26,7 +26,8 @@ enum {
     CI_OK          = 200,
     CI_REFUSED     = 403,  /* unsigned, unverified, out of range, scope too wide */
     CI_STALE       = 408,
-    CI_AGAIN_LATER = 429   /* already checked in today */
+    CI_AGAIN_LATER = 429,  /* already checked in today */
+    CI_NO_PLACE    = 500   /* the station does not know where it is */
 };
 
 /* The station's rules. */
@@ -82,10 +83,13 @@ int ci_build_ask(char *out, unsigned cap, const char *me, const char *station,
 
 /* The certificate (code 200) or a refusal (any other code):
  *   t:result f:<me> d:<visitor> ts: r:<ask id> code: scope:<ask's>
- * and on a certificate, as far as they fit signed, in order of worth:
- *   link: file: title: route: rssi: pos:
- * [link] [file] [title] [route] [pos] may be empty, [rssi] 0 for none.
- * Length, or -1 when not even the head fits. */
+ * and on a certificate link: and pos: (REQUIRED: a check-in is a meeting at
+ * a place, and the logbook maps every one), route: when it came through
+ * relays (REQUIRED then: it decides the grade), then as far as they fit
+ * signed:
+ *   file: title: rssi:
+ * [file] [title] may be empty, [rssi] 0 for none. Length, or -1 when the head
+ * does not fit, or for a certificate without a valid [pos]. */
 int ci_build_result(char *out, unsigned cap, const char *me, const ci_ask_t *a,
                     unsigned long long now, int code, const char *file,
                     const char *title, const char *pos);
@@ -120,6 +124,16 @@ int ci_build_event(char *out, unsigned cap, const char *me,
 int ci_build_badge(char *out, unsigned cap, const char *me,
                    unsigned long long now, const char *ref,
                    unsigned long long size);
+
+/* "lat,lon" in decimal degrees, latitude first (XPRS.md 15.1): 1 when it is
+ * one and in range, with both times 1e7 into [lat7] and [lon7] (either may
+ * be NULL). */
+int ci_pos_parse(const char *pos, long *lat7, long *lon7);
+int ci_pos_ok(const char *pos);
+
+/* The same position written with four decimals (eleven metres), which is
+ * what a station claims about where it stands. 0 when [in] is not one. */
+int ci_pos_norm(const char *in, char *out, unsigned cap);
 
 /* Fold free text to a label: lowercase, spaces to -, anything else dropped,
  * at most cap-1. Empty when nothing is left. */

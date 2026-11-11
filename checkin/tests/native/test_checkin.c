@@ -106,9 +106,21 @@ static void test_rules(void)
     n = ci_build_result(w, sizeof w, "X3STN1", &a, 1786960001ULL, CI_OK,
                         "file:Uc3nRw8kFa5xPd1qGz7mYb0tJe6vHs2iLoA9XfCqK4E.png", "field-day", "38.7071,-9.1393");
     CHECK(n > 0 && n <= CI_WIRE_UNSIGNED, "the certificate fits once signed");
-    CHECK(strstr(w, "t:result f:X3STN1 d:X1CHSR ts:2026-08-17_09:46:41 r:abc123 code:200 scope:regional link:lora file:") == w,
-          "the head and the radio first");
-    CHECK(strstr(w, " title:field-day") && strstr(w, " route:X3RLY7"), "event and relays when they fit");
+    CHECK(strstr(w, "t:result f:X3STN1 d:X1CHSR ts:2026-08-17_09:46:41 r:abc123 code:200 scope:regional link:lora pos:38.7071,-9.1393 route:X3RLY7 file:") == w,
+          "the head, the radio and the place first");
+    CHECK(ci_build_result(w, sizeof w, "X3STN1", &a, 1786960001ULL, CI_OK, REF, "", "") < 0 &&
+          ci_build_result(w, sizeof w, "X3STN1", &a, 1786960001ULL, CI_OK, REF, "", "91,0") < 0,
+          "no certificate without a valid place");
+    n = ci_build_result(w, sizeof w, "X3STN1", &a, 1786960001ULL, CI_OK,
+                        "file:Uc3nRw8kFa5xPd1qGz7mYb0tJe6vHs2iLoA9XfCqK4E.png", "field-day", "38.7071,-9.1393");
+    CHECK(strstr(w, " route:X3RLY7 file:") != 0, "the relays always, then the badge");
+    {
+        ci_ask_t d = a;
+        d.via[0] = 0;
+        char w2[300];
+        ci_build_result(w2, sizeof w2, "X3STN1", &d, 1786960001ULL, CI_OK, REF, "field-day", "38.7071,-9.1393");
+        CHECK(strstr(w2, " title:field-day") != 0, "the event when it fits");
+    }
     ci_cert_t c;
     CHECK(ci_read_cert(w, &c) && c.code == 200 && !strcmp(c.r, "abc123") && !strcmp(c.link, "lora")
           && !strcmp(c.file, REF) && !strcmp(c.route, "X3RLY7"), "a certificate reads back");
@@ -118,6 +130,12 @@ static void test_rules(void)
     n = ci_build_result(w, sizeof w, "X3STN1", &a, 1786960001ULL, CI_REFUSED, REF, "x", "1,2");
     CHECK(n > 0 && !strstr(w, "link:") && !strstr(w, "file:") && strstr(w, "code:403"), "a refusal says only no");
 
+    char pn[40];
+    long la = 0, lo = 0;
+    CHECK(ci_pos_parse("38.7071,-9.1393", &la, &lo) && la == 387071000L && lo == -91393000L, "a position reads");
+    CHECK(!ci_pos_ok("38.7") && !ci_pos_ok("x,y") && !ci_pos_ok("12,190") && !ci_pos_ok("-90.5,0") && ci_pos_ok("-33,151.2"),
+          "and nonsense does not");
+    CHECK(ci_pos_norm("38.722345678,-9.13", pn, sizeof pn) && !strcmp(pn, "38.7223,-9.1300"), "four decimals: eleven metres");
     char l[32];
     ci_label(l, sizeof l, "  Field Day 2026! ");
     CHECK(!strcmp(l, "field-day-2026"), "a name becomes a label");
@@ -142,6 +160,14 @@ static void test_station(void)
     module_init();
     CHECK(!mock_subscribed("xprs.command"), "off: listens to nothing");
     cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
+    CHECK(!mock_subscribed("xprs.command") && said("Set where your station stands first"),
+          "no place, no check-ins: it stays off and says why");
+    cmd("{\"command\":\"save_pos\",\"st_pos\":\"not a place\"}");
+    CHECK(said("That is not a position"), "a position is checked");
+    cmd("{\"type\":\"setViewport\",\"lat\":38.70712345,\"lon\":-9.13931,\"zoom\":15}");
+    cmd("{\"command\":\"set_station_here\"}");
+    CHECK(said("Your station stands at 38.7071,-9.1393"), "the map's centre becomes the station's place");
+    cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
     CHECK(mock_subscribed("xprs.command"), "on: listens for asks");
     cmd("{\"command\":\"save_greeting\",\"greeting\":\"Welcome to the hill, 73!\"}");
     cmd("{\"type\":\"file.open\",\"path\":\"/tmp/badge.png\"}");
@@ -151,8 +177,8 @@ static void test_station(void)
     ci_build_ask(ask, sizeof ask, "X1CHSR", "X3STN1", g_now - 5, "local");
     ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
     event("xprs.command", row_);
-    CHECK(g_aired_n == 1 && strstr(last_aired(), "code:200 scope:local link:ble file:") && strstr(last_aired(), REF),
-          "certified, over Bluetooth, with the badge's hash");
+    CHECK(g_aired_n == 1 && strstr(last_aired(), "code:200 scope:local link:ble pos:38.7071,-9.1393 file:") && strstr(last_aired(), REF),
+          "certified, over Bluetooth, at the station's place, with the badge's hash");
     CHECK(!strstr(last_aired(), " b:"), "the badge's bytes never ride the certificate");
     snprintf(g_cert, sizeof g_cert, "%s", last_aired());
     CHECK(g_msg_n == 1 && !strcmp(g_msg_to, "X1CHSR") && !strcmp(g_msg_text, "Welcome to the hill, 73!"),
@@ -278,7 +304,12 @@ static void test_chaser(void)
     mock_clear();
     result_row(row_, sizeof row_, cert);
     event("xprs.result", row_);
-    CHECK(said("Checked in at X3STN1"), "the chaser is told");
+    CHECK(said("First check-in at X3STN1") && said("New badge on your wall!"), "the chaser is told, and it is a first");
+    CHECK(said("\"type\":\"ui.map.marker\"") && said("\"lat\":38.7071,\"lon\":-9.1393") && said("\"id\":\"log:"),
+          "the check-in is a pin on the map");
+    CHECK(said("\"type\":\"ui.map.viewport\""), "the map centres on the check-ins");
+    CHECK(said("\"type\":\"ui.map.prefetch\",\"bbox\":[") && said("\"minZoom\":3,\"maxZoom\":9"),
+          "the region's overview is saved for off-grid use");
     char want[96];
     /* The week-long event announced above still runs: its badge, not the
      * station's, is the one handed out. */
@@ -286,6 +317,24 @@ static void test_chaser(void)
     CHECK(g_fetched_n >= 1 && !strcmp(g_fetched[0], want), "the event's badge is asked of the core by its hash");
     CHECK(said("\"value\":\"1\""), "the logbook counts it");
     CHECK(said("\"title\":\"Badge wall\"") && said(EREF), "the badge wall shows it");
+
+    /* A certificate that names no place is not a check-in. */
+    {
+        char forged_ask[300], noplace[300], row2[4096];
+        ci_build_ask(forged_ask, sizeof forged_ask, "X1CHSR", "X3NOPL", g_now, "local");
+        snprintf(g_stations, sizeof g_stations,
+                 "[{\"title\":\"Heard over the air (1)\",\"items\":[{\"id\":\"X3NOPL\",\"title\":\"X3NOPL\",\"kind\":\"station\"}]}]");
+        cmd("{\"command\":\"nearby_checkin\",\"nearby_id\":\"X3NOPL\"}");
+        char aid[7];
+        al_id(last_aired(), al_len(last_aired()), aid);
+        snprintf(noplace, sizeof noplace,
+                 "t:result f:X3NOPL d:X1CHSR ts:2026-08-20_09:46:41 r:%s code:200 scope:local link:ble", aid);
+        mock_clear();
+        result_row(row2, sizeof row2, noplace);
+        event("xprs.result", row2);
+        CHECK(said("without saying where it is") && !said("Checked in at X3NOPL"), "no place, no check-in");
+        (void)forged_ask;
+    }
 
     /* The greeting follows as a message. */
     mock_clear();
@@ -301,6 +350,18 @@ static void test_chaser(void)
     cmd(tap);
     CHECK(said("Certificate (signed by the station)") && said("cmd:checkin") && said("code:200"),
           "the entry shows both packets");
+    snprintf(tap, sizeof tap, "{\"command\":\"marker_tap\",\"id\":\"log:%s\"}", id);
+    mock_clear();
+    cmd(tap);
+    CHECK(said("Certificate (signed by the station)") && said("\"name\":\"Entry\""), "a pin opens its check-in");
+
+    /* Saving a city for off-grid use is the person's act. */
+    mock_clear();
+    cmd("{\"type\":\"setViewport\",\"lat\":38.72,\"lon\":-9.14,\"zoom\":13}");
+    cmd("{\"command\":\"save_area\"}");
+    CHECK(said("\"type\":\"ui.map.prefetch\",\"minZoom\":13,\"maxZoom\":16,\"max\":1500"), "this area, three levels closer");
+    cmd("{\"type\":\"map.prefetch\",\"state\":\"done\",\"done\":120,\"total\":120,\"held\":118}");
+    CHECK(said("Map saved for off-grid use: 118 tiles."), "and the person is told when it is saved");
 
     /* A station that never answers. */
     mock_clear();

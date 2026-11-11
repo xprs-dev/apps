@@ -759,6 +759,41 @@ Group `$type` values reserved for host-side rendering:
 The engine treats unknown types as opaque containers and renders
 their children as standard fields/actions.
 
+### 14.0 Layout rules the host applies to a screen
+
+- A screen with a `$type:"map"` group IS the map: it shows the map full
+  bleed and nothing else from the screen, except its actions (in the options
+  menu, and as a row over the map with `"toolbar": true`).
+- A screen with a `$type:"people"` field shows, in this order: its `stats`
+  fields as a strip, its `bool` fields as switches, its actions as a row when
+  `"toolbar": true` (always in the options menu), and the FIRST people field
+  full height. Text fields, details and any further list on that screen are
+  not shown: put settings on a screen without a list.
+- Icon names come from a fixed list (`geoUiResolveIcon` in the app); an
+  unknown name draws a generic glyph.
+
+### 14.0.1 `$type="map"`
+
+One map per wapp. Attributes on the group: `tile-url` (`{z}/{x}/{y}`
+template), `tile-style` (`mono`: black and white; `mono-dark`: the same
+inverted; absent: as served), `default-lat`, `default-lon`, `default-zoom`,
+`min-zoom`, `max-zoom`, `label-url`, `label-max-zoom`. Tiles are kept on disk
+as they are seen, so an area once viewed works off-grid.
+
+Wapp to host:
+
+| message | does |
+|---|---|
+| `{"type":"ui.map.viewport","lat","lon","zoom"}` | move the map |
+| `{"type":"ui.map.marker","id","lat","lon","label","color"?,"detail"?}` | add or move a pin (`color` as `#RRGGBB`) |
+| `{"type":"ui.map.markers.clear"}` | remove every pin |
+| `{"type":"ui.map.prefetch","bbox"?:[s,w,n,e],"minZoom","maxZoom","max"?}` | save an area's tiles for off-grid use; without `bbox`, the area on screen. At most 1500 tiles, two at a time, one save at a time: a tile server is shared and OpenStreetMap's refuses bulk downloads, so save what a person asked for, not the world |
+
+Host to wapp: `{"type":"setViewport","lat","lon","zoom"}` after every pan,
+`{"command":"marker_tap","id"}` when a pin is tapped, and
+`{"type":"map.prefetch","state":"running|done|busy","done","total","held"}`
+while an area is saved.
+
 ### 14.1 `$type="menu"`
 
 A `<group $type="menu">` collapses into a single icon button. When

@@ -149,16 +149,28 @@ int ci_build_result(char *out, unsigned cap, const char *me, const ci_ask_t *a,
     }
     if (al_len(out) > CI_WIRE_UNSIGNED) return -1;
     if (code == CI_OK) {
+        /* A check-in is a meeting at a PLACE: without the station's position
+         * there is no certificate (ci.h). The radio and the place go first,
+         * then the badge, the event, the relays and the signal while they
+         * still fit signed. */
         char rssi[16] = "", ref[64];
+        if (!ci_pos_ok(pos)) return -1;
         ci_link_of(a->bearer, link, sizeof link);
         ci_ref_of(file ? file : "", ref, sizeof ref);
         opt(out, cap, "link", link);
+        opt(out, cap, "pos", pos);
+        if (!al_field(out, "pos", rssi, sizeof rssi)) return -1;
+        /* The relays say how close the meeting really was (ci_grade): a
+         * relayed check-in that cannot say so is not certified at all. */
+        if (a->via[0]) {
+            opt(out, cap, "route", a->via);
+            if (!al_field(out, "route", rssi, sizeof rssi)) return -1;
+        }
+        rssi[0] = 0;
         opt(out, cap, "file", ref);
         opt(out, cap, "title", title);
-        opt(out, cap, "route", a->via);
         if (a->rssi) { cat_int(rssi, a->rssi, sizeof rssi); al_cat(rssi, "dBm", sizeof rssi); }
         opt(out, cap, "rssi", rssi);
-        opt(out, cap, "pos", pos);
     }
     return (int)al_len(out);
 }
@@ -286,4 +298,66 @@ int ci_build_badge(char *out, unsigned cap, const char *me,
     al_cat(out, " m:Check-in badge", cap);
     unsigned n = al_len(out);
     return n > CI_WIRE_UNSIGNED ? -1 : (int)n;
+}
+
+/* One decimal number with at most [maxint] integer digits; its value into
+ * [v] times 1e7 (truncated past seven decimals). */
+static int dec7(const char **pp, long *v, int maxint)
+{
+    const char *p = *pp;
+    int neg = 0, nint = 0, nfrac = 0;
+    long iv = 0, fv = 0;
+    if (*p == '-') { neg = 1; p++; }
+    while (*p >= '0' && *p <= '9') { if (++nint > maxint) return 0; iv = iv * 10 + (*p++ - '0'); }
+    if (!nint) return 0;
+    if (*p == '.') {
+        p++;
+        while (*p >= '0' && *p <= '9') {
+            if (nfrac < 7) { fv = fv * 10 + (*p - '0'); nfrac++; }
+            p++;
+        }
+        if (!nfrac) return 0;
+    }
+    while (nfrac < 7) { fv *= 10; nfrac++; }
+    *v = (iv * 10000000L + fv) * (neg ? -1 : 1);
+    *pp = p;
+    return 1;
+}
+
+int ci_pos_parse(const char *pos, long *lat7, long *lon7)
+{
+    const char *p = pos;
+    long la, lo;
+    if (!p || !*p || !dec7(&p, &la, 2) || *p != ',') return 0;
+    p++;
+    if (!dec7(&p, &lo, 3) || *p) return 0;
+    if (la < -900000000L || la > 900000000L || lo < -1800000000L || lo > 1800000000L) return 0;
+    if (lat7) *lat7 = la;
+    if (lon7) *lon7 = lo;
+    return 1;
+}
+
+int ci_pos_ok(const char *pos) { return ci_pos_parse(pos, 0, 0); }
+
+/* Degrees times 1e7 as text with four decimals (eleven metres). */
+static void deg4(char *d, unsigned cap, long v)
+{
+    if (v < 0) { al_cat(d, "-", cap); v = -v; }
+    al_cat_u(d, (unsigned long long)(v / 10000000L), cap);
+    al_cat(d, ".", cap);
+    long f = (v % 10000000L) / 1000L;
+    char t[5] = { (char)('0' + f / 1000), (char)('0' + f / 100 % 10),
+                  (char)('0' + f / 10 % 10), (char)('0' + f % 10), 0 };
+    al_cat(d, t, cap);
+}
+
+int ci_pos_norm(const char *in, char *out, unsigned cap)
+{
+    long la, lo;
+    out[0] = 0;
+    if (!ci_pos_parse(in, &la, &lo)) return 0;
+    deg4(out, cap, la);
+    al_cat(out, ",", cap);
+    deg4(out, cap, lo);
+    return 1;
 }
