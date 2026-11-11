@@ -194,11 +194,11 @@ static void test_station(void)
           "and it says so on the air: its check-in point, at its shared place, with its intro");
     mock_clear();
     module_tick();
-    CHECK(g_aired_n == 0, "the point is not repeated within the hour");
-    g_now += 3601;
+    CHECK(g_aired_n == 0, "the point is not repeated within the quarter hour");
+    g_now += 901;
     module_tick();
     CHECK(g_aired_n == 1 && strstr(last_aired(), "title:check-ins-open"), "and is renewed after it");
-    g_now -= 3601;
+    g_now -= 901;
     cmd("{\"command\":\"save_greeting\",\"greeting\":\"Welcome to the hill, 73!\"}");
     cmd("{\"type\":\"file.open\",\"path\":\"/tmp/badge.png\"}");
     {

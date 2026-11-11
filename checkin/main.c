@@ -719,11 +719,11 @@ static void here_pos(char *out, unsigned cap)
 /* ── the check-in point ─────────────────────────────────────────────── */
 /* A station that gives check-ins and shares where it is says so on the air:
  * a t:event tag:checkin under CI_POINT_TITLE, with its shared position, its
- * badge and its intro, good for two hours and renewed every hour while it
+ * badge and its intro, good for an hour and renewed every quarter hour while it
  * gives check-ins. Turning check-ins off airs one that closes in a minute,
  * so the pin leaves other people's maps. No position shared: no point. */
-#define POINT_EVERY_S 3600ULL
-#define POINT_FOR_S   7200ULL
+#define POINT_EVERY_S 900ULL
+#define POINT_FOR_S   3600ULL
 static void announce_point(int closing)
 {
     char pos[40], wire[CI_WIRE_MAX + 1];
