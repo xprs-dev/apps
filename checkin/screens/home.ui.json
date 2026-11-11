@@ -4,7 +4,7 @@
     "name": "Map",
     "icon": "map",
     "toolbar": true,
-    "tip": "Every check-in you made, on the map. Amber pins are check-in events still running: places to go next.",
+    "tip": "Every check-in you made is a black pin. Amber pins are check-in events still running: places to go next.",
     "children": [
       {
         "$": "group",
@@ -16,7 +16,10 @@
         "default-lon": -9.1393,
         "default-zoom": 3,
         "min-zoom": 2,
-        "max-zoom": 18
+        "max-zoom": 18,
+        "radius": false,
+        "chat": false,
+        "search": false
       },
       {
         "$": "action",
@@ -113,7 +116,7 @@
         "name": "events",
         "$type": "people",
         "empty_title": "No events known",
-        "empty": "Stations announce check-in events with a badge of their own, for a day, a week or a month. The ones this phone has heard of show up here."
+        "empty": "Stations announce check-in events with a badge of their own, for a day, a week or a month. The ones this device has heard of show up here."
       },
       {
         "$": "action",

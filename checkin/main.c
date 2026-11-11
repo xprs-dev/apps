@@ -312,6 +312,11 @@ static void section_begin(const char *title, int *any)
 static void section_end(void) { al_cat(g_out, "]}", sizeof g_out); }
 static void rows_end(void) { al_cat(g_out, "]}", sizeof g_out); say(g_out); }
 
+/* An icon for the next row() that has no picture: a row about a THING (a
+ * badge not chosen yet, an event, a check-in without a badge) reads better as
+ * an icon than as a generated face. Reset by row(). */
+static const char *g_icon;
+
 /* One row. [avatar] a file: token or "", [call] the station it is about. */
 static void row(const char *id, const char *title, const char *sub_,
                 const char *t1, const char *t2, const char *avatar,
@@ -337,7 +342,12 @@ static void row(const char *id, const char *title, const char *sub_,
         al_jesc(g_out, avatar, sizeof g_out);
         al_cat(g_out, "\"", sizeof g_out);
     }
-    if (call && call[0]) {
+    if (g_icon && (!avatar || !avatar[0])) {
+        al_cat(g_out, ",\"icon\":\"", sizeof g_out);
+        al_cat(g_out, g_icon, sizeof g_out);
+        al_cat(g_out, "\"", sizeof g_out);
+    }
+    if (call && call[0] && !g_icon) {
         al_cat(g_out, ",\"call\":\"", sizeof g_out);
         al_jesc(g_out, call, sizeof g_out);
         al_cat(g_out, "\"", sizeof g_out);
@@ -350,6 +360,7 @@ static void row(const char *id, const char *title, const char *sub_,
         al_cat(g_out, "\",\"actionStyle\":\"filled\"", sizeof g_out);
     }
     al_cat(g_out, "}", sizeof g_out);
+    g_icon = 0;
 }
 
 static int log_count_for(const char *call)
@@ -431,7 +442,7 @@ static void do_checkin(const char *station)
     for (int i = 0; i < PEND_MAX; i++) if (!g_pend[i].id[0]) { slot = i; break; }
     if (slot < 0) { notify("warning", "Check-in", "Too many asks out; wait for an answer."); return; }
     int rc = hal_xprs_send(wire, (uint32_t)n);
-    if (rc != 0) { notify("warning", "Check-in", "This phone could not send the ask."); return; }
+    if (rc != 0) { notify("warning", "Check-in", "This device could not send the ask."); return; }
     /* The identifier of the wire we built is the one the signed copy has:
      * a signature changes neither f:, ts: nor the payload (XPRS.md 5). */
     al_id(wire, (unsigned)n, g_pend[slot].id);
@@ -530,7 +541,7 @@ static void on_result(const char *row_)
     } else {
         al_cpy(body, station, sizeof body);
         al_cat(body, c.code == CI_AGAIN_LATER ? ": you already checked in here today."
-                   : c.code == CI_STALE ? ": the ask arrived too late. Is this phone's clock right?"
+                   : c.code == CI_STALE ? ": the ask arrived too late. Is this device's clock right?"
                    : c.code == CI_REFUSED ? ": refused. It may not know your key yet (try again in a minute), or it takes check-ins in person only."
                    : c.code == CI_NO_PLACE ? ": its owner has not said where it stands yet, so it cannot give check-ins."
                    : ": no check-in.", sizeof body);
@@ -768,6 +779,7 @@ static void push_log(void)
             when(w, sizeof w, t);
             if (!sub_[0]) al_cpy(sub_, w, sizeof sub_);
             if (badge[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, badge, sizeof tok); }
+            if (!tok[0]) g_icon = "check";
             row(id, title[0] ? title : st, sub_, al_eq(grade, "local") ? "in person" : grade,
                 title[0] ? st : w, tok, st, "", "");
         }
@@ -928,7 +940,7 @@ static void push_map(void)
             al_cat(mid, id, sizeof mid);
             al_cpy(detail, w, sizeof detail);
             if (title[0]) { al_cat(detail, " \xC2\xB7 ", sizeof detail); al_cat(detail, title, sizeof detail); }
-            marker(mid, pos, st, "#FFFFFF", detail);
+            marker(mid, pos, st, "#111111", detail);
             box_add(pos);
         }
     }
@@ -1048,6 +1060,7 @@ static void push_events(void)
             if (file[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, file, sizeof tok); fetch_badge(file); }
             char until_tag[40] = "until ";
             al_cat(until_tag, wu, sizeof until_tag);
+            g_icon = "schedule";
             row(id, title, m[0] ? m : from, tag, until_tag, tok, from, "", "");
         }
     }
@@ -1081,6 +1094,7 @@ static void push_guests(void)
     rows_begin("guests");
     int any = 0;
     section_begin("Your badge", &any);
+    g_icon = "star";
     if (g_badge[0]) row("badge", "Your badge", "Handed out with every check-in", "", "", g_badge, "", "", "");
     else row("badge", "No badge yet", "Choose a small picture: visitors collect it", "", "", "", "", "", "");
     section_end();
@@ -1103,6 +1117,7 @@ static void push_guests(void)
             when(wu, sizeof wu, until);
             char until_tag[40] = "until ";
             al_cat(until_tag, wu, sizeof until_tag);
+            g_icon = "schedule";
             row(title, title, ws, until <= now_s() ? "ended" : "", until_tag, badge, "", "", "");
         }
         if (!first_ev) section_end();
@@ -1224,7 +1239,7 @@ static void publish_event(void)
     int n = ci_build_event(wire, sizeof wire, g_me, now, pos, label, now, now + span,
                            g_draft.badge, desc);
     if (n < 0) { notify("warning", "Check-in", "That does not fit in one packet: shorten the name."); return; }
-    if (hal_xprs_send(wire, (uint32_t)n) != 0) { notify("warning", "Check-in", "This phone could not announce it."); return; }
+    if (hal_xprs_send(wire, (uint32_t)n) != 0) { notify("warning", "Check-in", "This device could not announce it."); return; }
     if (g_draft.badge[0]) publish_badge(g_draft.badge);
     char ref[64];
     ci_ref_of(g_draft.badge, ref, sizeof ref);
@@ -1284,7 +1299,7 @@ static void on_command(void)
         char state[12], held[12];
         al_json(g_buf, "state", state, sizeof state);
         al_json(g_buf, "held", held, sizeof held);
-        if (al_eq(state, "busy")) notify("info", "Check-in", "Already saving an area of the map; one at a time.");
+        if (al_eq(state, "busy")) notify("info", "Check-in", "Already saving an area of the map: one at a time.");
         if (al_eq(state, "done") && held[0] && !al_eq(held, "0")) {
             char body[120] = "\xF0\x9F\x97\xBA Map saved for off-grid use: ";
             al_cat(body, held, sizeof body);
