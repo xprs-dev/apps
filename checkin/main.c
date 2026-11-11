@@ -245,6 +245,12 @@ static void db_init(void)
     db_exec("CREATE TABLE IF NOT EXISTS events (title TEXT PRIMARY KEY,"
             " since INTEGER, until INTEGER, badge TEXT, m TEXT)", 0);
     db_exec("CREATE TABLE IF NOT EXISTS stations (call TEXT PRIMARY KEY, last INTEGER)", 0);
+    /* Check-in events and points heard on the air. The core's archive keeps
+     * nothing from strangers on a private phone (silence is not consent),
+     * and finding stations nobody follows yet is this wapp's whole point, so
+     * it keeps what it hears with tag:checkin itself, until it closes. */
+    db_exec("CREATE TABLE IF NOT EXISTS heard (id TEXT PRIMARY KEY, sender TEXT,"
+            " until INTEGER, wire TEXT)", 0);
     /* Asks out, so an answer that arrives after the page closed is still
      * matched by whichever engine runs then (the background one, when the
      * owner turned it on). Results are never archived: missed is lost. */
@@ -1049,6 +1055,60 @@ static void save_overview(void)
     say(m);
 }
 
+/* Every check-in event known: those heard on the air (the heard table)
+ * and those the core archived (our own, people we follow). [fn] gets each
+ * one's identifier and wire; the same packet from both is passed twice and
+ * the callers keep the newest per sender or per identifier. */
+typedef void (*ev_fn)(const char *id, const char *wire, void *ctx);
+static char g_evrows[24576];
+static void each_event(ev_fn fn, void *ctx)
+{
+    char id[8], wire[CI_WIRE_MAX + 64];
+    if (db_query("SELECT id, wire FROM heard", 0)) {
+        al_cpy(g_evrows, g_rows, sizeof g_evrows);
+        const char *p = g_evrows;
+        while (*p && *p != '[') p++;
+        if (*p == '[') p++;
+        static char obj[CI_WIRE_MAX + 200];
+        while ((p = al_json_next(p, obj, sizeof obj)) != 0) {
+            al_json(obj, "id", id, sizeof id);
+            if (al_json(obj, "wire", wire, sizeof wire) && has_tag(wire, "checkin")) fn(id, wire, ctx);
+        }
+    }
+    static const char q[] = "{\"types\":[\"event\"],\"limit\":200}";
+    int32_t n = hal_xprs_history(q, sizeof q - 1, g_big, sizeof g_big - 1);
+    if (n <= 0) return;
+    g_big[n] = 0;
+    al_cpy(g_evrows, g_big, sizeof g_evrows);
+    const char *p = g_evrows;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    static char obj2[CI_WIRE_MAX + 400];
+    while ((p = al_json_next(p, obj2, sizeof obj2)) != 0) {
+        al_json(obj2, "id", id, sizeof id);
+        if (al_json(obj2, "wire", wire, sizeof wire) && has_tag(wire, "checkin")) fn(id, wire, ctx);
+    }
+}
+
+/* A check-in event heard on the air (xprs.event): kept until it closes. */
+static void on_event_heard(const char *row_)
+{
+    char wire[CI_WIRE_MAX + 64], id[8], from[16], u[24];
+    if (!al_json(row_, "wire", wire, sizeof wire) || !has_tag(wire, "checkin")) return;
+    al_json(row_, "id", id, sizeof id);
+    al_field(wire, "f", from, sizeof from);
+    al_field(wire, "until", u, sizeof u);
+    unsigned long long until = al_epoch(u), now = now_s();
+    if (!id[0] || !from[0] || !until) return;
+    who_am_i();
+    if (al_eq(from, g_me)) return;               /* our own, relayed back */
+    p_begin(); p_int(now); p_end();
+    db_exec("DELETE FROM heard WHERE until < ?", 1);
+    if (until <= now) return;
+    p_begin(); p_str(id); p_str(from); p_int(until); p_str(wire); p_end();
+    db_exec("INSERT OR REPLACE INTO heard (id, sender, until, wire) VALUES (?,?,?,?)", 1);
+}
+
 /* Check-in points heard (the stations giving check-ins that share where
  * they are), the newest announcement per station, still open, not ours. */
 #define PT_MAX 40
@@ -1059,47 +1119,42 @@ static struct {
 } g_pts[PT_MAX];
 static int g_npts;
 
+static char g_here[40];
+static void point_seen(const char *id, const char *wire, void *ctx)
+{
+    (void)ctx;
+    char from[16], title[32], u[24], ts[24], pos[40];
+    al_field(wire, "title", title, sizeof title);
+    if (!al_eq(title, CI_POINT_TITLE)) return;
+    al_field(wire, "f", from, sizeof from);
+    if (!from[0] || al_eq(from, g_me)) return;
+    al_field(wire, "pos", pos, sizeof pos);
+    al_field(wire, "until", u, sizeof u);
+    al_field(wire, "ts", ts, sizeof ts);
+    unsigned long long t = al_epoch(ts);
+    int k = 0;
+    while (k < g_npts && !al_eq(g_pts[k].call, from)) k++;
+    if (k < g_npts && g_pts[k].ts >= t) return;      /* we hold a newer one */
+    if (al_epoch(u) <= now_s() || !ci_pos_ok(pos)) { /* closed, or no place */
+        if (k < g_npts) g_pts[k] = g_pts[--g_npts];
+        return;
+    }
+    if (k == g_npts) { if (g_npts == PT_MAX) return; g_npts++; }
+    al_cpy(g_pts[k].call, from, sizeof g_pts[k].call);
+    al_cpy(g_pts[k].pos, pos, sizeof g_pts[k].pos);
+    al_field(wire, "m", g_pts[k].intro, sizeof g_pts[k].intro);
+    al_field(wire, "file", g_pts[k].file, sizeof g_pts[k].file);
+    al_cpy(g_pts[k].id, id, sizeof g_pts[k].id);
+    g_pts[k].ts = t;
+    g_pts[k].dist = g_here[0] ? ci_dist_m(g_here, pos) : -1;
+}
+
 static void load_points(void)
 {
-    static const char q[] = "{\"types\":[\"event\"],\"limit\":200}";
     g_npts = 0;
-    int32_t n = hal_xprs_history(q, sizeof q - 1, g_big, sizeof g_big - 1);
-    if (n <= 0) return;
-    g_big[n] = 0;
     who_am_i();
-    char here[40];
-    here_pos(here, sizeof here);
-    unsigned long long now = now_s();
-    const char *p = g_big;
-    while (*p && *p != '[') p++;
-    if (*p == '[') p++;
-    while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
-        char wire[CI_WIRE_MAX + 64], from[16], title[32], u[24], ts[24], pos[40];
-        if (!al_json(g_obj, "wire", wire, sizeof wire) || !has_tag(wire, "checkin")) continue;
-        al_field(wire, "title", title, sizeof title);
-        if (!al_eq(title, CI_POINT_TITLE)) continue;
-        al_field(wire, "f", from, sizeof from);
-        if (!from[0] || al_eq(from, g_me)) continue;
-        al_field(wire, "pos", pos, sizeof pos);
-        al_field(wire, "until", u, sizeof u);
-        al_field(wire, "ts", ts, sizeof ts);
-        unsigned long long t = al_epoch(ts);
-        int k = 0;
-        while (k < g_npts && !al_eq(g_pts[k].call, from)) k++;
-        if (k < g_npts && g_pts[k].ts >= t) continue;      /* we hold a newer one */
-        if (al_epoch(u) <= now || !ci_pos_ok(pos)) {      /* closed, or no place */
-            if (k < g_npts) { g_pts[k] = g_pts[--g_npts]; }
-            continue;
-        }
-        if (k == g_npts) { if (g_npts == PT_MAX) continue; g_npts++; }
-        al_cpy(g_pts[k].call, from, sizeof g_pts[k].call);
-        al_cpy(g_pts[k].pos, pos, sizeof g_pts[k].pos);
-        al_field(wire, "m", g_pts[k].intro, sizeof g_pts[k].intro);
-        al_field(wire, "file", g_pts[k].file, sizeof g_pts[k].file);
-        al_json(g_obj, "id", g_pts[k].id, sizeof g_pts[k].id);
-        g_pts[k].ts = t;
-        g_pts[k].dist = here[0] ? ci_dist_m(here, pos) : -1;
-    }
+    here_pos(g_here, sizeof g_here);
+    each_event(point_seen, 0);
     /* Nearest first; unknown distances last, by callsign. */
     for (int i = 1; i < g_npts; i++)
         for (int j = i; j > 0; j--) {
@@ -1167,6 +1222,64 @@ static void point_sheet(const char *call)
     place_sheet(id, call, g_pts[i].intro, g_pts[i].pos, g_pts[i].dist, extra);
 }
 
+/* One packet reaches us both ways (heard, and archived for a station we
+ * follow): its identifier is listed once. */
+#define SEEN_MAX 200
+static char g_seen[SEEN_MAX][8];
+static int g_nseen;
+static int seen_once(const char *id)
+{
+    for (int i = 0; i < g_nseen; i++) if (al_eq(g_seen[i], id)) return 0;
+    if (g_nseen < SEEN_MAX) al_cpy(g_seen[g_nseen++], id, sizeof g_seen[0]);
+    return 1;
+}
+
+static void event_pin(const char *id, const char *wire, void *ctx)
+{
+    (void)ctx;
+    char from[16], title[32], u[24], pos[40], mid[16] = "ev:", nice[40];
+    al_field(wire, "title", title, sizeof title);
+    if (al_eq(title, CI_POINT_TITLE)) return;     /* drawn as a station */
+    al_field(wire, "pos", pos, sizeof pos);
+    al_field(wire, "until", u, sizeof u);
+    if (!ci_pos_ok(pos) || al_epoch(u) <= now_s() || !seen_once(id)) return;
+    al_field(wire, "f", from, sizeof from);
+    al_cat(mid, id, sizeof mid);
+    label_name(nice, sizeof nice, title);
+    marker(mid, pos, nice, "#FFC107", from);
+}
+
+static void event_row(const char *id, const char *wire, void *ctx)
+{
+    (void)ctx;
+    char from[16], title[32], s_[24], u[24], file[80], tok[88] = "", m[160], ws[24], wu[24], tag[48];
+    al_field(wire, "title", title, sizeof title);
+    if (al_eq(title, CI_POINT_TITLE)) return;     /* a station, listed above */
+    al_field(wire, "f", from, sizeof from);
+    al_field(wire, "since", s_, sizeof s_);
+    al_field(wire, "until", u, sizeof u);
+    al_field(wire, "file", file, sizeof file);
+    al_field(wire, "m", m, sizeof m);
+    unsigned long long now = now_s(), until = al_epoch(u), since = al_epoch(s_);
+    if (!since) {     /* no since: it started when it was announced */
+        char ts[24];
+        al_field(wire, "ts", ts, sizeof ts);
+        since = al_epoch(ts);
+    }
+    if (!until || until <= now || !seen_once(id)) return;
+    when(ws, sizeof ws, since);
+    when(wu, sizeof wu, until);
+    al_cpy(tag, since <= now ? "running now" : "from ", sizeof tag);
+    if (since > now) al_cat(tag, ws, sizeof tag);
+    if (file[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, file, sizeof tok); fetch_badge(file); }
+    char until_tag[40] = "until ";
+    al_cat(until_tag, wu, sizeof until_tag);
+    char nice[40];
+    label_name(nice, sizeof nice, title);
+    g_icon = "schedule";
+    row(id, nice, m[0] ? m : from, tag, until_tag, tok, from, "", "");
+}
+
 static void push_map(void)
 {
     say("{\"type\":\"ui.map.markers.clear\"}");
@@ -1194,29 +1307,8 @@ static void push_map(void)
         }
     }
     /* Check-in events still to come or running: the places to go next. */
-    static const char q[] = "{\"types\":[\"event\"],\"limit\":120}";
-    int32_t n = hal_xprs_history(q, sizeof q - 1, g_big, sizeof g_big - 1);
-    if (n > 0) {
-        g_big[n] = 0;
-        const char *p = g_big;
-        while (*p && *p != '[') p++;
-        if (*p == '[') p++;
-        while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
-            char wire[CI_WIRE_MAX + 64], id[8], from[16], title[32], u[24], pos[40], mid[16] = "ev:";
-            if (!al_json(g_obj, "wire", wire, sizeof wire) || !has_tag(wire, "checkin")) continue;
-            al_field(wire, "pos", pos, sizeof pos);
-            al_field(wire, "until", u, sizeof u);
-            if (!ci_pos_ok(pos) || al_epoch(u) <= now_s()) continue;
-            al_json(g_obj, "id", id, sizeof id);
-            al_field(wire, "f", from, sizeof from);
-            al_field(wire, "title", title, sizeof title);
-            if (al_eq(title, CI_POINT_TITLE)) continue;   /* drawn as a station below */
-            al_cat(mid, id, sizeof mid);
-            char nice[40];
-            label_name(nice, sizeof nice, title);
-            marker(mid, pos, nice, "#FFC107", from);
-        }
-    }
+    g_nseen = 0;
+    each_event(event_pin, 0);
     /* Stations giving check-ins: green to visit, pale once visited. */
     load_points();
     for (int i = 0; i < g_npts; i++) {
@@ -1301,9 +1393,6 @@ static int has_tag(const char *wire, const char *tag)
 
 static void push_events(void)
 {
-    static const char q[] = "{\"types\":[\"event\"],\"limit\":120}";
-    int32_t n = hal_xprs_history(q, sizeof q - 1, g_big, sizeof g_big - 1);
-    unsigned long long now = now_s();
     rows_begin("events");
     int any = 0;
     load_points();
@@ -1325,42 +1414,8 @@ static void push_events(void)
         section_end();
     }
     section_begin("Check-in events", &any);
-    if (n > 0) {
-        g_big[n] = 0;
-        const char *p = g_big;
-        while (*p && *p != '[') p++;
-        if (*p == '[') p++;
-        while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
-            char wire[CI_WIRE_MAX + 64], id[8], from[16], title[32], s[24], u[24], file[80], tok[88] = "", m[160], ws[24], wu[24], tag[48];
-            if (!al_json(g_obj, "wire", wire, sizeof wire) || !has_tag(wire, "checkin")) continue;
-            al_json(g_obj, "id", id, sizeof id);
-            al_field(wire, "f", from, sizeof from);
-            al_field(wire, "title", title, sizeof title);
-            if (al_eq(title, CI_POINT_TITLE)) continue;   /* a station, listed above */
-            al_field(wire, "since", s, sizeof s);
-            al_field(wire, "until", u, sizeof u);
-            al_field(wire, "file", file, sizeof file);
-            al_field(wire, "m", m, sizeof m);
-            unsigned long long until = al_epoch(u), since = al_epoch(s);
-            if (!since) {     /* no since: it started when it was announced */
-                char ts[24];
-                al_field(wire, "ts", ts, sizeof ts);
-                since = al_epoch(ts);
-            }
-            if (!until || until <= now) continue;
-            when(ws, sizeof ws, since);
-            when(wu, sizeof wu, until);
-            al_cpy(tag, since <= now ? "running now" : "from ", sizeof tag);
-            if (since > now) al_cat(tag, ws, sizeof tag);
-            if (file[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, file, sizeof tok); fetch_badge(file); }
-            char until_tag[40] = "until ";
-            al_cat(until_tag, wu, sizeof until_tag);
-            char nice[40];
-            label_name(nice, sizeof nice, title);
-            g_icon = "schedule";
-            row(id, nice, m[0] ? m : from, tag, until_tag, tok, from, "", "");
-        }
-    }
+    g_nseen = 0;
+    each_event(event_row, 0);
     section_end();
     rows_end();
 }
@@ -1579,7 +1634,7 @@ static void push_all(void)
 /* A page is open: follow the station table (core.monitor) so Nearby shows
  * who walks into reach, at most once every ten seconds. */
 static int g_page_seen;
-static unsigned long long g_nearby_at;
+static unsigned long long g_nearby_at, g_explore_at;
 static void page_seen(void)
 {
     if (g_page_seen) return;
@@ -1809,6 +1864,14 @@ static void drain_events(void)
         else if (al_eq(g_topic, "xprs.result")) on_result(g_ev);
         else if (al_eq(g_topic, "xprs.status.tx")) on_status(g_ev);
         else if (al_eq(g_topic, "xprs.message")) on_message(g_ev);
+        else if (al_eq(g_topic, "xprs.event")) {
+            on_event_heard(g_ev);
+            if (g_page_seen && now_s() >= g_explore_at + 10) {
+                g_explore_at = now_s();
+                push_events();
+                push_map();
+            }
+        }
         else if (al_eq(g_topic, "core.monitor") && now_s() >= g_nearby_at + 10) {
             g_nearby_at = now_s();
             push_nearby();
@@ -1821,6 +1884,7 @@ int32_t module_init(void)
 {
     who_am_i();
     db_init();
+    sub("xprs.event", 1);
     load_settings();
     pend_load();
     listen_update();

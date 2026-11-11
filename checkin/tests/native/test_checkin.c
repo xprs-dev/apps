@@ -438,7 +438,12 @@ static void test_chaser(void)
         g_lat = 387071000; g_lon = -91393000;          /* the visitor is here */
         ci_build_event(ev, sizeof ev, "X3PNT1", g_now - 60, "38.7161,-9.1393", CI_POINT_TITLE,
                        g_now - 60, g_now + 7200, "", "Rooftop station, ask at the bar");
-        snprintf(g_history, sizeof g_history, "[{\"id\":\"aa11bb\",\"wire\":\"%s\"}]", ev);
+        /* Heard on the air from a stranger: the core's archive keeps none of
+         * it on a private phone, so the wapp keeps it. */
+        CHECK(mock_subscribed("xprs.event"), "check-in events are listened for");
+        char evrow[600];
+        snprintf(evrow, sizeof evrow, "{\"id\":\"aa11bb\",\"type\":\"event\",\"wire\":\"%s\"}", ev);
+        event("xprs.event", evrow);
         mock_clear();
         cmd("{\"command\":\"events_refresh\"}");
         CHECK(said("Stations giving check-ins") && said("\"st:X3PNT1\"") && said("1.0 km away") &&
@@ -460,8 +465,8 @@ static void test_chaser(void)
         char closing[400];
         ci_build_event(closing, sizeof closing, "X3PNT1", g_now, "38.7161,-9.1393", CI_POINT_TITLE,
                        g_now, g_now + 60, "", "");
-        snprintf(g_history, sizeof g_history,
-                 "[{\"id\":\"aa11bb\",\"wire\":\"%s\"},{\"id\":\"cc22dd\",\"wire\":\"%s\"}]", ev, closing);
+        snprintf(evrow, sizeof evrow, "{\"id\":\"cc22dd\",\"type\":\"event\",\"wire\":\"%s\"}", closing);
+        event("xprs.event", evrow);
         g_now += 120;
         mock_clear();
         cmd("{\"command\":\"events_refresh\"}");
