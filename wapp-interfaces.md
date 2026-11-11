@@ -772,11 +772,20 @@ their children as standard fields/actions.
 - Icon names come from a fixed list (`geoUiResolveIcon` in the app); an
   unknown name draws a generic glyph.
 
+### 14.0.0 Feedback: `ui.snack`
+
+`{"type":"ui.snack","text","level"?:"info|warning"}` shows a short floating
+message on the wapp's page: the answer to what the person just did ("Saved",
+"Zoom in first"). A `notify` raised while the wapp is the page on screen is
+not shown at all, so a page's own feedback goes here; `notify` is for what
+happens while nobody is looking. A headless engine has no page and ignores it.
+
 ### 14.0.1 `$type="map"`
 
 One map per wapp. Attributes on the group: `tile-url` (`{z}/{x}/{y}`
 template), `tile-style` (`mono`: black and white; `mono-dark`: the same
-inverted; absent: as served), `default-lat`, `default-lon`, `default-zoom`,
+inverted; absent: as served), `radius` / `chat` / `search` (the coverage
+circle, the geo-chat and the address search; each on unless false), `default-lat`, `default-lon`, `default-zoom`,
 `min-zoom`, `max-zoom`, `label-url`, `label-max-zoom`. Tiles are kept on disk
 as they are seen, so an area once viewed works off-grid.
 

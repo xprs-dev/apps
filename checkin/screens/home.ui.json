@@ -247,8 +247,9 @@
         "name": "ev_desc",
         "$type": "string",
         "label": "About it",
-        "hint": "on the hill all weekend, all welcome",
-        "max": 80
+        "hint": "on the hill all weekend",
+        "max": 40,
+        "tip": "A few words: the event travels as one signed packet with its badge and place."
       },
       {
         "$": "field",

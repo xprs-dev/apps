@@ -232,6 +232,7 @@ static void test_station(void)
             strstr(g_aired[i], "title:field-day-2026") && strstr(g_aired[i], EREF) &&
             strstr(g_aired[i], "pos:38.7071,-9.1393")) saw_event = 1;
     CHECK(saw_event, "the event is announced, tagged, with its badge's hash");
+    CHECK(said("\"title\":\"Field Day 2026\""), "and listed by its name, not its label");
     mock_clear();
     ci_build_ask(ask, sizeof ask, "X1EVNT", "X3STN1", g_now, "local");
     ask_row(row_, sizeof row_, ask, "verified", "lan", 1, "");
@@ -276,6 +277,9 @@ static void test_chaser(void)
           "the ask goes to the core");
     snprintf(ask, sizeof ask, "%s", last_aired());
     CHECK(mock_subscribed("xprs.result") && mock_subscribed("xprs.status.tx"), "listening while it is out");
+    CHECK(said("\"type\":\"ui.snack\"") && said("Asking X3STN1"), "the page says so at once, on the page");
+    CHECK(said("\"action\":\"asking\",\"actionLabel\":\"Asking...\""), "and the row shows the ask is out");
+    CHECK(mock_subscribed("core.monitor"), "a page is open: Nearby follows the air");
     cmd("{\"command\":\"nearby_checkin\",\"nearby_id\":\"X3STN1\"}");
     CHECK(g_aired_n == 1, "one ask at a time per station");
 
