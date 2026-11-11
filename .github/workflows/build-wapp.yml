@@ -1,0 +1,62 @@
+name: build-wapp
+
+# Builds one wapp on GitHub's runner and uploads the .wapp, with its native
+# tests run first when it has them (tests/native/run.sh, hal_db on zx). For
+# machines too small to compile alongside everything else: the .wapp comes
+# back as an artifact, ready to copy into the app's assets/wapps/.
+#
+#   gh workflow run build-wapp.yml -f wapp=checkin
+#   gh run download <run> -n checkin-wapp
+
+on:
+  workflow_dispatch:
+    inputs:
+      wapp:
+        description: Wapp folder name
+        required: true
+        default: checkin
+
+jobs:
+  wapp:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # sdk/zxdb_bridge depends on zx by path (../../../../x1watt/zx from the
+      # bridge), the same sibling layout as on a workstation.
+      - name: Fetch zx (native tests' database)
+        run: |
+          mkdir -p ../../x1watt
+          git clone -q --depth 1 https://github.com/x1watt/zx.git ../../x1watt/zx
+
+      - uses: dart-lang/setup-dart@v1
+
+      - name: Install wasi-sdk
+        run: ./install-wasi-sdk.sh
+
+      - name: Native tests
+        env:
+          W: ${{ inputs.wapp }}
+        run: |
+          if [ -f "$W/tests/native/run.sh" ]; then sh "$W/tests/native/run.sh"; else echo "no native tests"; fi
+
+      - name: Build and package
+        env:
+          W: ${{ inputs.wapp }}
+        run: ./build-archive.sh "$W"
+
+      - name: Locate the package
+        id: pkg
+        env:
+          W: ${{ inputs.wapp }}
+        run: |
+          V=$(sed -n 's/.*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$W/manifest.json" | head -1)
+          echo "path=binaries/$W/$W-$V.wapp" >> "$GITHUB_OUTPUT"
+          ls -la "binaries/$W/$W-$V.wapp"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.wapp }}-wapp
+          path: |
+            ${{ steps.pkg.outputs.path }}
+            ${{ inputs.wapp }}/app.wasm

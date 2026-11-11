@@ -24,7 +24,8 @@
 /* The answer to an ask, as section 11.1's codes. */
 enum {
     CI_OK          = 200,
-    CI_REFUSED     = 403,  /* unsigned, unverified, out of range, scope too wide */
+    CI_WAIT        = 0,    /* no answer yet: the asker's key is still on its way */
+    CI_REFUSED     = 403,  /* unsigned, forged, out of range, scope too wide */
     CI_STALE       = 408,
     CI_AGAIN_LATER = 429,  /* already checked in today */
     CI_NO_PLACE    = 500   /* the station does not know where it is */

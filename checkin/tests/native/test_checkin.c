@@ -90,7 +90,11 @@ static void test_rules(void)
     CHECK(ci_decide(&a, &r, 1000 + CI_FRESH_S + 1, 0) == CI_STALE, "an old ask is stale");
     CHECK(ci_decide(&a, &r, 1000 - CI_SKEW_S - 1, 0) == CI_STALE, "an ask from the future is stale");
     strcpy(a.sig, "unverified");
-    CHECK(ci_decide(&a, &r, 1100, 0) == CI_REFUSED, "an unverified ask proves nobody");
+    CHECK(ci_decide(&a, &r, 1100, 0) == CI_WAIT, "an ask we cannot check yet waits for the key");
+    strcpy(a.sig, "forged");
+    CHECK(ci_decide(&a, &r, 1100, 0) == CI_REFUSED, "a forged ask proves nobody");
+    strcpy(a.sig, "unsigned");
+    CHECK(ci_decide(&a, &r, 1100, 0) == CI_REFUSED, "nor does an unsigned one");
     strcpy(a.sig, "verified"); a.in_range = 0;
     CHECK(ci_decide(&a, &r, 1100, 0) == CI_REFUSED, "heard out of its scope's reach");
     a.in_range = 1; strcpy(a.scope, "global");
@@ -198,7 +202,17 @@ static void test_station(void)
     ci_build_ask(ask, sizeof ask, "X1STRG", "X3STN1", g_now, "local");
     ask_row(row_, sizeof row_, ask, "unverified", "ble", 1, "");
     event("xprs.command", row_);
-    CHECK(strstr(last_aired(), "code:403") != 0, "a key we do not hold proves nobody");
+    CHECK(g_aired_n == 0, "a key we do not hold yet: no answer, the repeat will check");
+    {
+        char ask2[300];
+        ci_build_ask(ask2, sizeof ask2, "X1NEWK", "X3STN1", g_now, "local");
+        ask_row(row_, sizeof row_, ask2, "unverified", "ble", 1, "");
+        event("xprs.command", row_);
+        ask_row(row_, sizeof row_, ask2, "verified", "ble", 1, "");
+        event("xprs.command", row_);
+        CHECK(g_aired_n == 1 && strstr(last_aired(), "code:200") != 0,
+              "and the repeat, once the key is known, is certified");
+    }
 
     mock_clear();
     ask_row(row_, sizeof row_, ask, "verified", "rns", 0, "");

@@ -74,8 +74,12 @@ int ci_decide(const ci_ask_t *a, const ci_rules_t *r,
               unsigned long long now, int checked_today)
 {
     char link[12];
-    /* A certificate is the station's word that THIS key asked. An ask whose
-     * signature does not check against a key we hold proves nobody. */
+    /* A certificate is the station's word that THIS key asked. A signature
+     * we cannot check yet (we have never heard the asker's key) gets no
+     * answer: the core has gone to ask for the key, and the asker's courier
+     * airs the same ask again within the minute, by when it checks. Any
+     * other signature that does not check proves nobody. */
+    if (al_eq(a->sig, "unverified")) return CI_WAIT;
     if (!al_eq(a->sig, "verified")) return CI_REFUSED;
     /* Heard outside its own scope's reach: over the internet, say. */
     if (!a->in_range) return CI_REFUSED;

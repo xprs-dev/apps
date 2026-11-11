@@ -597,7 +597,7 @@ static void on_result(const char *row_)
         al_cpy(body, station, sizeof body);
         al_cat(body, c.code == CI_AGAIN_LATER ? ": you already checked in here today."
                    : c.code == CI_STALE ? ": the ask arrived too late. Is this device's clock right?"
-                   : c.code == CI_REFUSED ? ": refused. It may not know your key yet (try again in a minute), or it takes check-ins in person only."
+                   : c.code == CI_REFUSED ? ": refused. It takes check-ins in person only, and your ask did not reach it that way."
                    : c.code == CI_NO_PLACE ? ": its owner has not said where it stands yet, so it cannot give check-ins."
                    : ": no check-in.", sizeof body);
         tell("warning", body);
@@ -719,6 +719,7 @@ static void on_command_packet(const char *row_)
     int today = db_one("SELECT id FROM guests WHERE visitor = ? AND day = ?", 1, "id", v, sizeof v) && v[0];
     ci_rules_t rules = { g_local_only };
     int code = ci_decide(&a, &rules, now, today);
+    if (code == CI_WAIT) return;
     char title[32], ebadge[80], pos[40];
     active_event(title, sizeof title, ebadge, sizeof ebadge);
     my_pos(pos, sizeof pos);
