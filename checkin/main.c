@@ -1344,9 +1344,15 @@ static void on_command(void)
     if (al_eq(cmd, "save_area")) {
         /* The area on screen, from here to three levels closer: a town at
          * street level. The host caps and paces it. */
-        int z = g_view_zoom < 10 ? 10 : g_view_zoom;
+        if (g_view_zoom < 10) {
+            /* At a country's or the world's scale this would be a bulk
+             * download of coarse tiles, not a town to walk around in. */
+            notify("info", "Check-in", "Zoom in to the town you want first: this saves its streets.");
+            return;
+        }
+        int z = g_view_zoom;
         char m[120] = "{\"type\":\"ui.map.prefetch\",\"minZoom\":";
-        al_cat_u(m, (unsigned long long)(g_view_zoom < 2 ? 2 : g_view_zoom), sizeof m);
+        al_cat_u(m, (unsigned long long)z, sizeof m);
         al_cat(m, ",\"maxZoom\":", sizeof m);
         al_cat_u(m, (unsigned long long)(z + 3 > 17 ? 17 : z + 3), sizeof m);
         al_cat(m, ",\"max\":1500}", sizeof m);

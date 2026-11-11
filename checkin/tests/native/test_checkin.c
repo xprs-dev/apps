@@ -355,7 +355,11 @@ static void test_chaser(void)
     cmd(tap);
     CHECK(said("Certificate (signed by the station)") && said("\"name\":\"Entry\""), "a pin opens its check-in");
 
-    /* Saving a city for off-grid use is the person's act. */
+    /* Saving a city for off-grid use is the person's act, at a town's scale. */
+    mock_clear();
+    cmd("{\"type\":\"setViewport\",\"lat\":38.72,\"lon\":-9.14,\"zoom\":5}");
+    cmd("{\"command\":\"save_area\"}");
+    CHECK(said("Zoom in to the town") && !said("ui.map.prefetch"), "not a country");
     mock_clear();
     cmd("{\"type\":\"setViewport\",\"lat\":38.72,\"lon\":-9.14,\"zoom\":13}");
     cmd("{\"command\":\"save_area\"}");
