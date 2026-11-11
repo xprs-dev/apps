@@ -1,0 +1,225 @@
+[
+  {
+    "$": "screen",
+    "name": "Nearby",
+    "icon": "radar",
+    "tip": "Stations in reach now. Tap Check in: the station answers with a signed check-in and its badge.",
+    "children": [
+      {
+        "$": "field",
+        "name": "nearby",
+        "$type": "people",
+        "empty_title": "Nobody in reach",
+        "empty": "Check-ins happen near a station: in the same room or building over Bluetooth, WiFi or the local network, or within LoRa range when you allow it.\n\nWalk up to a station and it shows up here."
+      },
+      {
+        "$": "field",
+        "name": "chase_regional",
+        "$type": "bool",
+        "label": "Check in over LoRa too",
+        "default": false,
+        "tip": "Off: in person only (Bluetooth, WiFi, local network). On: a station within LoRa range may answer too. Never over the internet.",
+        "apply": "set_chase"
+      },
+      {
+        "$": "action",
+        "name": "nearby_refresh",
+        "label": "Refresh",
+        "icon": "refresh"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Logbook",
+    "icon": "menu_book",
+    "children": [
+      {
+        "$": "field",
+        "name": "lb_stats",
+        "$type": "stats"
+      },
+      {
+        "$": "field",
+        "name": "log",
+        "$type": "people",
+        "empty_title": "No check-ins yet",
+        "empty": "Your check-ins land here, newest first. Tap one to see the evidence: the station's signed certificate and your ask."
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Badges",
+    "icon": "military_tech",
+    "children": [
+      {
+        "$": "field",
+        "name": "badges",
+        "$type": "people",
+        "empty_title": "Your badge wall is empty",
+        "empty": "Every station hands out its badge with a check-in, and an event hands out its own. They collect here, with how many times you earned each."
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Events",
+    "icon": "event",
+    "tip": "Check-in events stations announced: check in while one runs to get its badge.",
+    "children": [
+      {
+        "$": "field",
+        "name": "events",
+        "$type": "people",
+        "empty_title": "No events known",
+        "empty": "Stations announce check-in events with a badge of their own, for a day, a week or a month. The ones this phone has heard of show up here."
+      },
+      {
+        "$": "action",
+        "name": "events_refresh",
+        "label": "Refresh",
+        "icon": "refresh"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "My station",
+    "icon": "cell_tower",
+    "tip": "Give check-ins to people who come by. To answer while the app is closed, long-press Check-in on the home screen and turn on Run in background.",
+    "children": [
+      {
+        "$": "field",
+        "name": "bot_on",
+        "$type": "bool",
+        "label": "Give check-ins",
+        "default": false,
+        "tip": "Answer people nearby who ask for a check-in.",
+        "apply": "set_bot"
+      },
+      {
+        "$": "field",
+        "name": "local_only",
+        "$type": "bool",
+        "label": "In person only",
+        "default": true,
+        "tip": "On: only over Bluetooth, WiFi or the local network. Off: within LoRa range too.",
+        "apply": "set_local"
+      },
+      {
+        "$": "field",
+        "name": "greeting",
+        "$type": "string",
+        "label": "Greeting",
+        "hint": "Welcome to the hill, 73!",
+        "max": 150
+      },
+      {
+        "$": "action",
+        "name": "save_greeting",
+        "label": "Save greeting",
+        "icon": "check"
+      },
+      {
+        "$": "field",
+        "name": "st_badge",
+        "$type": "people"
+      },
+      {
+        "$": "action",
+        "name": "pick_badge",
+        "label": "Choose a badge",
+        "icon": "image"
+      },
+      {
+        "$": "action",
+        "name": "new_event",
+        "label": "New event",
+        "icon": "event"
+      },
+      {
+        "$": "field",
+        "name": "my_events",
+        "$type": "people",
+        "empty": "No events yet."
+      },
+      {
+        "$": "field",
+        "name": "guests",
+        "$type": "people",
+        "empty_title": "No visitors yet",
+        "empty": "People who check in at your station are listed here."
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "New event",
+    "icon": "event",
+    "hidden": true,
+    "tip": "It starts now. Check-ins during it carry its name and its badge.",
+    "children": [
+      {
+        "$": "field",
+        "name": "ev_title",
+        "$type": "string",
+        "label": "Name",
+        "hint": "Field Day 2026",
+        "max": 30
+      },
+      {
+        "$": "field",
+        "name": "ev_desc",
+        "$type": "string",
+        "label": "About it",
+        "hint": "on the hill all weekend, all welcome",
+        "max": 80
+      },
+      {
+        "$": "field",
+        "name": "ev_len",
+        "$type": "enum",
+        "label": "How long",
+        "default": "day",
+        "children": [
+          { "$": "option", "name": "day", "label": "One day" },
+          { "$": "option", "name": "week", "label": "One week" },
+          { "$": "option", "name": "month", "label": "One month" }
+        ]
+      },
+      {
+        "$": "field",
+        "name": "ev_badge",
+        "$type": "people"
+      },
+      {
+        "$": "action",
+        "name": "pick_event_badge",
+        "label": "Choose the event badge",
+        "icon": "image"
+      },
+      {
+        "$": "action",
+        "name": "publish_event",
+        "label": "Announce",
+        "style": "primary",
+        "icon": "campaign"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Entry",
+    "icon": "verified",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "e_info",
+        "$type": "details",
+        "empty": ""
+      }
+    ]
+  }
+]

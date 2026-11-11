@@ -252,6 +252,7 @@
   {"file":"chat/chat-0.7.8.wapp","id":"tools.xprs.chat","version":"0.7.8","size":83390,"title":"Chat","description":"Chat - the Local room, open and closed groups, and 1:1 conversations over XPRS."},
   {"file":"chat/chat-0.7.9.wapp","id":"tools.xprs.chat","version":"0.7.9","size":83455,"title":"Chat","description":"Chat - the Local room, open and closed groups, and 1:1 conversations over XPRS."},
   {"file":"chat/chat-0.8.0.wapp","id":"tools.xprs.chat","version":"0.8.0","size":188321,"title":"Chat","description":"Group and private chats with the stations around you."},
+  {"file":"checkin/checkin-0.1.0.wapp","id":"tools.xprs.checkin","version":"0.1.0","size":50662,"title":"Check-in","description":"Chase stations in person and collect their check-ins and badges."},
   {"file":"circles/circles-0.1.0.wapp","id":"tools.geogram.circles","version":"0.1.0","size":46172,"title":"Circles","description":"Private, encrypted group chat over Reticulum."},
   {"file":"circles/circles-0.10.0.wapp","id":"tools.geogram.circles","version":"0.10.0","size":82551,"title":"Circles","description":"Private, encrypted group chat over Reticulum."},
   {"file":"circles/circles-0.11.0.wapp","id":"tools.geogram.circles","version":"0.11.0","size":86688,"title":"Circles","description":"Private, encrypted group chat over Reticulum."},

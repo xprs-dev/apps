@@ -1,0 +1,28 @@
+{
+  "id":              "tools.xprs.checkin",
+  "version":         "0.1.0",
+  "kind":            "app",
+  "title":           "Check-in",
+  "description":     "Chase stations in person and collect their check-ins and badges.",
+  "summary":         "Go near a station and ask it for a check-in. Its answer is signed proof that it heard you, over which radio, where and when, and it hands you its badge. Your logbook counts every check-in over the years and shows your badges on a wall. Check-ins work over Bluetooth, WiFi and the local network, and over LoRa when you allow it, never over the internet. Run your own station: turn it on, choose a greeting and a badge, and announce events with a badge of their own.",
+  "icon":            "media/icons/checkin.svg",
+  "color":           "#2E7D32",
+  "tags":            ["xprs", "checkin", "logbook", "badges", "geocaching", "local"],
+  "entry_ui":        "screens/home.ui.json",
+  "tick_interval_ms": 0,
+  "permissions":     ["archive.read"],
+  "platforms":       ["android", "linux", "windows", "macos"],
+  "hardware":        ["N/A", "intel", "arm"],
+  "provides": {
+    "functions":       [],
+    "events":          [],
+    "variables":       [],
+    "functionalities": []
+  },
+  "requires": {
+    "hal":       ["log", "msg", "kv", "time", "event", "db", "xprs", "sensor", "media"],
+    "events":    [],
+    "libraries": [],
+    "variables": []
+  }
+}

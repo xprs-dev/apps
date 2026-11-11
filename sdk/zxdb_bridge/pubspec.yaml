@@ -1,0 +1,12 @@
+name: zxdb_bridge
+description: >-
+  hal.db for a wapp's native tests: the same zx store the host opens for
+  hal_db_*, answering SQL over stdin and stdout. Driven by ../hal_db_zx.c.
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  zx:
+    path: ../../../../x1watt/zx
