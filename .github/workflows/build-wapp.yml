@@ -40,10 +40,16 @@ jobs:
         run: |
           if [ -f "$W/tests/native/run.sh" ]; then sh "$W/tests/native/run.sh"; else echo "no native tests"; fi
 
+      # A fresh checkout gives the committed app.wasm the same timestamp as
+      # its sources, so make calls it up to date and the package carries the
+      # OLD module. Remove every built module first: always compile.
       - name: Build and package
         env:
           W: ${{ inputs.wapp }}
-        run: ./build-archive.sh "$W"
+        run: |
+          find "$W" -maxdepth 1 -name '*.wasm' -delete
+          ./build-archive.sh "$W"
+          test -s "$W/app.wasm"
 
       - name: Locate the package
         id: pkg
