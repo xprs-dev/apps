@@ -846,6 +846,27 @@ static void push_log(void)
     rows_end();
 }
 
+/* A logbook column as a person reads it: the radio by its name, the grade
+ * in words, and the badge as what it is rather than its file's hash (the
+ * picture itself is on the Badges wall). */
+static const char *entry_value(const char *col, const char *v)
+{
+    static const struct { const char *word, *name; } links[] = {
+        { "ble", "Bluetooth" }, { "lan", "LAN" }, { "wifi", "WiFi" },
+        { "espnow", "ESP-NOW" }, { "lora", "LoRa" }, { "halow", "HaLow" },
+        { "vhf", "VHF" }, { "uhf", "UHF" }, { "hf", "HF" }, { "cb", "CB" }, { "pmr", "PMR" }
+    };
+    if (al_eq(col, "link"))
+        for (unsigned i = 0; i < sizeof links / sizeof links[0]; i++)
+            if (al_eq(v, links[i].word)) return links[i].name;
+    if (al_eq(col, "grade")) {
+        if (al_eq(v, "local")) return "in person";
+        if (al_eq(v, "relayed")) return "through another station";
+    }
+    if (al_eq(col, "badge")) return "collected: it is on your Badges wall";
+    return v;
+}
+
 static void push_entry(void)
 {
     if (!g_sel[0]) return;
@@ -880,7 +901,7 @@ static void push_entry(void)
         al_cat(g_out, "{\"label\":\"", sizeof g_out);
         al_jesc(g_out, rows_[i].label, sizeof g_out);
         al_cat(g_out, "\",\"value\":\"", sizeof g_out);
-        al_jesc(g_out, al_eq(v, "local") && al_eq(rows_[i].col, "grade") ? "in person" : v, sizeof g_out);
+        al_jesc(g_out, entry_value(rows_[i].col, v), sizeof g_out);
         al_cat(g_out, "\"}", sizeof g_out);
     }
     al_cat(g_out, "]}]}", sizeof g_out);
