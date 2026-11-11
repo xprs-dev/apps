@@ -401,11 +401,23 @@ static int known_station(const char *call)
     return db_one("SELECT call FROM stations WHERE call = ?", 1, "call", v, sizeof v) && v[0];
 }
 
+/* Nearby's rows, gathered before they are drawn: the host lists stations
+ * most recently heard first, and with the list following the air that order
+ * moved rows under the person's finger. Stations known to give check-ins come
+ * first, then by callsign: a station stays where it was. */
+#define NEAR_MAX 64
+static struct { char id[16]; char sub[48]; int known; } g_near[NEAR_MAX];
+
+static int near_before(int a, int b)
+{
+    if (g_near[a].known != g_near[b].known) return g_near[a].known > g_near[b].known;
+    return al_cmp(g_near[a].id, g_near[b].id) < 0;
+}
+
 static void push_nearby(void)
 {
     int32_t n = hal_xprs_stations(g_big, sizeof g_big - 1);
-    rows_begin("nearby");
-    int any = 0;
+    int count = 0;
     if (n > 0) {
         g_big[n] = 0;
         const char *p = g_big;
@@ -416,29 +428,45 @@ static void push_nearby(void)
         if (al_json_next(p, g_obj, sizeof g_obj)) {
             const char *it = al_json_arr(g_obj, "items");
             static char item[1024];
-            section_begin("In reach now", &any);
-            while (it && (it = al_json_next(it, item, sizeof item)) != 0) {
-                char id[16], kind[12], sub_[48], tag[32] = "", tag2[32] = "";
+            while (count < NEAR_MAX && it && (it = al_json_next(it, item, sizeof item)) != 0) {
+                char id[16], kind[12];
                 al_json(item, "id", id, sizeof id);
                 al_json(item, "kind", kind, sizeof kind);
-                al_json(item, "subtitle", sub_, sizeof sub_);
                 if (!id[0] || al_eq(kind, "device") || al_eq(id, g_me)) continue;
-                int had = log_count_for(id);
-                if (had) {
-                    al_cpy(tag, "checked in ", sizeof tag);
-                    al_cat_u(tag, (unsigned long long)had, sizeof tag);
-                    al_cat(tag, had == 1 ? " time" : " times", sizeof tag);
-                }
-                if (known_station(id)) al_cpy(tag2, "gives check-ins", sizeof tag2);
-                int asking = 0;
-                for (int k = 0; k < PEND_MAX; k++)
-                    if (g_pend[k].id[0] && al_eq(g_pend[k].station, id)) asking = 1;
-                if (asking) row(id, id, sub_, tag, tag2, "", id, "asking", "Asking...");
-                else row(id, id, sub_, tag, tag2, "", id, "checkin", "Check in");
+                al_cpy(g_near[count].id, id, sizeof g_near[count].id);
+                al_json(item, "subtitle", g_near[count].sub, sizeof g_near[count].sub);
+                g_near[count].known = known_station(id);
+                count++;
             }
-            section_end();
         }
     }
+    /* Insertion sort: a few dozen rows. */
+    int order[NEAR_MAX];
+    for (int i = 0; i < count; i++) {
+        int j = i;
+        while (j > 0 && near_before(i, order[j - 1])) { order[j] = order[j - 1]; j--; }
+        order[j] = i;
+    }
+    rows_begin("nearby");
+    int any = 0;
+    section_begin("In reach now", &any);
+    for (int k = 0; k < count; k++) {
+        const char *id = g_near[order[k]].id;
+        char tag[32] = "", tag2[32] = "";
+        int had = log_count_for(id);
+        if (had) {
+            al_cpy(tag, "checked in ", sizeof tag);
+            al_cat_u(tag, (unsigned long long)had, sizeof tag);
+            al_cat(tag, had == 1 ? " time" : " times", sizeof tag);
+        }
+        if (g_near[order[k]].known) al_cpy(tag2, "gives check-ins", sizeof tag2);
+        int asking = 0;
+        for (int q = 0; q < PEND_MAX; q++)
+            if (g_pend[q].id[0] && al_eq(g_pend[q].station, id)) asking = 1;
+        if (asking) row(id, id, g_near[order[k]].sub, tag, tag2, "", id, "nearby_asking", "Asking...");
+        else row(id, id, g_near[order[k]].sub, tag, tag2, "", id, "nearby_checkin", "Check in");
+    }
+    section_end();
     rows_end();
     field_set_bool("chase_regional", g_chase_regional);
 }

@@ -268,7 +268,8 @@ static void test_chaser(void)
              "{\"id\":\"X4LAMP\",\"title\":\"X4LAMP\",\"subtitle\":\"LAN\",\"tags\":[],\"kind\":\"device\"}]},"
              "{\"title\":\"Heard this hour (1)\",\"items\":[{\"id\":\"X3FAR1\",\"title\":\"X3FAR1\",\"kind\":\"station\"}]}]");
     cmd("{\"command\":\"ready\"}");
-    CHECK(said("\"id\":\"X3STN1\"") && said("\"action\":\"checkin\""), "a station in reach, with Check in");
+    CHECK(said("\"id\":\"X3STN1\"") && said("\"action\":\"nearby_checkin\""),
+          "a station in reach, with Check in (the host sends that action as the command)");
     CHECK(!said("\"id\":\"X4LAMP\"") && !said("\"id\":\"X3FAR1\""), "no devices, nobody out of reach");
 
     mock_clear();
@@ -278,7 +279,7 @@ static void test_chaser(void)
     snprintf(ask, sizeof ask, "%s", last_aired());
     CHECK(mock_subscribed("xprs.result") && mock_subscribed("xprs.status.tx"), "listening while it is out");
     CHECK(said("\"type\":\"ui.snack\"") && said("Asking X3STN1"), "the page says so at once, on the page");
-    CHECK(said("\"action\":\"asking\",\"actionLabel\":\"Asking...\""), "and the row shows the ask is out");
+    CHECK(said("\"action\":\"nearby_asking\",\"actionLabel\":\"Asking...\""), "and the row shows the ask is out");
     CHECK(mock_subscribed("core.monitor"), "a page is open: Nearby follows the air");
     cmd("{\"command\":\"nearby_checkin\",\"nearby_id\":\"X3STN1\"}");
     CHECK(g_aired_n == 1, "one ask at a time per station");
