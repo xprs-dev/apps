@@ -213,6 +213,11 @@ static void test_station(void)
     CHECK(strstr(last_aired(), "link:lan") && strstr(last_aired(), EREF) && strstr(last_aired(), "title:field-day-2026"),
           "during the event: its name and its badge");
     CHECK(said("X1EVNT"), "the guestbook lists the visitor");
+    CHECK(said("\"field\":\"guests\"") && said("\"title\":\"Your badge\"") &&
+          said("\"title\":\"Your events\"") && said("\"title\":\"Guestbook\""),
+          "one list, three sections: badge, events, visitors");
+    CHECK(said("\"field\":\"st_info\"") && said("\"label\":\"Visitors\""),
+          "the station's status card");
     snprintf(g_put_token, sizeof g_put_token, "file:%s", REF);
 
     cmd("{\"command\":\"set_bot\",\"bot_on\":false}");

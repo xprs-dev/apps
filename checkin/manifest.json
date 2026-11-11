@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.checkin",
-  "version":         "0.1.0",
+  "version":         "0.1.1",
   "kind":            "app",
   "title":           "Check-in",
   "description":     "Chase stations in person and collect their check-ins and badges.",
@@ -20,7 +20,7 @@
     "functionalities": []
   },
   "requires": {
-    "hal":       ["log", "msg", "kv", "time", "event", "db", "xprs", "sensor", "media"],
+    "hal":       ["log", "msg", "kv", "time", "event", "db", "xprs", "sensor"],
     "events":    [],
     "libraries": [],
     "variables": []

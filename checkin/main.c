@@ -595,6 +595,7 @@ static void my_pos(char *out, unsigned cap)
 }
 
 static void push_guests(void);
+static void push_station(void);
 
 static void on_command_packet(const char *row_)
 {
@@ -640,7 +641,7 @@ static void on_command_packet(const char *row_)
     al_cpy(body, a.from, sizeof body);
     al_cat(body, " checked in at your station", sizeof body);
     notify("info", "Check-in", body);
-    push_guests();
+    push_station();
 }
 
 /* ── Logbook ──────────────────────────────────────────────────────────── */
@@ -853,17 +854,65 @@ static void push_events(void)
 }
 
 /* ── My station ───────────────────────────────────────────────────────── */
+/* A details card: label/value pairs. */
+static void details(const char *field, const char *const *pairs, int n)
+{
+    al_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"", sizeof g_out);
+    al_cat(g_out, field, sizeof g_out);
+    al_cat(g_out, "\",\"value\":[{\"title\":\"\",\"items\":[", sizeof g_out);
+    for (int i = 0; i < n; i++) {
+        if (i) al_cat(g_out, ",", sizeof g_out);
+        al_cat(g_out, "{\"label\":\"", sizeof g_out);
+        al_jesc(g_out, pairs[2 * i], sizeof g_out);
+        al_cat(g_out, "\",\"value\":\"", sizeof g_out);
+        al_jesc(g_out, pairs[2 * i + 1], sizeof g_out);
+        al_cat(g_out, "\"}", sizeof g_out);
+    }
+    al_cat(g_out, "]}]}", sizeof g_out);
+    say(g_out);
+}
+
+/* The Guestbook screen: one list (the host shows one per screen), in three
+ * sections: the badge handed out, the station's events, and its visitors. */
 static void push_guests(void)
 {
     rows_begin("guests");
     int any = 0;
+    section_begin("Your badge", &any);
+    if (g_badge[0]) row("badge", "Your badge", "Handed out with every check-in", "", "", g_badge, "", "", "");
+    else row("badge", "No badge yet", "Choose a small picture: visitors collect it", "", "", "", "", "", "");
+    section_end();
+    if (db_query("SELECT title, since, until, badge FROM events ORDER BY since DESC LIMIT 50", 0)) {
+        const char *p = g_rows;
+        while (*p && *p != '[') p++;
+        if (*p == '[') p++;
+        int first_ev = 1;
+        while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+            char title[32], s[24], u[24], badge[80], ws[24], wu[24];
+            if (first_ev) { section_begin("Your events", &any); first_ev = 0; }
+            al_json(g_obj, "title", title, sizeof title);
+            al_json(g_obj, "since", s, sizeof s);
+            al_json(g_obj, "until", u, sizeof u);
+            al_json(g_obj, "badge", badge, sizeof badge);
+            unsigned long long since = 0, until = 0;
+            for (const char *q = s; *q >= '0' && *q <= '9'; q++) since = since * 10 + (unsigned)(*q - '0');
+            for (const char *q = u; *q >= '0' && *q <= '9'; q++) until = until * 10 + (unsigned)(*q - '0');
+            when(ws, sizeof ws, since);
+            when(wu, sizeof wu, until);
+            char until_tag[40] = "until ";
+            al_cat(until_tag, wu, sizeof until_tag);
+            row(title, title, ws, until <= now_s() ? "ended" : "", until_tag, badge, "", "", "");
+        }
+        if (!first_ev) section_end();
+    }
     if (db_query("SELECT id, visitor, ts, grade, title FROM guests ORDER BY ts DESC LIMIT 200", 0)) {
         const char *p = g_rows;
         while (*p && *p != '[') p++;
         if (*p == '[') p++;
-        section_begin("Guestbook", &any);
+        int first_g = 1;
         while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
             char id[8], who[16], ts[24], grade[12], title[32], w[24];
+            if (first_g) { section_begin("Guestbook", &any); first_g = 0; }
             al_json(g_obj, "id", id, sizeof id);
             al_json(g_obj, "visitor", who, sizeof who);
             al_json(g_obj, "ts", ts, sizeof ts);
@@ -874,55 +923,27 @@ static void push_guests(void)
             when(w, sizeof w, t);
             row(id, who, w, al_eq(grade, "local") ? "in person" : grade, title, "", who, "", "");
         }
-        section_end();
-    }
-    rows_end();
-}
-
-static void push_my_events(void)
-{
-    rows_begin("my_events");
-    int any = 0;
-    if (db_query("SELECT title, since, until, badge FROM events ORDER BY since DESC LIMIT 50", 0)) {
-        const char *p = g_rows;
-        while (*p && *p != '[') p++;
-        if (*p == '[') p++;
-        section_begin("Your events", &any);
-        while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
-            char title[32], s[24], u[24], badge[80], tok[88] = "", ws[24], wu[24];
-            al_json(g_obj, "title", title, sizeof title);
-            al_json(g_obj, "since", s, sizeof s);
-            al_json(g_obj, "until", u, sizeof u);
-            al_json(g_obj, "badge", badge, sizeof badge);
-            unsigned long long since = 0, until = 0;
-            for (const char *q = s; *q >= '0' && *q <= '9'; q++) since = since * 10 + (unsigned)(*q - '0');
-            for (const char *q = u; *q >= '0' && *q <= '9'; q++) until = until * 10 + (unsigned)(*q - '0');
-            when(ws, sizeof ws, since);
-            when(wu, sizeof wu, until);
-            if (badge[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, badge, sizeof tok); }
-            char until_tag[40] = "until ";
-            al_cat(until_tag, wu, sizeof until_tag);
-            row(title, title, ws, until <= now_s() ? "ended" : "", until_tag, tok, "", "", "");
-        }
-        section_end();
+        if (!first_g) section_end();
     }
     rows_end();
 }
 
 static void push_station(void)
 {
+    char visitors[12], events[12];
     field_set_bool("bot_on", g_bot_on);
     field_set_bool("local_only", g_local_only);
     field_set_str("greeting", g_greeting);
-    rows_begin("st_badge");
-    int any = 0;
-    section_begin("Badge", &any);
-    if (g_badge[0]) row("badge", "Your badge", "Handed out with every check-in", "", "", g_badge, "", "", "");
-    else row("badge", "No badge yet", "Tap Choose a badge to pick a small picture", "", "", "", "", "", "");
-    section_end();
-    rows_end();
+    count("SELECT COUNT(*) AS n FROM guests", visitors, sizeof visitors);
+    count("SELECT COUNT(*) AS n FROM events", events, sizeof events);
+    const char *pairs[] = {
+        "Giving check-ins", g_bot_on ? "yes" : "no",
+        "Badge", g_badge[0] ? "chosen" : "none yet",
+        "Visitors", visitors,
+        "Events", events,
+    };
+    details("st_info", pairs, 4);
     push_guests();
-    push_my_events();
 }
 
 /* A picked picture: into the media store, as a token. 0 when it failed. */
@@ -971,12 +992,8 @@ static void on_picked(void)
     if (g_picking_event) {
         g_picking_event = 0;
         al_cpy(g_draft.badge, token, sizeof g_draft.badge);
-        rows_begin("ev_badge");
-        int any = 0;
-        section_begin("Event badge", &any);
-        row("badge", "Event badge", "Handed out during the event", "", "", token, "", "", "");
-        section_end();
-        rows_end();
+        const char *pairs[] = { "Event badge", "chosen: handed out during the event" };
+        details("ev_badge", pairs, 1);
         return;
     }
     al_cpy(g_badge, token, sizeof g_badge);
@@ -1011,7 +1028,7 @@ static void publish_event(void)
     db_exec("INSERT OR REPLACE INTO events (title, since, until, badge, m) VALUES (?,?,?,?,?)", 1);
     g_draft.badge[0] = 0;
     say("{\"type\":\"ui.screen.close\"}");
-    push_my_events();
+    push_station();
     notify("success", "Check-in", "Event announced. Check-ins during it carry its name and badge.");
 }
 
@@ -1059,6 +1076,7 @@ static void on_command(void)
         g_bot_on = al_eq(v, "true");
         kv_put_bool("bot", g_bot_on);
         bot_update();
+        push_station();
         return;
     }
     if (al_eq(cmd, "set_local")) {
@@ -1077,8 +1095,8 @@ static void on_command(void)
     if (al_eq(cmd, "pick_badge")) { g_picking_event = 0; pick_picture("Choose a badge"); return; }
     if (al_eq(cmd, "new_event")) {
         g_draft.badge[0] = 0;
-        rows_begin("ev_badge");
-        rows_end();
+        const char *pairs[] = { "Event badge", "none yet: the station's own badge is used" };
+        details("ev_badge", pairs, 1);
         screen_open("New event", "New event");
         return;
     }

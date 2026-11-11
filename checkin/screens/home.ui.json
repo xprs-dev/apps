@@ -32,7 +32,7 @@
   {
     "$": "screen",
     "name": "Logbook",
-    "icon": "menu_book",
+    "icon": "history",
     "children": [
       {
         "$": "field",
@@ -51,7 +51,7 @@
   {
     "$": "screen",
     "name": "Badges",
-    "icon": "military_tech",
+    "icon": "star",
     "children": [
       {
         "$": "field",
@@ -65,7 +65,7 @@
   {
     "$": "screen",
     "name": "Events",
-    "icon": "event",
+    "icon": "schedule",
     "tip": "Check-in events stations announced: check in while one runs to get its badge.",
     "children": [
       {
@@ -123,8 +123,9 @@
       },
       {
         "$": "field",
-        "name": "st_badge",
-        "$type": "people"
+        "name": "st_info",
+        "$type": "details",
+        "empty": ""
       },
       {
         "$": "action",
@@ -136,27 +137,42 @@
         "$": "action",
         "name": "new_event",
         "label": "New event",
-        "icon": "event"
-      },
-      {
-        "$": "field",
-        "name": "my_events",
-        "$type": "people",
-        "empty": "No events yet."
-      },
+        "icon": "schedule"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Guestbook",
+    "icon": "people",
+    "toolbar": true,
+    "tip": "Your badge, your events and everyone who checked in at your station.",
+    "children": [
       {
         "$": "field",
         "name": "guests",
         "$type": "people",
         "empty_title": "No visitors yet",
-        "empty": "People who check in at your station are listed here."
+        "empty": "People who check in at your station are listed here, with your badge and your events above them."
+      },
+      {
+        "$": "action",
+        "name": "pick_badge",
+        "label": "Choose a badge",
+        "icon": "image"
+      },
+      {
+        "$": "action",
+        "name": "new_event",
+        "label": "New event",
+        "icon": "schedule"
       }
     ]
   },
   {
     "$": "screen",
     "name": "New event",
-    "icon": "event",
+    "icon": "schedule",
     "hidden": true,
     "tip": "It starts now. Check-ins during it carry its name and its badge.",
     "children": [
@@ -183,15 +199,28 @@
         "label": "How long",
         "default": "day",
         "children": [
-          { "$": "option", "name": "day", "label": "One day" },
-          { "$": "option", "name": "week", "label": "One week" },
-          { "$": "option", "name": "month", "label": "One month" }
+          {
+            "$": "option",
+            "name": "day",
+            "label": "One day"
+          },
+          {
+            "$": "option",
+            "name": "week",
+            "label": "One week"
+          },
+          {
+            "$": "option",
+            "name": "month",
+            "label": "One month"
+          }
         ]
       },
       {
         "$": "field",
         "name": "ev_badge",
-        "$type": "people"
+        "$type": "details",
+        "empty": ""
       },
       {
         "$": "action",
@@ -211,7 +240,7 @@
   {
     "$": "screen",
     "name": "Entry",
-    "icon": "verified",
+    "icon": "check",
     "hidden": true,
     "children": [
       {
