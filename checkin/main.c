@@ -1427,6 +1427,25 @@ static void on_command(void)
         screen_open("Entry", "Check-in");
         return;
     }
+    if (al_eq(cmd, "remove_entry")) {
+        if (!g_sel[0]) return;
+        char st[16] = "";
+        p_begin(); p_str(g_sel); p_end();
+        db_one("SELECT station FROM log WHERE id = ?", 1, "station", st, sizeof st);
+        p_begin(); p_str(g_sel); p_end();
+        db_exec("DELETE FROM log WHERE id = ?", 1);
+        g_sel[0] = 0;
+        g_map_fitted = 0;
+        push_log();
+        push_badges();
+        push_map();
+        char body[96] = "Removed your check-in";
+        if (st[0]) { al_cat(body, " at ", sizeof body); al_cat(body, st, sizeof body); }
+        al_cat(body, ".", sizeof body);
+        toast("info", body);
+        screen_open("Logbook", "Check-in");
+        return;
+    }
     if (al_eq(cmd, "events_refresh")) { push_events(); push_map(); return; }
     if (al_eq(cmd, "marker_tap")) {
         if (!al_json(g_buf, "id", id, sizeof id)) return;

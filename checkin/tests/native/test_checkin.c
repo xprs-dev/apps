@@ -399,6 +399,34 @@ static void test_chaser(void)
     g_now += 600;
     event("xprs.message", "{\"type\":\"message\",\"call\":\"X9OTHR\",\"content\":\"hi\"}");
     CHECK(!mock_subscribed("xprs.result") && !mock_subscribed("xprs.message"), "nothing out: listening to nothing");
+
+    /* A check-in the person no longer wants leaves the logbook, the map and
+     * the badge wall. */
+    {
+        char rid[16] = "", first[300];
+        mock_clear();
+        cmd("{\"command\":\"fit_map\"}");
+        const char *m = 0;
+        for (int i = 0; i < g_said_n && !m; i++) m = strstr(g_said[i], "\"id\":\"log:");
+        CHECK(m != 0, "there is a check-in to remove");
+        if (m) {
+            m += strlen("\"id\":\"log:");
+            unsigned k = 0;
+            while (m[k] && m[k] != '"' && k + 1 < sizeof rid) { rid[k] = m[k]; k++; }
+            rid[k] = 0;
+        }
+        snprintf(first, sizeof first, "{\"command\":\"log_tap\",\"log_id\":\"%s\"}", rid);
+        cmd(first);
+        mock_clear();
+        cmd("{\"command\":\"remove_entry\"}");
+        CHECK(said("Removed your check-in at X3STN1."), "removed, and the person is told");
+        CHECK(said("ui.map.markers.clear") && !said(rid), "its pin is gone from the map");
+        CHECK(!said("Uc3nRw8kFa5xPd1qGz7mYb0tJe6vHs2iLoA9XfCqK4E"), "and its badge from the wall");
+        CHECK(said("\"name\":\"Logbook\""), "back to the logbook");
+        mock_clear();
+        cmd("{\"command\":\"remove_entry\"}");
+        CHECK(g_said_n == 0, "nothing selected: nothing removed");
+    }
 }
 
 int main(void)

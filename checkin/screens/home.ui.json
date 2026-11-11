@@ -307,6 +307,16 @@
         "name": "e_info",
         "$type": "details",
         "empty": ""
+      },
+      {
+        "$": "action",
+        "name": "remove_entry",
+        "label": "Remove from logbook",
+        "icon": "delete",
+        "style": "danger",
+        "confirm": true,
+        "confirm-label": "Remove this check-in?",
+        "confirm-text": "It leaves your logbook, the map and your stats, and its badge leaves your wall unless another check-in earned it too. The station keeps its own guestbook."
       }
     ]
   }
