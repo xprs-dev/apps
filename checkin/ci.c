@@ -343,6 +343,48 @@ int ci_pos_parse(const char *pos, long *lat7, long *lon7)
 
 int ci_pos_ok(const char *pos) { return ci_pos_parse(pos, 0, 0); }
 
+/* cos(x) for |x| <= pi/2 (a latitude), by its series: no libm in a wapp. */
+static double cos_lat(double x)
+{
+    double x2 = x * x;
+    return 1 - x2 / 2 + x2 * x2 / 24 - x2 * x2 * x2 / 720 + x2 * x2 * x2 * x2 / 40320;
+}
+
+long ci_dist_m(const char *a, const char *b)
+{
+    long la1, lo1, la2, lo2;
+    if (!ci_pos_parse(a, &la1, &lo1) || !ci_pos_parse(b, &la2, &lo2)) return -1;
+    const double rad = 3.14159265358979 / 180.0 / 1e7;
+    double dlat = (double)(la2 - la1) * rad;
+    long dl = lo2 - lo1;
+    if (dl > 1800000000L) dl -= 3600000000L;
+    if (dl < -1800000000L) dl += 3600000000L;
+    double dlon = (double)dl * rad * cos_lat((double)(la1 + la2) / 2 * rad);
+    double d2 = dlat * dlat + dlon * dlon, r = d2;
+    if (d2 <= 0) return 0;
+    for (int i = 0; i < 30; i++) r = (r + d2 / r) / 2;   /* sqrt, Newton */
+    return (long)(r * 6371000.0 + 0.5);
+}
+
+void ci_dist_text(long m, char *out, unsigned cap)
+{
+    out[0] = 0;
+    if (m < 0) return;
+    if (m < 1000) {
+        al_cat_u(out, (unsigned long long)((m + 5) / 10 * 10), cap);
+        al_cat(out, " m", cap);
+    } else if (m < 10000) {
+        long d = (m + 50) / 100;
+        al_cat_u(out, (unsigned long long)(d / 10), cap);
+        al_cat(out, ".", cap);
+        al_cat_u(out, (unsigned long long)(d % 10), cap);
+        al_cat(out, " km", cap);
+    } else {
+        al_cat_u(out, (unsigned long long)((m + 500) / 1000), cap);
+        al_cat(out, " km", cap);
+    }
+}
+
 /* Degrees times 1e7 as text with four decimals (eleven metres). */
 static void deg4(char *d, unsigned cap, long v)
 {

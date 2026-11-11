@@ -114,6 +114,17 @@ unsigned long long ci_day(unsigned long long epoch, int offset_min);
  * pos: and m: go in that order as far as they fit signed, m: cut to the room
  * left. [title] is folded to a label (a-z 0-9 -). Length, or -1 when the
  * head does not fit. */
+/* Metres between two "lat,lon" positions (good to a fraction of a percent
+ * at walking and driving distances), or -1 when either is not a position. */
+long ci_dist_m(const char *a, const char *b);
+/* "450 m", "2.3 km", "18 km"; empty for a negative distance. */
+void ci_dist_text(long m, char *out, unsigned cap);
+
+/* The title a station's standing check-in point is announced under: a
+ * t:event tag:checkin that says "this station gives check-ins here", renewed
+ * while it does. A person's own event may not take this name. */
+#define CI_POINT_TITLE "check-ins-open"
+
 int ci_build_event(char *out, unsigned cap, const char *me,
                    unsigned long long now, const char *pos, const char *title,
                    unsigned long long since, unsigned long long until,

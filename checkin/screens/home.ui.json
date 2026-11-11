@@ -4,7 +4,7 @@
     "name": "Map",
     "icon": "map",
     "toolbar": true,
-    "tip": "Every check-in you made is a black pin. Amber pins are check-in events still running: places to go next.",
+    "tip": "Your check-ins are white pins, stations giving check-ins nearby are green, events are amber. Tap a pin for its details and coordinates.",
     "children": [
       {
         "$": "group",
@@ -32,12 +32,6 @@
         "name": "save_area",
         "label": "Save this area offline",
         "icon": "download"
-      },
-      {
-        "$": "action",
-        "name": "set_station_here",
-        "label": "Set my station here",
-        "icon": "cell_tower"
       }
     ]
   },
@@ -107,16 +101,16 @@
   },
   {
     "$": "screen",
-    "name": "Events",
-    "icon": "schedule",
-    "tip": "Check-in events stations announced: check in while one runs to get its badge.",
+    "name": "Explore",
+    "icon": "place",
+    "tip": "Stations giving check-ins and check-in events, nearest first. Tap one for its details and coordinates to paste into your navigation app.",
     "children": [
       {
         "$": "field",
         "name": "events",
         "$type": "people",
-        "empty_title": "No events known",
-        "empty": "Stations announce check-in events with a badge of their own, for a day, a week or a month. The ones this device has heard of show up here."
+        "empty_title": "Nothing to explore yet",
+        "empty": "Stations that give check-ins and share where they are show up here, nearest first, and so do check-in events. Tap one for its details and coordinates."
       },
       {
         "$": "action",
@@ -167,17 +161,17 @@
       },
       {
         "$": "field",
-        "name": "st_pos",
+        "name": "intro",
         "$type": "string",
-        "label": "Where your station stands",
-        "hint": "38.7071,-9.1393 (latitude,longitude)",
-        "max": 30
+        "label": "About this station",
+        "max": 100,
+        "tip": "A line about your station for people deciding whether to visit, shown with its pin on their map."
       },
       {
         "$": "action",
-        "name": "save_pos",
-        "label": "Save position",
-        "icon": "map"
+        "name": "save_intro",
+        "label": "Save intro",
+        "icon": "check"
       },
       {
         "$": "field",

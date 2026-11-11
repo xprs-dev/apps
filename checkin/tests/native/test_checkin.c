@@ -23,6 +23,7 @@ extern char g_put_token[96];
 extern char g_cmd[4096];
 extern char g_stations[4096];
 extern char g_history[8192];
+extern char g_shared[96];
 int mock_subscribed(const char *t);
 void mock_event(const char *topic, const char *json);
 void mock_clear(void);
@@ -140,6 +141,20 @@ static void test_rules(void)
     CHECK(!ci_pos_ok("38.7") && !ci_pos_ok("x,y") && !ci_pos_ok("12,190") && !ci_pos_ok("-90.5,0") && ci_pos_ok("-33,151.2"),
           "and nonsense does not");
     CHECK(ci_pos_norm("38.722345678,-9.13", pn, sizeof pn) && !strcmp(pn, "38.7223,-9.1300"), "four decimals: eleven metres");
+    {
+        long d = ci_dist_m("38.7071,-9.1393", "38.7161,-9.1393");
+        CHECK(d > 990 && d < 1010, "a hundredth of a degree north is a kilometre");
+        d = ci_dist_m("38.7071,-9.1393", "38.7071,-9.1278");
+        CHECK(d > 985 && d < 1010, "and east, shortened by the latitude");
+        CHECK(ci_dist_m("38.7", "1,1") == -1, "no distance without two places");
+        char dt[24];
+        ci_dist_text(447, dt, sizeof dt);
+        CHECK(!strcmp(dt, "450 m"), "metres, to ten");
+        ci_dist_text(2349, dt, sizeof dt);
+        CHECK(!strcmp(dt, "2.3 km"), "kilometres, to a tenth");
+        ci_dist_text(18400, dt, sizeof dt);
+        CHECK(!strcmp(dt, "18 km"), "and whole kilometres further out");
+    }
     char l[32];
     ci_label(l, sizeof l, "  Field Day 2026! ");
     CHECK(!strcmp(l, "field-day-2026"), "a name becomes a label");
@@ -164,15 +179,26 @@ static void test_station(void)
     module_init();
     CHECK(!mock_subscribed("xprs.command"), "off: listens to nothing");
     cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
-    CHECK(!mock_subscribed("xprs.command") && said("Set where your station stands first"),
-          "no place, no check-ins: it stays off and says why");
-    cmd("{\"command\":\"save_pos\",\"st_pos\":\"not a place\"}");
-    CHECK(said("That is not a position"), "a position is checked");
-    cmd("{\"type\":\"setViewport\",\"lat\":38.70712345,\"lon\":-9.13931,\"zoom\":15}");
-    cmd("{\"command\":\"set_station_here\"}");
-    CHECK(said("Your station stands at 38.7071,-9.1393"), "the map's centre becomes the station's place");
+    CHECK(!mock_subscribed("xprs.command") && said("Share your station's position first"),
+          "no shared place, no check-ins: it stays off and says why");
+    /* The owner shares the station's position (Settings > Privacy). */
+    strcpy(g_shared, "{\"pos\":\"38.7071,-9.1393\",\"acc\":10}");
+    cmd("{\"command\":\"save_intro\",\"intro\":\"Hilltop shack, ring the bell\"}");
+    CHECK(said("Intro saved"), "an intro is saved");
+    mock_clear();
     cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
     CHECK(mock_subscribed("xprs.command"), "on: listens for asks");
+    CHECK(strstr(last_aired(), "t:event f:X3STN1") && strstr(last_aired(), "title:check-ins-open") &&
+          strstr(last_aired(), "tag:checkin") && strstr(last_aired(), "pos:38.7071,-9.1393") &&
+          strstr(last_aired(), "m:Hilltop shack, ring the bell"),
+          "and it says so on the air: its check-in point, at its shared place, with its intro");
+    mock_clear();
+    module_tick();
+    CHECK(g_aired_n == 0, "the point is not repeated within the hour");
+    g_now += 3601;
+    module_tick();
+    CHECK(g_aired_n == 1 && strstr(last_aired(), "title:check-ins-open"), "and is renewed after it");
+    g_now -= 3601;
     cmd("{\"command\":\"save_greeting\",\"greeting\":\"Welcome to the hill, 73!\"}");
     cmd("{\"type\":\"file.open\",\"path\":\"/tmp/badge.png\"}");
     CHECK(strstr(last_aired(), "t:file f:X3STN1") && strstr(last_aired(), REF), "the badge is described as a publication");
@@ -399,6 +425,45 @@ static void test_chaser(void)
     g_now += 600;
     event("xprs.message", "{\"type\":\"message\",\"call\":\"X9OTHR\",\"content\":\"hi\"}");
     CHECK(!mock_subscribed("xprs.result") && !mock_subscribed("xprs.message"), "nothing out: listening to nothing");
+
+    /* Stations giving check-ins that share where they are: listed nearest
+     * first, pinned green, and their details carry coordinates to copy. */
+    {
+        char ev[400];
+        g_lat = 387071000; g_lon = -91393000;          /* the visitor is here */
+        ci_build_event(ev, sizeof ev, "X3PNT1", g_now - 60, "38.7161,-9.1393", CI_POINT_TITLE,
+                       g_now - 60, g_now + 7200, "", "Rooftop station, ask at the bar");
+        snprintf(g_history, sizeof g_history, "[{\"id\":\"aa11bb\",\"wire\":\"%s\"}]", ev);
+        mock_clear();
+        cmd("{\"command\":\"events_refresh\"}");
+        CHECK(said("Stations giving check-ins") && said("\"st:X3PNT1\"") && said("1.0 km away") &&
+              said("Rooftop station, ask at the bar"), "a station to visit, how far, and its intro");
+        CHECK(!said("Check-ins Open"), "its point is not listed again as an event");
+        CHECK(said("\"id\":\"st:X3PNT1\"") && said("#43A047"), "and it is a green pin");
+        mock_clear();
+        cmd("{\"command\":\"events_tap\",\"events_id\":\"st:X3PNT1\"}");
+        CHECK(said("\"type\":\"ui.prompt\"") && said("\"copy\":\"38.7161,-9.1393\"") &&
+              said("About 1.0 km from you") && said("Not visited yet"),
+              "its details: the distance, and the coordinates to copy");
+        mock_clear();
+        cmd("{\"command\":\"prompt\",\"prompt_id\":\"pt:X3PNT1\",\"prompt_value\":\"map\"}");
+        CHECK(said("\"type\":\"ui.map.locate\",\"lat\":38.7161,\"lon\":-9.1393"), "Show on map");
+        mock_clear();
+        cmd("{\"command\":\"marker_tap\",\"id\":\"st:X3PNT1\"}");
+        CHECK(said("\"copy\":\"38.7161,-9.1393\""), "the pin opens the same details");
+        /* It closes: it leaves the list. */
+        char closing[400];
+        ci_build_event(closing, sizeof closing, "X3PNT1", g_now, "38.7161,-9.1393", CI_POINT_TITLE,
+                       g_now, g_now + 60, "", "");
+        snprintf(g_history, sizeof g_history,
+                 "[{\"id\":\"aa11bb\",\"wire\":\"%s\"},{\"id\":\"cc22dd\",\"wire\":\"%s\"}]", ev, closing);
+        g_now += 120;
+        mock_clear();
+        cmd("{\"command\":\"events_refresh\"}");
+        CHECK(!said("\"st:X3PNT1\""), "a station that stopped giving check-ins leaves the list");
+        g_now -= 120;
+        strcpy(g_history, "[]");
+    }
 
     /* A check-in the person no longer wants leaves the logbook, the map and
      * the badge wall. */

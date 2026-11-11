@@ -795,6 +795,7 @@ Wapp to host:
 | message | does |
 |---|---|
 | `{"type":"ui.map.viewport","lat","lon","zoom"}` | move the map |
+| `{"type":"ui.map.locate","lat","lon"}` | show one place: switch to the map's screen, close any open panel, centre on it and zoom in (a list's "Show on map") |
 | `{"type":"ui.map.marker","id","lat","lon","label","color"?,"detail"?}` | add or move a pin (`color` as `#RRGGBB`) |
 | `{"type":"ui.map.markers.clear"}` | remove every pin |
 | `{"type":"ui.map.prefetch","bbox"?:[s,w,n,e],"minZoom","maxZoom","max"?}` | save an area's tiles for off-grid use; without `bbox`, the area on screen. At most 1500 tiles, two at a time, one save at a time: a tile server is shared and OpenStreetMap's refuses bulk downloads, so save what a person asked for, not the world |

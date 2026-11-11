@@ -161,6 +161,15 @@ int32_t hal_xprs_stations(char *out, uint32_t cap)
     memcpy(out, g_stations, n);
     return (int32_t)n;
 }
+/* The owner's shared position, as the core hands it over (empty: none). */
+char g_shared[96] = "";
+int32_t hal_xprs_position(char *out, uint32_t cap)
+{
+    uint32_t n = strlen(g_shared);
+    if (n > cap) return -(int32_t)n;
+    memcpy(out, g_shared, n);
+    return (int32_t)n;
+}
 char g_history[8192] = "[]";
 int32_t hal_xprs_history(const char *q, uint32_t ql, char *out, uint32_t cap)
 {

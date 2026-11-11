@@ -50,7 +50,8 @@ static int  g_local_only;
 static int  g_chase_regional;
 static char g_greeting[160];
 static char g_badge[80];          /* the station's badge token, file:<ref> */
-static char g_pos[40];            /* the station's position when it has no GPS */
+static char g_intro[104];         /* a line about this station, for its pin */
+static unsigned long long g_point_at;   /* when the check-in point was last announced */
 
 /* Where the map looks (the host says on every pan, as setViewport). */
 static char g_view_lat[24] = "", g_view_lon[24] = "";
@@ -182,7 +183,7 @@ static void load_settings(void)
     g_chase_regional = kv_bool("chase_reg", 0);
     kv_str("greet", g_greeting, sizeof g_greeting);
     kv_str("badge", g_badge, sizeof g_badge);
-    kv_str("pos", g_pos, sizeof g_pos);
+    kv_str("intro", g_intro, sizeof g_intro);
 }
 
 /* ── the database ─────────────────────────────────────────────────────── */
@@ -680,10 +681,29 @@ static void deg(char *d, unsigned cap, long v)
     al_cat(d, t, cap);
 }
 
-/* Where this station stands: its GPS fix, else the position its owner set
- * (My station, or "Set my station here" on the map). Empty when neither:
- * then it gives no check-ins, because a check-in without a place is not one. */
+/* Where this station is, exactly as its owner shares it (Settings >
+ * Privacy): the same coarsened position its beacon carries, from the core.
+ * Empty when nothing is shared: then it gives no check-ins, because a
+ * check-in without a place is not one. */
+static int g_acc;                 /* the shared position's radius, metres */
 static void my_pos(char *out, unsigned cap)
+{
+    char j[120];
+    out[0] = 0;
+    g_acc = 0;
+    int32_t n = hal_xprs_position(j, sizeof j - 1);
+    if (n <= 0 || n >= (int32_t)sizeof j) return;
+    j[n] = 0;
+    char a[12];
+    al_json(j, "pos", out, cap);
+    if (al_json(j, "acc", a, sizeof a))
+        for (const char *q = a; *q >= '0' && *q <= '9'; q++) g_acc = g_acc * 10 + (*q - '0');
+    if (!ci_pos_ok(out)) out[0] = 0;
+}
+
+/* Where the person holding this device is now, for "how far": a GPS fix,
+ * else the station's shared position. Never aired. */
+static void here_pos(char *out, unsigned cap)
 {
     out[0] = 0;
     int32_t lat = hal_sensor_gps_lat(), lon = hal_sensor_gps_lon();
@@ -693,7 +713,39 @@ static void my_pos(char *out, unsigned cap)
         deg(out, cap, lon);
         return;
     }
-    if (ci_pos_ok(g_pos)) al_cpy(out, g_pos, cap);
+    my_pos(out, cap);
+}
+
+/* ── the check-in point ─────────────────────────────────────────────── */
+/* A station that gives check-ins and shares where it is says so on the air:
+ * a t:event tag:checkin under CI_POINT_TITLE, with its shared position, its
+ * badge and its intro, good for two hours and renewed every hour while it
+ * gives check-ins. Turning check-ins off airs one that closes in a minute,
+ * so the pin leaves other people's maps. No position shared: no point. */
+#define POINT_EVERY_S 3600ULL
+#define POINT_FOR_S   7200ULL
+static void announce_point(int closing)
+{
+    char pos[40], wire[CI_WIRE_MAX + 1];
+    my_pos(pos, sizeof pos);
+    if (!pos[0]) return;
+    who_am_i();
+    if (!g_me[0]) return;
+    unsigned long long now = now_s();
+    int n = ci_build_event(wire, sizeof wire, g_me, now, pos, CI_POINT_TITLE, now,
+                           now + (closing ? 60ULL : POINT_FOR_S), g_badge, g_intro);
+    if (n < 0) return;
+    if (hal_xprs_send(wire, (uint32_t)n) == 0) g_point_at = closing ? 0 : now;
+}
+
+/* Called on every wake: renew the point when it is due. */
+static void point_due(void)
+{
+    if (!g_bot_on) return;
+    unsigned long long now = now_s();
+    if (g_point_at && now < g_point_at + POINT_EVERY_S) return;
+    announce_point(0);
+    if (!g_point_at) g_point_at = now;   /* nothing shared: ask again in an hour */
 }
 
 static void push_guests(void);
@@ -997,6 +1049,124 @@ static void save_overview(void)
     say(m);
 }
 
+/* Check-in points heard (the stations giving check-ins that share where
+ * they are), the newest announcement per station, still open, not ours. */
+#define PT_MAX 40
+static struct {
+    char call[16], pos[40], intro[104], file[80], id[8];
+    unsigned long long ts;
+    long dist;
+} g_pts[PT_MAX];
+static int g_npts;
+
+static void load_points(void)
+{
+    static const char q[] = "{\"types\":[\"event\"],\"limit\":200}";
+    g_npts = 0;
+    int32_t n = hal_xprs_history(q, sizeof q - 1, g_big, sizeof g_big - 1);
+    if (n <= 0) return;
+    g_big[n] = 0;
+    who_am_i();
+    char here[40];
+    here_pos(here, sizeof here);
+    unsigned long long now = now_s();
+    const char *p = g_big;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+        char wire[CI_WIRE_MAX + 64], from[16], title[32], u[24], ts[24], pos[40];
+        if (!al_json(g_obj, "wire", wire, sizeof wire) || !has_tag(wire, "checkin")) continue;
+        al_field(wire, "title", title, sizeof title);
+        if (!al_eq(title, CI_POINT_TITLE)) continue;
+        al_field(wire, "f", from, sizeof from);
+        if (!from[0] || al_eq(from, g_me)) continue;
+        al_field(wire, "pos", pos, sizeof pos);
+        al_field(wire, "until", u, sizeof u);
+        al_field(wire, "ts", ts, sizeof ts);
+        unsigned long long t = al_epoch(ts);
+        int k = 0;
+        while (k < g_npts && !al_eq(g_pts[k].call, from)) k++;
+        if (k < g_npts && g_pts[k].ts >= t) continue;      /* we hold a newer one */
+        if (al_epoch(u) <= now || !ci_pos_ok(pos)) {      /* closed, or no place */
+            if (k < g_npts) { g_pts[k] = g_pts[--g_npts]; }
+            continue;
+        }
+        if (k == g_npts) { if (g_npts == PT_MAX) continue; g_npts++; }
+        al_cpy(g_pts[k].call, from, sizeof g_pts[k].call);
+        al_cpy(g_pts[k].pos, pos, sizeof g_pts[k].pos);
+        al_field(wire, "m", g_pts[k].intro, sizeof g_pts[k].intro);
+        al_field(wire, "file", g_pts[k].file, sizeof g_pts[k].file);
+        al_json(g_obj, "id", g_pts[k].id, sizeof g_pts[k].id);
+        g_pts[k].ts = t;
+        g_pts[k].dist = here[0] ? ci_dist_m(here, pos) : -1;
+    }
+    /* Nearest first; unknown distances last, by callsign. */
+    for (int i = 1; i < g_npts; i++)
+        for (int j = i; j > 0; j--) {
+            long a = g_pts[j - 1].dist, b = g_pts[j].dist;
+            int swap = (a < 0 && b >= 0) || (a >= 0 && b >= 0 && b < a) ||
+                       (a < 0 && b < 0 && al_cmp(g_pts[j].call, g_pts[j - 1].call) < 0);
+            if (!swap) break;
+            __typeof__(g_pts[0]) t = g_pts[j]; g_pts[j] = g_pts[j - 1]; g_pts[j - 1] = t;
+        }
+}
+
+static int visited(const char *call)
+{
+    char v[8];
+    p_begin(); p_str(call); p_end();
+    return db_one("SELECT id FROM log WHERE station = ? LIMIT 1", 1, "id", v, sizeof v) && v[0];
+}
+
+static int point_find(const char *call)
+{
+    for (int i = 0; i < g_npts; i++) if (al_eq(g_pts[i].call, call)) return i;
+    return -1;
+}
+
+/* A place's details, with its coordinates to copy into a navigation app. */
+static void place_sheet(const char *id, const char *title, const char *intro,
+                        const char *pos, long dist, const char *extra)
+{
+    char body[400] = "", d[24];
+    if (intro[0]) { al_cat(body, intro, sizeof body); al_cat(body, "\n\n", sizeof body); }
+    if (dist >= 0) {
+        ci_dist_text(dist, d, sizeof d);
+        al_cat(body, "About ", sizeof body);
+        al_cat(body, d, sizeof body);
+        al_cat(body, " from you. ", sizeof body);
+    }
+    al_cat(body, "Position ", sizeof body);
+    al_cat(body, pos, sizeof body);
+    al_cat(body, ".", sizeof body);
+    if (extra[0]) { al_cat(body, "\n", sizeof body); al_cat(body, extra, sizeof body); }
+    char m[900] = "{\"type\":\"ui.prompt\",\"id\":\"";
+    al_jesc(m, id, sizeof m);
+    al_cat(m, "\",\"title\":\"", sizeof m);
+    al_jesc(m, title, sizeof m);
+    al_cat(m, "\",\"body\":\"", sizeof m);
+    al_jesc(m, body, sizeof m);
+    al_cat(m, "\",\"copy\":\"", sizeof m);
+    al_jesc(m, pos, sizeof m);
+    al_cat(m, "\",\"chips\":[{\"label\":\"Show on map\",\"value\":\"map\"}]}", sizeof m);
+    say(m);
+}
+
+static void point_sheet(const char *call)
+{
+    load_points();
+    int i = point_find(call);
+    if (i < 0) { toast("info", "That station no longer gives check-ins."); return; }
+    char extra[120] = "", w[24], id[24] = "pt:";
+    when(w, sizeof w, g_pts[i].ts);
+    al_cpy(extra, visited(call) ? "You have checked in here. " : "Not visited yet. ", sizeof extra);
+    al_cat(extra, "Announced ", sizeof extra);
+    al_cat(extra, w, sizeof extra);
+    al_cat(extra, ". Check in when you are there: it answers in person.", sizeof extra);
+    al_cat(id, call, sizeof id);
+    place_sheet(id, call, g_pts[i].intro, g_pts[i].pos, g_pts[i].dist, extra);
+}
+
 static void push_map(void)
 {
     say("{\"type\":\"ui.map.markers.clear\"}");
@@ -1040,11 +1210,22 @@ static void push_map(void)
             al_json(g_obj, "id", id, sizeof id);
             al_field(wire, "f", from, sizeof from);
             al_field(wire, "title", title, sizeof title);
+            if (al_eq(title, CI_POINT_TITLE)) continue;   /* drawn as a station below */
             al_cat(mid, id, sizeof mid);
             char nice[40];
             label_name(nice, sizeof nice, title);
             marker(mid, pos, nice, "#FFC107", from);
         }
+    }
+    /* Stations giving check-ins: green to visit, pale once visited. */
+    load_points();
+    for (int i = 0; i < g_npts; i++) {
+        char mid[24] = "st:", detail[64] = "";
+        int been = visited(g_pts[i].call);
+        al_cat(mid, g_pts[i].call, sizeof mid);
+        if (g_pts[i].dist >= 0) { ci_dist_text(g_pts[i].dist, detail, sizeof detail); al_cat(detail, " away", sizeof detail); }
+        if (been) al_cat(detail, detail[0] ? " \xC2\xB7 visited" : "visited", sizeof detail);
+        marker(mid, g_pts[i].pos, g_pts[i].call, been ? "#A5D6A7" : "#43A047", detail);
     }
     char me[40];
     my_pos(me, sizeof me);
@@ -1125,6 +1306,24 @@ static void push_events(void)
     unsigned long long now = now_s();
     rows_begin("events");
     int any = 0;
+    load_points();
+    if (g_npts) {
+        section_begin("Stations giving check-ins", &any);
+        for (int i = 0; i < g_npts; i++) {
+            char id[24] = "st:", d[40] = "", tok[88] = "";
+            al_cat(id, g_pts[i].call, sizeof id);
+            if (g_pts[i].dist >= 0) { ci_dist_text(g_pts[i].dist, d, sizeof d); al_cat(d, " away", sizeof d); }
+            if (g_pts[i].file[0]) {
+                al_cpy(tok, "file:", sizeof tok);
+                al_cat(tok, g_pts[i].file, sizeof tok);
+                fetch_badge(g_pts[i].file);
+            }
+            g_icon = "place";
+            row(id, g_pts[i].call, g_pts[i].intro[0] ? g_pts[i].intro : "Gives check-ins",
+                d, visited(g_pts[i].call) ? "visited" : "new badge", tok, g_pts[i].call, "", "");
+        }
+        section_end();
+    }
     section_begin("Check-in events", &any);
     if (n > 0) {
         g_big[n] = 0;
@@ -1137,6 +1336,7 @@ static void push_events(void)
             al_json(g_obj, "id", id, sizeof id);
             al_field(wire, "f", from, sizeof from);
             al_field(wire, "title", title, sizeof title);
+            if (al_eq(title, CI_POINT_TITLE)) continue;   /* a station, listed above */
             al_field(wire, "since", s, sizeof s);
             al_field(wire, "until", u, sizeof u);
             al_field(wire, "file", file, sizeof file);
@@ -1254,10 +1454,21 @@ static void push_station(void)
     count("SELECT COUNT(*) AS n FROM events", events, sizeof events);
     char pos[40];
     my_pos(pos, sizeof pos);
-    field_set_str("st_pos", g_pos);
+    field_set_str("intro", g_intro);
+    char where[80] = "";
+    if (pos[0]) {
+        al_cpy(where, pos, sizeof where);
+        if (g_acc > 0) {
+            char r[24];
+            ci_dist_text(g_acc, r, sizeof r);
+            al_cat(where, " (within ", sizeof where);
+            al_cat(where, r, sizeof where);
+            al_cat(where, ")", sizeof where);
+        }
+    }
     const char *pairs[] = {
         "Giving check-ins", g_bot_on ? "yes" : "no",
-        "Where", pos[0] ? pos : "not set: enter it above, or use Set my station here on the map",
+        "Where", where[0] ? where : "not shared: turn on Share my station's position in Settings > Privacy",
         "Badge", g_badge[0] ? "chosen" : "none yet",
         "Visitors", visitors,
         "Events", events,
@@ -1319,6 +1530,7 @@ static void on_picked(void)
     al_cpy(g_badge, token, sizeof g_badge);
     hal_kv_set("badge", 5, g_badge, al_len(g_badge));
     publish_badge(g_badge);
+    if (g_bot_on) announce_point(0);
     push_station();
     toast("success", "Badge saved. Visitors get it with their next check-in.");
 }
@@ -1331,6 +1543,7 @@ static void publish_event(void)
     if (!al_json(g_buf, "ev_len", len, sizeof len) || !len[0]) al_cpy(len, "day", sizeof len);
     ci_label(label, sizeof label, title);
     if (!label[0]) { toast("warning", "Give the event a name."); return; }
+    if (al_eq(label, CI_POINT_TITLE)) { toast("warning", "That name is taken by every station's own check-in point: pick another."); return; }
     unsigned long long now = now_s();
     unsigned long long span = al_eq(len, "month") ? 30ULL * 86400 : al_eq(len, "week") ? 7ULL * 86400 : 86400ULL;
     who_am_i();
@@ -1353,23 +1566,6 @@ static void publish_event(void)
 }
 
 /* ── the page ─────────────────────────────────────────────────────────── */
-static void set_station_pos(const char *pos)
-{
-    char norm[40];
-    if (!ci_pos_norm(pos, norm, sizeof norm)) {
-        toast("warning", "That is not a position: write latitude,longitude, for example 38.7071,-9.1393.");
-        field_set_str("st_pos", g_pos);
-        return;
-    }
-    al_cpy(g_pos, norm, sizeof g_pos);
-    hal_kv_set("pos", 3, g_pos, al_len(g_pos));
-    char body[96] = "Your station stands at ";
-    al_cat(body, g_pos, sizeof body);
-    toast("success", body);
-    push_station();
-    push_map();
-}
-
 static void push_all(void)
 {
     push_map();
@@ -1470,8 +1666,33 @@ static void on_command(void)
         return;
     }
     if (al_eq(cmd, "events_refresh")) { push_events(); push_map(); return; }
+    if (al_eq(cmd, "events_tap")) {
+        if (al_json(g_buf, "events_id", id, sizeof id) && al_starts(id, "st:")) point_sheet(id + 3);
+        return;
+    }
+    if (al_eq(cmd, "prompt")) {
+        char pid[32], v[12];
+        al_json(g_buf, "prompt_id", pid, sizeof pid);
+        al_json(g_buf, "prompt_value", v, sizeof v);
+        if (al_starts(pid, "pt:") && al_eq(v, "map")) {
+            load_points();
+            int i = point_find(pid + 3);
+            if (i < 0) return;
+            char lat[24], m[120] = "{\"type\":\"ui.map.locate\",\"lat\":";
+            unsigned k = 0;
+            while (g_pts[i].pos[k] && g_pts[i].pos[k] != ',' && k + 1 < sizeof lat) { lat[k] = g_pts[i].pos[k]; k++; }
+            lat[k] = 0;
+            al_cat(m, lat, sizeof m);
+            al_cat(m, ",\"lon\":", sizeof m);
+            al_cat(m, g_pts[i].pos + k + 1, sizeof m);
+            al_cat(m, "}", sizeof m);
+            say(m);
+        }
+        return;
+    }
     if (al_eq(cmd, "marker_tap")) {
         if (!al_json(g_buf, "id", id, sizeof id)) return;
+        if (al_starts(id, "st:")) { point_sheet(id + 3); return; }
         if (al_starts(id, "log:")) {
             al_cpy(g_sel, id + 4, sizeof g_sel);
             push_entry();
@@ -1520,19 +1741,12 @@ static void on_command(void)
         toast("info", "Saving this area of the map for off-grid use...");
         return;
     }
-    if (al_eq(cmd, "set_station_here")) {
-        char pos[60];
-        if (!g_view_lat[0] || !g_view_lon[0]) { toast("warning", "Move the map to where your station stands first."); return; }
-        al_cpy(pos, g_view_lat, sizeof pos);
-        al_cat(pos, ",", sizeof pos);
-        al_cat(pos, g_view_lon, sizeof pos);
-        set_station_pos(pos);
-        return;
-    }
-    if (al_eq(cmd, "save_pos")) {
-        char pos[60];
-        al_json(g_buf, "st_pos", pos, sizeof pos);
-        set_station_pos(pos);
+    if (al_eq(cmd, "save_intro")) {
+        al_json(g_buf, "intro", g_intro, sizeof g_intro);
+        hal_kv_set("intro", 5, g_intro, al_len(g_intro));
+        if (g_bot_on) announce_point(0);
+        toast("success", g_intro[0] ? "Intro saved: it goes with your pin on other people's maps."
+                                    : "Intro removed.");
         return;
     }
     if (al_eq(cmd, "set_bot")) {
@@ -1547,12 +1761,13 @@ static void on_command(void)
                  * know where it stands has none to give. */
                 g_bot_on = 0;
                 field_set_bool("bot_on", 0);
-                toast("warning", "Set where your station stands first: a check-in always names its place.");
+                toast("warning", "Share your station's position first (Settings > Privacy): a check-in always names its place.");
             }
         }
         kv_put_bool("bot", g_bot_on);
         bot_update();
-        if (g_bot_on) toast("success", "Your station gives check-ins now.");
+        announce_point(!g_bot_on);
+        if (g_bot_on) toast("success", "Your station gives check-ins now, and shows on the map of anyone nearby.");
         push_station();
         push_map();
         return;
@@ -1617,6 +1832,7 @@ int32_t module_init(void)
 int32_t module_tick(void)
 {
     drain_events();
+    point_due();
     return 0;
 }
 
@@ -1630,7 +1846,8 @@ int32_t module_handle_event(void)
     return 0;
 }
 
-/* No clock: everything here happens because something arrived. */
-int32_t module_tick_interval_ms(void) { return 0; }
+/* A minute: the check-in point is renewed hourly, and nothing else here
+ * runs on a clock (everything else happens because something arrived). */
+int32_t module_tick_interval_ms(void) { return 60000; }
 
 void module_destroy(void) {}

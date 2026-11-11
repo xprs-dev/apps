@@ -1429,7 +1429,9 @@ int32_t hal_xprs_stations(char *out, uint32_t out_cap);
  *   {"call","kind","bearer","bearers":[..],"rssi","lastMs","agoMs",
  *    "lastDirectMs","packets", and when it has said so: "peers","mail",
  *    "uptime","lifetime","fw","count","serve":[..],"hears":[..],"sig",
- *    "readings":{k:v}, "npub"}
+ *    "readings":{k:v}, "npub", "pos", "acc"}
+ * pos and acc are where the station says it is (its beacon's pos:/acc:,
+ * already coarsened by its owner), absent when it shares no position.
  * uptime and lifetime are the qty text as aired ("26h", "38day"); sig is the
  * headline verdict of its signatures (verified, unverified, forged, unsigned).
  * readings holds the latest of each measurement key (weather, telemetry,
@@ -1441,6 +1443,17 @@ int32_t hal_xprs_stations(char *out, uint32_t out_cap);
  * the negated size needed when out_cap is too small. */
 __attribute__((import_module("hal"), import_name("xprs_station")))
 int32_t hal_xprs_station(const char *call, uint32_t call_len, char *out, uint32_t out_cap);
+
+/* Where THIS station says it is, exactly as its beacon says it: the owner's
+ * shared position (Settings > Privacy), already coarsened to the radius they
+ * chose (XPRS.md 15.1 decimals, 15.2 acc):
+ *   {"pos":"38.7077,-9.1365","acc":10}
+ * Returns the bytes written, 0 when the owner shares no position (sharing off,
+ * or no fix and no position set), or the negated size needed when out_cap is
+ * too small. A wapp that states a place for this station uses this, never a
+ * finer position of its own. */
+__attribute__((import_module("hal"), import_name("xprs_position")))
+int32_t hal_xprs_position(char *out, uint32_t out_cap);
 
 /* What an ADDRESS names, by the core's one rule: "user" (X1), "station" (X2,
  * X3 or a licence), "device" (X4), "foreign" (a node of another network,
