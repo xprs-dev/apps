@@ -422,7 +422,7 @@ static void test_chaser(void)
         CHECK(said("Removed your check-in at X3STN1."), "removed, and the person is told");
         CHECK(said("ui.map.markers.clear") && !said(rid), "its pin is gone from the map");
         CHECK(!said("Uc3nRw8kFa5xPd1qGz7mYb0tJe6vHs2iLoA9XfCqK4E"), "and its badge from the wall");
-        CHECK(said("\"name\":\"Logbook\""), "back to the logbook");
+        CHECK(said("ui.screen.close"), "and the entry closes, back to where they came from");
         mock_clear();
         cmd("{\"command\":\"remove_entry\"}");
         CHECK(g_said_n == 0, "nothing selected: nothing removed");

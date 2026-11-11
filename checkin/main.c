@@ -1464,7 +1464,9 @@ static void on_command(void)
         if (st[0]) { al_cat(body, " at ", sizeof body); al_cat(body, st, sizeof body); }
         al_cat(body, ".", sizeof body);
         toast("info", body);
-        screen_open("Logbook", "Check-in");
+        /* Back to where the person came from (the logbook or the map), not
+         * the logbook re-opened as a page of its own. */
+        say("{\"type\":\"ui.screen.close\"}");
         return;
     }
     if (al_eq(cmd, "events_refresh")) { push_events(); push_map(); return; }
