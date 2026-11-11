@@ -1318,7 +1318,7 @@ static void push_events(void)
                 al_cat(tok, g_pts[i].file, sizeof tok);
                 fetch_badge(g_pts[i].file);
             }
-            g_icon = "place";
+            g_icon = "cell_tower";
             row(id, g_pts[i].call, g_pts[i].intro[0] ? g_pts[i].intro : "Gives check-ins",
                 d, visited(g_pts[i].call) ? "visited" : "new badge", tok, g_pts[i].call, "", "");
         }

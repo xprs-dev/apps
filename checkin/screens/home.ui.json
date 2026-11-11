@@ -102,7 +102,7 @@
   {
     "$": "screen",
     "name": "Explore",
-    "icon": "place",
+    "icon": "public",
     "tip": "Stations giving check-ins and check-in events, nearest first. Tap one for its details and coordinates to paste into your navigation app.",
     "children": [
       {
