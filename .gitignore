@@ -7,7 +7,7 @@
 # Per-wapp social store files generated when a wapp runs in dev.
 # The shipped social DBs live inside the .wapp ZIP under
 # binaries/, not in the source folders.
-*/social.sqlite3
+*/social.zx
 
 # Local profile leakage if someone mounts a profile folder here.
 */kv.json

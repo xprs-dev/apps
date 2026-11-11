@@ -1347,7 +1347,7 @@ static void refresh_names(void) {
      * cache: calling it also SUBSCRIBES to the peer's kind-0, so calling it every
      * tick for every peer whose name we lack asks the host to re-fetch a profile
      * that is not coming, ~40 times a minute, forever. That work lands in the
-     * NOSTR engine isolate (relay + sqlite), where it is invisible to this wapp's
+     * NOSTR engine isolate (relay + zx store), where it is invisible to this wapp's
      * own CPU accounting — the tick looks free while the host burns.
      *
      * A name is cosmetic. Once a minute is plenty. */

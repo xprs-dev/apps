@@ -53,7 +53,7 @@ filesystem, and it must do so through a uniform abstraction so the
 same wapp works identically when the active profile is:
 
 - a plain folder on disk (filesystem profile)
-- an encrypted SQLite archive (encrypted profile)
+- an encrypted zx store, profile.zx (encrypted profile)
 - an in-memory stub (web / tests)
 
 The reference engines route every storage call through

@@ -359,7 +359,7 @@ static void mark_mine(const char *id) {
  *
  * A page engine and the background one do not share memory: closing Social
  * hands over to a fresh headless engine that knows nothing, and a post made a
- * minute earlier may not even be in sqlite yet (the archive flushes every
+ * minute earlier may not even be in the zx store yet (the archive flushes every
  * 20 s). A reply to it then arrived at an engine that had never heard of the
  * conversation, and the operator was told nothing. */
 #define MINE_KEY "xprs.mine.ids"

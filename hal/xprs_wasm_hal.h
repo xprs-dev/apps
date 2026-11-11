@@ -107,7 +107,7 @@ uint32_t hal_decrypt(const char *pubkey, uint32_t pubkey_len,
 
 /* ── Media archive + decentralized sharing (XPRS section 16 / Files wapp) ─────
  * The host keeps a device-wide content-addressed archive (sha256 → bytes,
- * media.sqlite3) plus a Blossom-compatible HTTP provider endpoint and a
+ * media.zx) plus a Blossom-compatible HTTP provider endpoint and a
  * BitTorrent seeder. Hashes are accepted as a full "file:<sha256>.<ext>"
  * token, a bare 43-char base64url digest, or 64-char hex. All JSON I/O. */
 

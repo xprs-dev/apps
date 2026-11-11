@@ -65,7 +65,7 @@ Two transports, complementary:
 │   ports, storage caps)                                       │
 ├──────────────────────────────────────────────────────────────┤
 │ Host services (aurora/lib, generic — no wapp specifics)      │
-│   MediaArchive   (exists)  content-addressed sqlite store    │
+│   MediaArchive   (exists)  content-addressed zx store        │
 │   BlossomServer  (new)     HTTP provider endpoint            │
 │   TorrentService (new)     dtorrent-based swarm client       │
 │   SourcesIndex   (new)     sha256 → {infohash, urls, peers}  │
@@ -90,7 +90,7 @@ The canonical identity of a file is its **SHA-256 digest** (32 bytes).
 |----------------------|---------------------------|----------------|
 | XPRS token (section 16)     | base64url, no padding     | 43 chars       |
 | Blossom URL / NOSTR  | lowercase hex             | 64 chars       |
-| media.sqlite3 key    | base64url (as the token)  | 43 chars       |
+| media.zx key         | base64url (as the token)  | 43 chars       |
 
 These are trivially convertible (decode → bytes → re-encode). The host gains
 small helpers (`MediaRef.hexOf` / `fromHex`) and `MediaArchive` lookups accept
@@ -188,7 +188,7 @@ Capabilities:
 
 ## 7. Phase 4 — discovery: who has hash X?
 
-New `SourcesIndex` (table inside `media.sqlite3`):
+New `SourcesIndex` (table inside `media.zx`):
 
 ```
 sources(sha256 TEXT, kind TEXT, value TEXT, last_seen INTEGER,

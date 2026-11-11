@@ -253,7 +253,7 @@ int main(void) {
     char mine[32];
     snprintf(mine, sizeof(mine), "%s", last_status_id());
     /* The page closes and a FRESH engine takes over. It shares no memory with
-     * the one that made the post, and the post may not be in sqlite yet — the
+     * the one that made the post, and the post may not be in the zx store yet — the
      * archive flushes every 20 s — so the spool cannot answer for it either. */
     cap_clear();
     history_set("[]");
