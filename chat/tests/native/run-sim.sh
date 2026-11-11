@@ -6,13 +6,14 @@
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/../.."
-# ldconfig is not on every user's PATH (Debian keeps it in /sbin); without a
-# path the linker still finds the system library by name.
-SQLIB="$( (ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null) | grep -m1 'libsqlite3.so' | awk '{print $NF}')"
-[ -n "$SQLIB" ] || SQLIB=-lsqlite3
+SDK="$SRC/../sdk"
+# hal_db on zx, the host's database engine (DART=/path/to/dart if not on PATH).
+. "$SDK/zxdb_env.sh"
+ZXDB_ROOT=/tmp/chat_sim
+export ZXDB_ROOT
 rm -rf /tmp/chat_sim
 cc -O0 -g -I"$SRC" -I"$SRC/../hal" -Wno-attributes -Wall \
   "$HERE/sim.c" "$HERE/hal_mock.c" \
   "$SRC/main.c" "$SRC/room.c" "$SRC/db.c" "$SRC/thread.c" "$SRC/xprs.c" \
-  "$SQLIB" -o /tmp/chat_sim_bin
+  "$SDK/hal_db_zx.c" -o /tmp/chat_sim_bin
 exec /tmp/chat_sim_bin

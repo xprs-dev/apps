@@ -1,17 +1,18 @@
 #!/bin/sh
-# Native tests for the chat wapp: a real sqlite-backed mock HAL drives the
+# Native tests for the chat wapp: a mock HAL with hal_db on zx drives the
 # whole module (module_init / module_handle_event) and room.c directly.
 # Not part of the wasm build — run manually:  sh tests/native/run.sh
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/../.."
-# ldconfig is not on every user's PATH (Debian keeps it in /sbin); without a
-# path the linker still finds the system library by name.
-SQLIB="$( (ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null) | grep -m1 'libsqlite3.so' | awk '{print $NF}')"
-[ -n "$SQLIB" ] || SQLIB=-lsqlite3
+SDK="$SRC/../sdk"
+# hal_db on zx, the host's database engine (DART=/path/to/dart if not on PATH).
+. "$SDK/zxdb_env.sh"
+ZXDB_ROOT=/tmp/chat_native_test
+export ZXDB_ROOT
 rm -rf /tmp/chat_native_test
 cc -O0 -g -I"$SRC" -I"$SRC/../hal" -Wno-attributes -Wall \
   "$HERE/test_room.c" "$HERE/hal_mock.c" \
   "$SRC/main.c" "$SRC/room.c" "$SRC/db.c" "$SRC/thread.c" "$SRC/xprs.c" \
-  "$SQLIB" -o /tmp/chat_native_test_bin
+  "$SDK/hal_db_zx.c" -o /tmp/chat_native_test_bin
 exec /tmp/chat_native_test_bin

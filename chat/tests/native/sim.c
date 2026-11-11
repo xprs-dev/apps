@@ -8,7 +8,7 @@
  * wapp to another. That is all this file is.
  *
  * Every node runs the REAL wapp (main.c / room.c / db.c / thread.c / xprs.c).
- * A node's whole persistent state is its sqlite under its own root, so we run
+ * A node's whole persistent state is its zx stores under its own root, so we run
  * many nodes in one process turn-based: to act as node N we module_destroy the
  * one that was loaded and module_init against N's root and callsign. Switching
  * nodes is therefore exactly a restart, which is a feature — a scenario can

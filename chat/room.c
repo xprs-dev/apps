@@ -959,8 +959,10 @@ int room_admit(const room_msg_t *m) {
     }
     pj_t p; pj_init(&p);
     pj_int(&p, (long long)hal_time_epoch());
-    if (m->sys) pj_str(&p, "");
-    pj_str(&p, last); pj_int(&p, count); pj_str(&p, m->room);
+    /* One value per placeholder: a system line has no last_line slot. zx
+     * refuses a statement with spare parameters, as the host does. */
+    if (!m->sys) pj_str(&p, last);
+    pj_int(&p, count); pj_str(&p, m->room);
     db_exec(g_idx, m->sys
         ? "UPDATE rooms SET activity_ts=?, closed=0, unread=unread+? WHERE id=?"
         : "UPDATE rooms SET activity_ts=?, last_line=?, closed=0, unread=unread+? WHERE id=?",

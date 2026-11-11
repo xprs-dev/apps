@@ -1,5 +1,5 @@
 /*
- * The chat wapp, end to end on a real sqlite: what enters through the one
+ * The chat wapp, end to end on the real database (zx): what enters through the one
  * door, what the host is told, and what survives an engine restart.
  */
 #include <stdio.h>
