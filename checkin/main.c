@@ -57,6 +57,8 @@ static unsigned long long g_point_at;   /* when the check-in point was last anno
 static char g_view_lat[24] = "", g_view_lon[24] = "";
 static int  g_view_zoom = 2;
 static int  g_map_fitted;         /* the map was centred on the check-ins once */
+static int  g_fit_here;           /* ... and that view included the person */
+static int  g_fit_zoom = -1;      /* the zoom that view chose */
 
 /* Asks out: the core delivers them; this is only what to match answers to. */
 static struct { char id[7]; char station[16]; unsigned long long ts; char wire[CI_WIRE_MAX + 1]; } g_pend[PEND_MAX];
@@ -1035,6 +1037,7 @@ static void fit_box(const box_t *b)
     if (spanx > span) span = spanx;
     int z = 2;
     while (z < 14 && (3600000000LL >> (z + 1)) / 10 * 13 >= span) z++;
+    g_fit_zoom = z;
     char m[200] = "{\"type\":\"ui.map.viewport\",\"lat\":";
     cat_deg7(m, sizeof m, mid);
     al_cat(m, ",\"lon\":", sizeof m);
@@ -1354,6 +1357,7 @@ static void push_map(void)
     if (!g_map_fitted && (g_fit_near.on || g_fit_all.on)) {
         fit_box(g_fit_near.on ? &g_fit_near : &g_fit_all);
         g_map_fitted = 1;
+        g_fit_here = g_here[0] != 0;
     }
     save_overview();
 }
@@ -1682,8 +1686,11 @@ static void on_command(void)
             g_view_zoom = 0;
             for (const char *q = z; *q >= '0' && *q <= '9'; q++) g_view_zoom = g_view_zoom * 10 + (*q - '0');
         }
-        /* The person zoomed in on their own: the first view is theirs. */
-        if (g_view_zoom >= 5) g_map_fitted = 1;
+        /* The person zoomed on their own: the first view is theirs. */
+        if (g_view_zoom >= 5 && g_view_zoom != g_fit_zoom) {
+            g_map_fitted = 1;
+            g_fit_here = 1;
+        }
         return;
     }
     if (al_eq(type, "map.prefetch")) {
@@ -1785,6 +1792,7 @@ static void on_command(void)
     if (al_eq(cmd, "fit_map")) {
         /* Show all: every check-in, station and event, and where you are. */
         g_map_fitted = 1;
+        g_fit_here = 1;            /* the person chose this view */
         push_map();
         if (g_fit_all.on) fit_box(&g_fit_all);
         else toast("info", "Nothing on the map yet.");
@@ -1914,10 +1922,14 @@ int32_t module_init(void)
  * seconds after the page opens, and until then the map shows the world. */
 static void frame_when_known(void)
 {
-    if (g_map_fitted) return;
+    /* Framed already, and around the person (or they took over): done. A
+     * view framed before the fix came is redone once, around them. */
+    if (g_map_fitted && g_fit_here) return;
     char h[40];
     here_pos(h, sizeof h);
-    if (h[0]) push_map();
+    if (!h[0]) return;
+    g_map_fitted = 0;
+    push_map();
 }
 
 int32_t module_tick(void)
