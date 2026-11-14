@@ -543,6 +543,7 @@ static void push_log(void);
 static void push_badges(void);
 static const char *entry_value(const char *col, const char *v);
 static void push_map(void);
+static void frame_when_known(void);
 static int has_tag(const char *wire, const char *tag);
 static void label_name(char *out, unsigned cap, const char *label);
 
@@ -1681,6 +1682,8 @@ static void on_command(void)
             g_view_zoom = 0;
             for (const char *q = z; *q >= '0' && *q <= '9'; q++) g_view_zoom = g_view_zoom * 10 + (*q - '0');
         }
+        /* The person zoomed in on their own: the first view is theirs. */
+        if (g_view_zoom >= 5) g_map_fitted = 1;
         return;
     }
     if (al_eq(type, "map.prefetch")) {
@@ -1885,6 +1888,7 @@ static void drain_events(void)
         else if (al_eq(g_topic, "core.monitor") && now_s() >= g_nearby_at + 10) {
             g_nearby_at = now_s();
             push_nearby();
+            frame_when_known();
         }
     }
 }
@@ -1906,10 +1910,21 @@ int32_t module_init(void)
     return 0;
 }
 
+/* The first view waits for a place to frame: a GPS fix often arrives a few
+ * seconds after the page opens, and until then the map shows the world. */
+static void frame_when_known(void)
+{
+    if (g_map_fitted) return;
+    char h[40];
+    here_pos(h, sizeof h);
+    if (h[0]) push_map();
+}
+
 int32_t module_tick(void)
 {
     drain_events();
     point_due();
+    frame_when_known();
     return 0;
 }
 
