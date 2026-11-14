@@ -1620,7 +1620,10 @@ int32_t hal_xprs_status_edit(const char *text, uint32_t text_len,
 
 /* Air one caller-composed XPRS wire. The host validates section 4 syntax,
  * signs it when it speaks as this station and carries no sig:, applies the
- * scope rules (13.11) and spools its own copy. 0 queued, -1 invalid,
+ * scope rules (13.11) and spools its own copy. A wire whose m: makes it too
+ * long is split by the core into section 6.6 parts (receivers rejoin them
+ * before any wapp sees the packet); only an envelope that does not fit
+ * without m: is invalid. 0 queued, -1 invalid,
  * -2 refused: a post to a closed group this station is not a member of
  * (26.7) -- the core's decision, the same one its publisher applies to every
  * caller; a wapp only puts it into words. */

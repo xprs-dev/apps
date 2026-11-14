@@ -266,19 +266,13 @@ int ci_build_event(char *out, unsigned cap, const char *me,
     if (al_len(out) > CI_WIRE_UNSIGNED) return -1;
     opt(out, cap, "file", ref);
     opt(out, cap, "pos", pos);
-    unsigned n = al_len(out);
-    if (m && m[0] && n + 4 <= CI_WIRE_UNSIGNED) {
-        /* m: runs to the end; cut it to what is left, at a space. */
-        unsigned room = CI_WIRE_UNSIGNED - n - 3, k = al_len(m);
-        if (k > room) {
-            k = room;
-            while (k && m[k] != ' ') k--;
-            if (!k) k = room;
-        }
+    if (al_len(out) > CI_WIRE_UNSIGNED) return -1;
+    /* m: runs to the end, whole: when it makes the packet too long the core
+     * airs it as parts (6.6) and every receiver rejoins them. */
+    if (m && m[0]) {
         al_cat(out, " m:", cap);
-        unsigned l = al_len(out);
-        for (unsigned i = 0; i < k && l + 1 < cap; i++) out[l++] = m[i];
-        out[l] = 0;
+        al_cat(out, m, cap);
+        if (al_len(out) + 1 >= cap || al_len(out) > CI_EVENT_MAX) return -1;
     }
     return (int)al_len(out);
 }

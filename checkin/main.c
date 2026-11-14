@@ -550,7 +550,7 @@ static void label_name(char *out, unsigned cap, const char *label);
 
 static void on_result(const char *row_)
 {
-    char wire[CI_WIRE_MAX + 64], sig[12];
+    char wire[CI_EVENT_MAX + 64], sig[12];
     ci_cert_t c;
     if (!al_json(row_, "wire", wire, sizeof wire)) return;
     if (!ci_read_cert(wire, &c)) return;
@@ -646,7 +646,7 @@ static void on_message(const char *row_)
         al_json(row_, "from", from, sizeof from);
     if (!al_eq(from, g_greet_from)) return;
     if (!al_json(row_, "content", text, sizeof text) || !text[0]) {
-        char wire[CI_WIRE_MAX + 64];
+        char wire[CI_EVENT_MAX + 64];
         if (!al_json(row_, "wire", wire, sizeof wire)) return;
         al_field(wire, "m", text, sizeof text);
     }
@@ -732,7 +732,7 @@ static void here_pos(char *out, unsigned cap)
 #define POINT_FOR_S   3600ULL
 static void announce_point(int closing)
 {
-    char pos[40], wire[CI_WIRE_MAX + 1];
+    char pos[40], wire[CI_EVENT_MAX + 1];
     my_pos(pos, sizeof pos);
     if (!pos[0]) return;
     who_am_i();
@@ -1069,7 +1069,7 @@ static void each_event(ev_fn fn, void *ctx)
         const char *p = g_evrows;
         while (*p && *p != '[') p++;
         if (*p == '[') p++;
-        static char obj[CI_WIRE_MAX + 200];
+        static char obj[CI_EVENT_MAX + 200];
         while ((p = al_json_next(p, obj, sizeof obj)) != 0) {
             al_json(obj, "id", id, sizeof id);
             if (al_json(obj, "wire", wire, sizeof wire) && has_tag(wire, "checkin")) fn(id, wire, ctx);
@@ -1083,7 +1083,7 @@ static void each_event(ev_fn fn, void *ctx)
     const char *p = g_evrows;
     while (*p && *p != '[') p++;
     if (*p == '[') p++;
-    static char obj2[CI_WIRE_MAX + 400];
+    static char obj2[CI_EVENT_MAX + 400];
     while ((p = al_json_next(p, obj2, sizeof obj2)) != 0) {
         al_json(obj2, "id", id, sizeof id);
         if (al_json(obj2, "wire", wire, sizeof wire) && has_tag(wire, "checkin")) fn(id, wire, ctx);
@@ -1093,7 +1093,7 @@ static void each_event(ev_fn fn, void *ctx)
 /* A check-in event heard on the air (xprs.event): kept until it closes. */
 static void on_event_heard(const char *row_)
 {
-    char wire[CI_WIRE_MAX + 64], id[8], from[16], u[24];
+    char wire[CI_EVENT_MAX + 64], id[8], from[16], u[24];
     if (!al_json(row_, "wire", wire, sizeof wire) || !has_tag(wire, "checkin")) return;
     al_json(row_, "id", id, sizeof id);
     al_field(wire, "f", from, sizeof from);
@@ -1592,7 +1592,7 @@ static void on_picked(void)
 
 static void publish_event(void)
 {
-    char title[64], desc[160], len[8], label[32], wire[CI_WIRE_MAX + 1], pos[40];
+    char title[64], desc[160], len[8], label[32], wire[CI_EVENT_MAX + 1], pos[40];
     al_json(g_buf, "ev_title", title, sizeof title);
     al_json(g_buf, "ev_desc", desc, sizeof desc);
     if (!al_json(g_buf, "ev_len", len, sizeof len) || !len[0]) al_cpy(len, "day", sizeof len);

@@ -13,6 +13,8 @@
 #define CHECKIN_CI_H
 
 #define CI_WIRE_MAX       250
+/* An event may run past one packet: its m: is split by the core (6.6). */
+#define CI_EVENT_MAX      600
 #define CI_SIG_ROOM       65
 #define CI_WIRE_UNSIGNED  (CI_WIRE_MAX - CI_SIG_ROOM)
 

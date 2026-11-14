@@ -74,7 +74,7 @@ static void result_row(char *out, unsigned cap, const char *wire)
 
 static void test_rules(void)
 {
-    char w[300];
+    char w[700];
     int n = ci_build_ask(w, sizeof w, "X1CHSR", "X3STN1", 1786960000ULL, "local");
     CHECK(n > 0 && !strcmp(w, "t:command f:X1CHSR d:X3STN1 ts:2026-08-17_09:46:40 cmd:checkin scope:local"),
           "the ask is an ordinary command");
@@ -162,9 +162,9 @@ static void test_rules(void)
     memset(m, 'a', 150); m[150] = 0;
     n = ci_build_event(w, sizeof w, "X3STN1", 1786960000ULL, "38.7071,-9.1393", "Field Day",
                        1786960000ULL, 1786960000ULL + 86400, REF, m);
-    CHECK(n > 0 && n <= CI_WIRE_UNSIGNED && strstr(w, "tag:checkin") && strstr(w, "title:field-day")
-          && strstr(w, REF) && strstr(w, "pos:38.7071,-9.1393") && !strstr(w, "since:"),
-          "an event fits signed with its badge and place, its words cut to the room left");
+    CHECK(n > CI_WIRE_UNSIGNED && strstr(w, "tag:checkin") && strstr(w, "title:field-day")
+          && strstr(w, REF) && strstr(w, "pos:38.7071,-9.1393") && !strstr(w, "since:") && strstr(w, m),
+          "an event keeps all its words: the core airs a long one as parts (6.6)");
     n = ci_build_badge(w, sizeof w, "X3STN1", 1786960000ULL, REF, 640);
     CHECK(n > 0 && strstr(w, "t:file f:X3STN1") && strstr(w, " size:640B") && strstr(w, REF), "the badge's description");
 }
