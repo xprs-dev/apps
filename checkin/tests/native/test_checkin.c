@@ -180,12 +180,12 @@ static void test_station(void)
     module_init();
     CHECK(!mock_subscribed("xprs.command"), "off: listens to nothing");
     cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
-    CHECK(!mock_subscribed("xprs.command") && said("Share your station's position first"),
+    CHECK(!mock_subscribed("xprs.command") && said("Share your location first"),
           "no shared place, no check-ins: it stays off and says why");
     /* The owner shares the station's position (Settings > Privacy). */
     strcpy(g_shared, "{\"pos\":\"38.7071,-9.1393\",\"acc\":10}");
     cmd("{\"command\":\"save_intro\",\"intro\":\"Hilltop shack, ring the bell\"}");
-    CHECK(said("Intro saved"), "an intro is saved");
+    CHECK(said("Saved."), "an intro is saved");
     mock_clear();
     cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
     CHECK(mock_subscribed("xprs.command"), "on: listens for asks");
@@ -286,11 +286,12 @@ static void test_station(void)
     CHECK(strstr(last_aired(), "link:lan") && strstr(last_aired(), EREF) && strstr(last_aired(), "title:field-day-2026"),
           "during the event: its name and its badge");
     CHECK(said("X1EVNT"), "the guestbook lists the visitor");
-    CHECK(said("\"field\":\"guests\"") && said("\"title\":\"Your badge\"") &&
-          said("\"title\":\"Your events\"") && said("\"title\":\"Guestbook\""),
-          "one list, three sections: badge, events, visitors");
-    CHECK(said("\"field\":\"st_info\"") && said("\"label\":\"Visitors\""),
-          "the station's status card");
+    CHECK(said("\"field\":\"guests\"") && !said("\"title\":\"Your badge\"") &&
+          said("\"title\":\"Your events\"") && said("\"title\":\"Visitors\""),
+          "one list, two sections: events, visitors");
+    CHECK(said("\"field\":\"st_info\"") && said("\"label\":\"Location\"") &&
+          said("\"field\":\"ev_info\"") && said("Field Day 2026"),
+          "the station's location and the event running");
     snprintf(g_put_token, sizeof g_put_token, "file:%s", REF);
 
     cmd("{\"command\":\"set_bot\",\"bot_on\":false}");
@@ -355,7 +356,7 @@ static void test_chaser(void)
     mock_clear();
     result_row(row_, sizeof row_, cert);
     event("xprs.result", row_);
-    CHECK(said("First check-in at X3STN1") && said("New badge on your wall!"), "the chaser is told, and it is a first");
+    CHECK(said("First check-in at X3STN1") && said("New badge!"), "the chaser is told, and it is a first");
     CHECK(said("\"type\":\"ui.map.marker\"") && said("\"lat\":38.7071,\"lon\":-9.1393") && said("\"id\":\"log:"),
           "the check-in is a pin on the map");
     CHECK(said("\"type\":\"ui.map.viewport\""), "the map centres on the check-ins");
@@ -367,7 +368,7 @@ static void test_chaser(void)
     snprintf(want, sizeof want, "file:%s", EREF);
     CHECK(g_fetched_n >= 1 && !strcmp(g_fetched[0], want), "the event's badge is asked of the core by its hash");
     CHECK(said("\"value\":\"1\""), "the logbook counts it");
-    CHECK(said("\"title\":\"Badge wall\"") && said(EREF), "the badge wall shows it");
+    CHECK(said("\"title\":\"Collected\"") && said(EREF), "the badge wall shows it");
 
     /* A certificate that names no place is not a check-in. */
     {
@@ -383,7 +384,7 @@ static void test_chaser(void)
         mock_clear();
         result_row(row2, sizeof row2, noplace);
         event("xprs.result", row2);
-        CHECK(said("without saying where it is") && !said("Checked in at X3NOPL"), "no place, no check-in");
+        CHECK(said("sent no location") && !said("Checked in at X3NOPL"), "no place, no check-in");
         (void)forged_ask;
     }
 
@@ -399,24 +400,24 @@ static void test_chaser(void)
     snprintf(tap, sizeof tap, "{\"command\":\"log_tap\",\"log_id\":\"%s\"}", id);
     mock_clear();
     cmd(tap);
-    CHECK(said("Certificate (signed by the station)") && said("cmd:checkin") && said("code:200"),
+    CHECK(said("Station's signed reply") && said("cmd:checkin") && said("code:200"),
           "the entry shows both packets");
     snprintf(tap, sizeof tap, "{\"command\":\"marker_tap\",\"id\":\"log:%s\"}", id);
     mock_clear();
     cmd(tap);
-    CHECK(said("Certificate (signed by the station)") && said("\"name\":\"Entry\""), "a pin opens its check-in");
+    CHECK(said("Station's signed reply") && said("\"name\":\"Entry\""), "a pin opens its check-in");
 
     /* Saving a city for off-grid use is the person's act, at a town's scale. */
     mock_clear();
     cmd("{\"type\":\"setViewport\",\"lat\":38.72,\"lon\":-9.14,\"zoom\":5}");
     cmd("{\"command\":\"save_area\"}");
-    CHECK(said("Zoom in to the town") && !said("ui.map.prefetch"), "not a country");
+    CHECK(said("Zoom in closer") && !said("ui.map.prefetch"), "not a country");
     mock_clear();
     cmd("{\"type\":\"setViewport\",\"lat\":38.72,\"lon\":-9.14,\"zoom\":13}");
     cmd("{\"command\":\"save_area\"}");
     CHECK(said("\"type\":\"ui.map.prefetch\",\"minZoom\":13,\"maxZoom\":16,\"max\":1500"), "this area, three levels closer");
     cmd("{\"type\":\"map.prefetch\",\"state\":\"done\",\"done\":120,\"total\":120,\"held\":118}");
-    CHECK(said("Map saved for off-grid use: 118 tiles."), "and the person is told when it is saved");
+    CHECK(said("Map saved offline (118 tiles)."), "and the person is told when it is saved");
 
     /* A station that never answers. */
     mock_clear();
@@ -449,14 +450,14 @@ static void test_chaser(void)
         event("xprs.event", evrow);
         mock_clear();
         cmd("{\"command\":\"events_refresh\"}");
-        CHECK(said("Stations giving check-ins") && said("\"st:X3PNT1\"") && said("1.0 km away") &&
+        CHECK(said("\"title\":\"Stations\"") && said("\"st:X3PNT1\"") && said("1.0 km away") &&
               said("Rooftop station, ask at the bar"), "a station to visit, how far, and its intro");
         CHECK(!said("Check-ins Open"), "its point is not listed again as an event");
         CHECK(said("\"id\":\"st:X3PNT1\"") && said("#43A047"), "and it is a green pin");
         mock_clear();
         cmd("{\"command\":\"events_tap\",\"events_id\":\"st:X3PNT1\"}");
         CHECK(said("\"type\":\"ui.prompt\"") && said("\"copy\":\"38.7161,-9.1393\"") &&
-              said("About 1.0 km from you") && said("Not visited yet"),
+              said("1.0 km away") && said("Not visited yet"),
               "its details: the distance, and the coordinates to copy");
         mock_clear();
         cmd("{\"command\":\"prompt\",\"prompt_id\":\"pt:X3PNT1\",\"prompt_value\":\"map\"}");
@@ -464,6 +465,26 @@ static void test_chaser(void)
         mock_clear();
         cmd("{\"command\":\"marker_tap\",\"id\":\"st:X3PNT1\"}");
         CHECK(said("\"copy\":\"38.7161,-9.1393\""), "the pin opens the same details");
+        /* An event's pin opens its sheet too, and Show on map goes there. */
+        {
+            char fd[400], hist[1400];
+            ci_build_event(fd, sizeof fd, "X3EVT1", g_now - 30, "38.7300,-9.1500", "Hill Day",
+                           g_now - 30, g_now + 3600, "", "Bring a radio");
+            snprintf(hist, sizeof hist, "[{\"id\":\"ee33ff\",\"wire\":\"%s\"},{\"id\":\"aa11bb\",\"wire\":\"%s\"}]", fd, ev);
+            strcpy(g_history, hist);
+            mock_clear();
+            cmd("{\"command\":\"marker_tap\",\"id\":\"ev:ee33ff\"}");
+            CHECK(said("\"type\":\"ui.prompt\"") && said("\"title\":\"Hill Day\"") && said("By X3EVT1") &&
+                  said("Bring a radio") && said("\"copy\":\"38.7300,-9.1500\""), "an event's pin opens its details");
+            mock_clear();
+            cmd("{\"command\":\"prompt\",\"prompt_id\":\"ev:ee33ff\",\"prompt_value\":\"map\"}");
+            CHECK(said("\"type\":\"ui.map.locate\",\"lat\":38.7300,\"lon\":-9.1500"), "and Show on map goes there");
+            mock_clear();
+            cmd("{\"command\":\"events_tap\",\"events_id\":\"ee33ff\"}");
+            CHECK(said("\"title\":\"Hill Day\""), "the Explore row opens it as well");
+            snprintf(hist, sizeof hist, "[{\"id\":\"aa11bb\",\"wire\":\"%s\"}]", ev);
+            strcpy(g_history, hist);
+        }
         /* It closes: it leaves the list. */
         char closing[400];
         ci_build_event(closing, sizeof closing, "X3PNT1", g_now, "38.7161,-9.1393", CI_POINT_TITLE,
@@ -484,6 +505,7 @@ static void test_chaser(void)
         char rid[16] = "", first[300];
         mock_clear();
         cmd("{\"command\":\"fit_map\"}");
+        CHECK(said("\"type\":\"ui.map.viewport\""), "Show all frames the map");
         const char *m = 0;
         for (int i = 0; i < g_said_n && !m; i++) m = strstr(g_said[i], "\"id\":\"log:");
         CHECK(m != 0, "there is a check-in to remove");
@@ -497,7 +519,7 @@ static void test_chaser(void)
         cmd(first);
         mock_clear();
         cmd("{\"command\":\"remove_entry\"}");
-        CHECK(said("Removed your check-in at X3STN1."), "removed, and the person is told");
+        CHECK(said("Removed check-in at X3STN1."), "removed, and the person is told");
         CHECK(said("ui.map.markers.clear") && !said(rid), "its pin is gone from the map");
         CHECK(!said("Uc3nRw8kFa5xPd1qGz7mYb0tJe6vHs2iLoA9XfCqK4E"), "and its badge from the wall");
         CHECK(said("ui.screen.close"), "and the entry closes, back to where they came from");

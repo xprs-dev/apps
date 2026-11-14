@@ -4,7 +4,7 @@
     "name": "Map",
     "icon": "map",
     "toolbar": true,
-    "tip": "Your check-ins are white pins, stations giving check-ins nearby are green, events are amber. Tap a pin for its details and coordinates.",
+    "tip": "White: your check-ins. Green: stations. Amber: events.",
     "children": [
       {
         "$": "group",
@@ -24,13 +24,13 @@
       {
         "$": "action",
         "name": "fit_map",
-        "label": "All my check-ins",
-        "icon": "radar"
+        "label": "Show all",
+        "icon": "map"
       },
       {
         "$": "action",
         "name": "save_area",
-        "label": "Save this area offline",
+        "label": "Save offline",
         "icon": "download"
       }
     ]
@@ -39,22 +39,22 @@
     "$": "screen",
     "name": "Nearby",
     "icon": "radar",
-    "tip": "Stations in reach now. Tap Check in: the station answers with a signed check-in and its badge.",
+    "tip": "Stations in reach right now.",
     "children": [
       {
         "$": "field",
         "name": "nearby",
         "$type": "people",
-        "empty_title": "Nobody in reach",
-        "empty": "Check-ins happen near a station: in the same room or building over Bluetooth, WiFi or the local network, or within LoRa range when you allow it.\n\nWalk up to a station and it shows up here."
+        "empty_title": "No stations in reach",
+        "empty": "Walk up to a station to see it here."
       },
       {
         "$": "field",
         "name": "chase_regional",
         "$type": "bool",
-        "label": "Check in over LoRa too",
+        "label": "Use LoRa too",
         "default": false,
-        "tip": "Off: in person only (Bluetooth, WiFi, local network). On: a station within LoRa range may answer too. Never over the internet.",
+        "tip": "Reach stations farther away. Never over the internet.",
         "apply": "set_chase"
       },
       {
@@ -81,7 +81,7 @@
         "name": "log",
         "$type": "people",
         "empty_title": "No check-ins yet",
-        "empty": "Your check-ins land here, newest first. Tap one to see the evidence: the station's signed certificate and your ask."
+        "empty": "Check in at a station to start your log."
       }
     ]
   },
@@ -94,8 +94,8 @@
         "$": "field",
         "name": "badges",
         "$type": "people",
-        "empty_title": "Your badge wall is empty",
-        "empty": "Every station hands out its badge with a check-in, and an event hands out its own. They collect here, with how many times you earned each."
+        "empty_title": "No badges yet",
+        "empty": "Each check-in earns the station's badge."
       }
     ]
   },
@@ -103,14 +103,14 @@
     "$": "screen",
     "name": "Explore",
     "icon": "public",
-    "tip": "Stations giving check-ins and check-in events, nearest first. Tap one for its details and coordinates to paste into your navigation app.",
+    "tip": "Stations and events, nearest first.",
     "children": [
       {
         "$": "field",
         "name": "events",
         "$type": "people",
         "empty_title": "Nothing to explore yet",
-        "empty": "Stations that give check-ins and share where they are show up here, nearest first, and so do check-in events. Tap one for its details and coordinates."
+        "empty": "Stations and events appear here once heard."
       },
       {
         "$": "action",
@@ -125,71 +125,105 @@
     "$": "screen",
     "name": "My station",
     "icon": "cell_tower",
-    "tip": "Give check-ins to people who come by. To answer while the app is closed, long-press Check-in on the home screen and turn on Run in background.",
+    "tip": "To answer with the app closed, long-press Check-in on the home screen and turn on Run in background.",
     "children": [
       {
-        "$": "field",
-        "name": "bot_on",
-        "$type": "bool",
-        "label": "Give check-ins",
-        "default": false,
-        "tip": "Answer people nearby who ask for a check-in.",
-        "apply": "set_bot"
+        "$": "group",
+        "name": "Check-ins",
+        "children": [
+          {
+            "$": "field",
+            "name": "bot_on",
+            "$type": "bool",
+            "label": "Give check-ins",
+            "default": false,
+            "tip": "Let people nearby check in here.",
+            "apply": "set_bot"
+          },
+          {
+            "$": "field",
+            "name": "local_only",
+            "$type": "bool",
+            "label": "In person only",
+            "default": true,
+            "tip": "Off: anyone in LoRa range can check in.",
+            "apply": "set_local"
+          },
+          {
+            "$": "field",
+            "name": "st_info",
+            "$type": "details",
+            "empty": ""
+          }
+        ]
       },
       {
-        "$": "field",
-        "name": "local_only",
-        "$type": "bool",
-        "label": "In person only",
-        "default": true,
-        "tip": "On: only over Bluetooth, WiFi or the local network. Off: within LoRa range too.",
-        "apply": "set_local"
-      },
-      {
-        "$": "field",
-        "name": "greeting",
-        "$type": "string",
-        "label": "Greeting",
-        "hint": "Welcome to the hill, 73!",
-        "max": 150
+        "$": "group",
+        "name": "Welcome",
+        "children": [
+          {
+            "$": "field",
+            "name": "greeting",
+            "$type": "string",
+            "label": "Greeting",
+            "hint": "Welcome to the hill, 73!",
+            "max": 150,
+            "tip": "Sent to each visitor."
+          },
+          {
+            "$": "field",
+            "name": "intro",
+            "$type": "string",
+            "label": "About this station",
+            "hint": "Hilltop shack, ring the bell",
+            "max": 100,
+            "tip": "Shown with your pin on the map."
+          }
+        ]
       },
       {
         "$": "action",
-        "name": "save_greeting",
-        "label": "Save greeting",
+        "name": "save_texts",
+        "label": "Save",
         "icon": "check"
       },
       {
-        "$": "field",
-        "name": "intro",
-        "$type": "string",
-        "label": "About this station",
-        "max": 100,
-        "tip": "A line about your station for people deciding whether to visit, shown with its pin on their map."
-      },
-      {
-        "$": "action",
-        "name": "save_intro",
-        "label": "Save intro",
-        "icon": "check"
-      },
-      {
-        "$": "field",
-        "name": "st_info",
-        "$type": "details",
-        "empty": ""
+        "$": "group",
+        "name": "Badge",
+        "children": [
+          {
+            "$": "field",
+            "name": "badge_pic",
+            "$type": "image",
+            "label": "",
+            "readonly": true,
+            "tip": "Visitors collect it when they check in."
+          }
+        ]
       },
       {
         "$": "action",
         "name": "pick_badge",
-        "label": "Choose a badge",
+        "label": "Choose badge",
         "icon": "image"
+      },
+      {
+        "$": "group",
+        "name": "Events",
+        "children": [
+          {
+            "$": "field",
+            "name": "ev_info",
+            "$type": "details",
+            "empty": ""
+          }
+        ]
       },
       {
         "$": "action",
         "name": "new_event",
         "label": "New event",
-        "icon": "schedule"
+        "icon": "campaign"
       }
     ]
   },
@@ -198,26 +232,14 @@
     "name": "Guestbook",
     "icon": "people",
     "toolbar": true,
-    "tip": "Your badge, your events and everyone who checked in at your station.",
+    "tip": "Your events and visitors.",
     "children": [
       {
         "$": "field",
         "name": "guests",
         "$type": "people",
         "empty_title": "No visitors yet",
-        "empty": "People who check in at your station are listed here, with your badge and your events above them."
-      },
-      {
-        "$": "action",
-        "name": "pick_badge",
-        "label": "Choose a badge",
-        "icon": "image"
-      },
-      {
-        "$": "action",
-        "name": "new_event",
-        "label": "New event",
-        "icon": "schedule"
+        "empty": "People who check in here are listed here."
       }
     ]
   },
@@ -226,7 +248,7 @@
     "name": "New event",
     "icon": "schedule",
     "hidden": true,
-    "tip": "It starts now. Check-ins during it carry its name and its badge.",
+    "tip": "Starts now. Check-ins during it get its name and badge.",
     "children": [
       {
         "$": "field",
@@ -240,16 +262,15 @@
         "$": "field",
         "name": "ev_desc",
         "$type": "string",
-        "label": "About it",
-        "hint": "on the hill all weekend",
-        "max": 40,
-        "tip": "A few words: the event travels as one signed packet with its badge and place."
+        "label": "Description",
+        "hint": "On the hill all weekend",
+        "max": 40
       },
       {
         "$": "field",
         "name": "ev_len",
         "$type": "enum",
-        "label": "How long",
+        "label": "Length",
         "default": "day",
         "children": [
           {
@@ -270,15 +291,23 @@
         ]
       },
       {
-        "$": "field",
-        "name": "ev_badge",
-        "$type": "details",
-        "empty": ""
+        "$": "group",
+        "name": "Badge",
+        "children": [
+          {
+            "$": "field",
+            "name": "ev_pic",
+            "$type": "image",
+            "label": "",
+            "readonly": true,
+            "tip": "Optional. Without one, your station's badge is used."
+          }
+        ]
       },
       {
         "$": "action",
         "name": "pick_event_badge",
-        "label": "Choose the event badge",
+        "label": "Choose badge",
         "icon": "image"
       },
       {
@@ -305,12 +334,12 @@
       {
         "$": "action",
         "name": "remove_entry",
-        "label": "Remove from logbook",
+        "label": "Remove",
         "icon": "delete",
         "style": "danger",
         "confirm": true,
         "confirm-label": "Remove this check-in?",
-        "confirm-text": "It leaves your logbook, the map and your stats, and its badge leaves your wall unless another check-in earned it too. The station keeps its own guestbook."
+        "confirm-text": "It leaves your log, map and stats."
       }
     ]
   }
