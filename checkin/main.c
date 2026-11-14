@@ -1083,6 +1083,7 @@ static struct {
     char call[16], pos[40], intro[104], file[80], id[8];
     unsigned long long ts;
     long dist;
+    int closed;        /* its newest word: no longer giving check-ins */
 } g_pts[PT_MAX];
 static int g_npts;
 
@@ -1102,11 +1103,10 @@ static void point_seen(const char *id, const char *wire, void *ctx)
     int k = 0;
     while (k < g_npts && !al_eq(g_pts[k].call, from)) k++;
     if (k < g_npts && g_pts[k].ts >= t) return;      /* we hold a newer one */
-    if (al_epoch(u) <= now_s() || !ci_pos_ok(pos)) { /* closed, or no place */
-        if (k < g_npts) g_pts[k] = g_pts[--g_npts];
-        return;
-    }
     if (k == g_npts) { if (g_npts == PT_MAX) return; g_npts++; }
+    /* Closed, or no place: still the station's newest word, so an older
+     * announcement read after it cannot put the station back. */
+    g_pts[k].closed = al_epoch(u) <= now_s() || !ci_pos_ok(pos);
     al_cpy(g_pts[k].call, from, sizeof g_pts[k].call);
     al_cpy(g_pts[k].pos, pos, sizeof g_pts[k].pos);
     al_field(wire, "m", g_pts[k].intro, sizeof g_pts[k].intro);
@@ -1122,6 +1122,9 @@ static void load_points(void)
     who_am_i();
     here_pos(g_here, sizeof g_here);
     each_event(point_seen, 0);
+    int keep = 0;
+    for (int i = 0; i < g_npts; i++) if (!g_pts[i].closed) g_pts[keep++] = g_pts[i];
+    g_npts = keep;
     /* Nearest first; unknown distances last, by callsign. */
     for (int i = 1; i < g_npts; i++)
         for (int j = i; j > 0; j--) {

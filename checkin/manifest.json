@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.checkin",
-  "version":         "0.3.5",
+  "version":         "0.3.6",
   "kind":            "app",
   "title":           "Check-in",
   "description":     "Chase stations in person and collect their check-ins and badges.",
