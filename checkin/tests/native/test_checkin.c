@@ -24,6 +24,7 @@ extern char g_cmd[4096];
 extern char g_stations[4096];
 extern char g_history[8192];
 extern char g_shared[96];
+extern char g_followed_kind[24];
 int mock_subscribed(const char *t);
 void mock_event(const char *topic, const char *json);
 void mock_clear(void);
@@ -438,10 +439,12 @@ static void test_chaser(void)
         g_lat = 387071000; g_lon = -91393000;          /* the visitor is here */
         ci_build_event(ev, sizeof ev, "X3PNT1", g_now - 60, "38.7161,-9.1393", CI_POINT_TITLE,
                        g_now - 60, g_now + 7200, "", "Rooftop station, ask at the bar");
-        /* Heard on the air from a stranger: the core's archive keeps none of
-         * it on a private phone, so the wapp keeps it. */
-        CHECK(mock_subscribed("xprs.event"), "check-in events are listened for");
+        /* From a stranger: the core keeps it because this wapp follows the
+         * type (heard here or replayed by an archiver), and the wapp reads it. */
+        CHECK(!strcmp(g_followed_kind, "event") && mock_subscribed("xprs.event"),
+              "check-in events are followed, and listened for to redraw");
         char evrow[600];
+        snprintf(g_history, sizeof g_history, "[{\"id\":\"aa11bb\",\"wire\":\"%s\"}]", ev);
         snprintf(evrow, sizeof evrow, "{\"id\":\"aa11bb\",\"type\":\"event\",\"wire\":\"%s\"}", ev);
         event("xprs.event", evrow);
         mock_clear();
@@ -465,8 +468,8 @@ static void test_chaser(void)
         char closing[400];
         ci_build_event(closing, sizeof closing, "X3PNT1", g_now, "38.7161,-9.1393", CI_POINT_TITLE,
                        g_now, g_now + 60, "", "");
-        snprintf(evrow, sizeof evrow, "{\"id\":\"cc22dd\",\"type\":\"event\",\"wire\":\"%s\"}", closing);
-        event("xprs.event", evrow);
+        snprintf(g_history, sizeof g_history,
+                 "[{\"id\":\"cc22dd\",\"wire\":\"%s\"},{\"id\":\"aa11bb\",\"wire\":\"%s\"}]", closing, ev);
         g_now += 120;
         mock_clear();
         cmd("{\"command\":\"events_refresh\"}");

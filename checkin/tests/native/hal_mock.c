@@ -170,6 +170,14 @@ int32_t hal_xprs_position(char *out, uint32_t cap)
     memcpy(out, g_shared, n);
     return (int32_t)n;
 }
+char g_followed_kind[24] = "";
+int32_t hal_xprs_follow_kind(const char *k, uint32_t kl, int32_t on)
+{
+    if (!kl || kl >= sizeof g_followed_kind) return -1;
+    if (on) { memcpy(g_followed_kind, k, kl); g_followed_kind[kl] = 0; }
+    else g_followed_kind[0] = 0;
+    return 0;
+}
 char g_history[8192] = "[]";
 int32_t hal_xprs_history(const char *q, uint32_t ql, char *out, uint32_t cap)
 {

@@ -245,12 +245,9 @@ static void db_init(void)
     db_exec("CREATE TABLE IF NOT EXISTS events (title TEXT PRIMARY KEY,"
             " since INTEGER, until INTEGER, badge TEXT, m TEXT)", 0);
     db_exec("CREATE TABLE IF NOT EXISTS stations (call TEXT PRIMARY KEY, last INTEGER)", 0);
-    /* Check-in events and points heard on the air. The core's archive keeps
-     * nothing from strangers on a private phone (silence is not consent),
-     * and finding stations nobody follows yet is this wapp's whole point, so
-     * it keeps what it hears with tag:checkin itself, until it closes. */
-    db_exec("CREATE TABLE IF NOT EXISTS heard (id TEXT PRIMARY KEY, sender TEXT,"
-            " until INTEGER, wire TEXT)", 0);
+    /* Check-in events are kept by the core now (hal_xprs_follow_kind), the
+     * ones heard here and the ones archivers replay, in one archive. */
+    db_exec("DROP TABLE IF EXISTS heard", 0);
     /* Asks out, so an answer that arrives after the page closed is still
      * matched by whichever engine runs then (the background one, when the
      * owner turned it on). Results are never archived: missed is lost. */
@@ -1055,27 +1052,16 @@ static void save_overview(void)
     say(m);
 }
 
-/* Every check-in event known: those heard on the air (the heard table)
- * and those the core archived (our own, people we follow). [fn] gets each
- * one's identifier and wire; the same packet from both is passed twice and
- * the callers keep the newest per sender or per identifier. */
+/* Every check-in event known, from the one archive: the core keeps the
+ * events this station heard itself and those its archivers replayed
+ * (hal_xprs_follow_kind "event"), one row per packet. [fn] gets each one's
+ * identifier and wire. */
 typedef void (*ev_fn)(const char *id, const char *wire, void *ctx);
-static char g_evrows[24576];
+static char g_evrows[32768];
 static void each_event(ev_fn fn, void *ctx)
 {
-    char id[8], wire[CI_WIRE_MAX + 64];
-    if (db_query("SELECT id, wire FROM heard", 0)) {
-        al_cpy(g_evrows, g_rows, sizeof g_evrows);
-        const char *p = g_evrows;
-        while (*p && *p != '[') p++;
-        if (*p == '[') p++;
-        static char obj[CI_EVENT_MAX + 200];
-        while ((p = al_json_next(p, obj, sizeof obj)) != 0) {
-            al_json(obj, "id", id, sizeof id);
-            if (al_json(obj, "wire", wire, sizeof wire) && has_tag(wire, "checkin")) fn(id, wire, ctx);
-        }
-    }
-    static const char q[] = "{\"types\":[\"event\"],\"limit\":200}";
+    char id[8], wire[CI_EVENT_MAX + 64];
+    static const char q[] = "{\"types\":[\"event\"],\"limit\":300}";
     int32_t n = hal_xprs_history(q, sizeof q - 1, g_big, sizeof g_big - 1);
     if (n <= 0) return;
     g_big[n] = 0;
@@ -1083,30 +1069,11 @@ static void each_event(ev_fn fn, void *ctx)
     const char *p = g_evrows;
     while (*p && *p != '[') p++;
     if (*p == '[') p++;
-    static char obj2[CI_EVENT_MAX + 400];
-    while ((p = al_json_next(p, obj2, sizeof obj2)) != 0) {
-        al_json(obj2, "id", id, sizeof id);
-        if (al_json(obj2, "wire", wire, sizeof wire) && has_tag(wire, "checkin")) fn(id, wire, ctx);
+    static char obj[CI_EVENT_MAX + 400];
+    while ((p = al_json_next(p, obj, sizeof obj)) != 0) {
+        al_json(obj, "id", id, sizeof id);
+        if (al_json(obj, "wire", wire, sizeof wire) && has_tag(wire, "checkin")) fn(id, wire, ctx);
     }
-}
-
-/* A check-in event heard on the air (xprs.event): kept until it closes. */
-static void on_event_heard(const char *row_)
-{
-    char wire[CI_EVENT_MAX + 64], id[8], from[16], u[24];
-    if (!al_json(row_, "wire", wire, sizeof wire) || !has_tag(wire, "checkin")) return;
-    al_json(row_, "id", id, sizeof id);
-    al_field(wire, "f", from, sizeof from);
-    al_field(wire, "until", u, sizeof u);
-    unsigned long long until = al_epoch(u), now = now_s();
-    if (!id[0] || !from[0] || !until) return;
-    who_am_i();
-    if (al_eq(from, g_me)) return;               /* our own, relayed back */
-    p_begin(); p_int(now); p_end();
-    db_exec("DELETE FROM heard WHERE until < ?", 1);
-    if (until <= now) return;
-    p_begin(); p_str(id); p_str(from); p_int(until); p_str(wire); p_end();
-    db_exec("INSERT OR REPLACE INTO heard (id, sender, until, wire) VALUES (?,?,?,?)", 1);
 }
 
 /* Check-in points heard (the stations giving check-ins that share where
@@ -1865,7 +1832,7 @@ static void drain_events(void)
         else if (al_eq(g_topic, "xprs.status.tx")) on_status(g_ev);
         else if (al_eq(g_topic, "xprs.message")) on_message(g_ev);
         else if (al_eq(g_topic, "xprs.event")) {
-            on_event_heard(g_ev);
+            /* Kept by the core already: only the screen is behind. */
             if (g_page_seen && now_s() >= g_explore_at + 10) {
                 g_explore_at = now_s();
                 push_events();
@@ -1884,6 +1851,9 @@ int32_t module_init(void)
 {
     who_am_i();
     db_init();
+    /* Check-in events from anyone, heard here or replayed by the archivers:
+     * the core keeps them and fetches what is new; this wapp reads them. */
+    hal_xprs_follow_kind("event", 5, 1);
     sub("xprs.event", 1);
     load_settings();
     pend_load();

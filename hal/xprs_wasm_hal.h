@@ -1478,6 +1478,17 @@ int32_t hal_xprs_kind(const char *addr, uint32_t addr_len, char *out, uint32_t o
 __attribute__((import_module("hal"), import_name("xprs_follow")))
 int32_t hal_xprs_follow(const char *call, uint32_t call_len, int32_t on);
 
+/* Follow (on=1) or stop following (on=0) a packet TYPE, by its t: word
+ * ("event", "poll", ...): its undirected publications are kept from anyone,
+ * those this station hears and those its chosen archivers replay, in the one
+ * archive, one row per packet; the core asks the archivers for what is new
+ * of it (`cmd:history kind:<type> since:<newest held>`, XPRS.md 11.2) on its
+ * own cadence. The wapp reads hal_xprs_history and is told none of how a row
+ * got there. Per wapp: another wapp following the same type is unaffected.
+ * 0, or -1 for a word that is not a packet type. Permission archive.read. */
+__attribute__((import_module("hal"), import_name("xprs_follow_kind")))
+int32_t hal_xprs_follow_kind(const char *kind, uint32_t kind_len, int32_t on);
+
 /* The stations followed by callsign: a JSON array of bare callsigns,
  * ["X4PL3M",...]. Bytes written, or the negated size needed. Permission
  * archive.read. */
