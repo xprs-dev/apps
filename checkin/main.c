@@ -9,12 +9,14 @@
  * two packets together are the evidence. Nothing here is new to XPRS
  * (ci.h).
  *
- *   Nearby      stations in reach now, a Check in button on each
- *   Logbook     every check-in, counted; tap one for the evidence
- *   Badges      the wall: one row per badge earned, with how many times
- *   Events      check-in events stations announced (t:event tag:checkin)
- *   My station  the bot: on or off, in person only, greeting, badge,
- *               events, and the guestbook of visitors
+ *   Map         check-ins, stations and events
+ *   Nearby      stations in reach now, a Check in button on each; under
+ *               them every station and event heard (t:event tag:checkin)
+ *   Logbook     every check-in, counted, and the badges earned (a filter
+ *               chip each); tap a check-in for the evidence
+ *   My station  where it is (a link to the setting), check-ins on or off,
+ *               greeting, badge, events, and a Visitors page. Every input
+ *               saves as it is changed: there is no Save button.
  *
  * The wapp decides what a check-in means; the core does everything else
  * (docs/architecture.md). hal_xprs_send hands the ask to the core's command
@@ -39,7 +41,7 @@ static int32_t g_db = -1;
 static char g_buf[4096];          /* one command from the page */
 static char g_ev[4096];           /* one event */
 static char g_topic[64];
-static char g_out[16384];         /* one message to the page */
+static char g_out[65536];         /* one message to the page: a list of a few hundred rows */
 static char g_rows[24576];        /* one query answer */
 static char g_obj[4096];          /* one row of it */
 static char g_big[32768];         /* hal_xprs_stations / history */
@@ -327,11 +329,21 @@ static void rows_begin(const char *field)
     al_cat(g_out, field, sizeof g_out);
     al_cat(g_out, "\",\"sections\":[", sizeof g_out);
 }
+/* The filter chip the next section belongs to (the screen's `tabs`), or 0.
+ * Reset by section_begin. */
+static const char *g_tab;
 static void section_begin(const char *title, int *any)
 {
     if (*any) al_cat(g_out, ",", sizeof g_out);
     *any = 1;
-    al_cat(g_out, "{\"title\":\"", sizeof g_out);
+    al_cat(g_out, "{", sizeof g_out);
+    if (g_tab) {
+        al_cat(g_out, "\"tab\":\"", sizeof g_out);
+        al_jesc(g_out, g_tab, sizeof g_out);
+        al_cat(g_out, "\",", sizeof g_out);
+        g_tab = 0;
+    }
+    al_cat(g_out, "\"title\":\"", sizeof g_out);
     al_jesc(g_out, title, sizeof g_out);
     al_cat(g_out, "\",\"items\":[", sizeof g_out);
     g_first = 1;
@@ -412,6 +424,8 @@ static int known_station(const char *call)
  * moved rows under the person's finger. Stations known to give check-ins come
  * first, then by callsign: a station stays where it was. */
 #define NEAR_MAX 64
+/* The Stations and Events sections, as JSON, appended to Nearby's list. */
+static char g_explore[32768];
 static struct { char id[16]; char sub[48]; int known; } g_near[NEAR_MAX];
 
 static int near_before(int a, int b)
@@ -473,6 +487,12 @@ static void push_nearby(void)
         else row(id, id, g_near[order[k]].sub, tag, tag2, "", id, "nearby_checkin", "Check in");
     }
     section_end();
+    /* Under them, every station and event heard, nearest first: built when
+     * one is heard (push_events), not each time the air changes. */
+    if (g_explore[0]) {
+        al_cat(g_out, ",", sizeof g_out);
+        al_cat(g_out, g_explore, sizeof g_out);
+    }
     rows_end();
     field_set_bool("chase_regional", g_chase_regional);
 }
@@ -874,6 +894,7 @@ static void push_stats(void)
     say(g_out);
 }
 
+static void badges_section(int *any);
 static void push_log(void)
 {
     push_stats();
@@ -884,7 +905,8 @@ static void push_log(void)
         const char *p = g_rows;
         while (*p && *p != '[') p++;
         if (*p == '[') p++;
-        section_begin("Logbook", &any);
+        g_tab = "Check-ins";
+        section_begin("Check-ins", &any);
         while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
             char id[8], st[16], ts[24], grade[12], title[32], badge[80], tok[88] = "", w[24], sub_[200];
             al_json(g_obj, "id", id, sizeof id);
@@ -905,6 +927,7 @@ static void push_log(void)
         }
         section_end();
     }
+    badges_section(&any);
     rows_end();
 }
 
@@ -1300,8 +1323,10 @@ static void event_row(const char *id, const char *wire, void *ctx)
     al_cat(until_tag, wu, sizeof until_tag);
     char nice[40];
     label_name(nice, sizeof nice, title);
+    char rid[16] = "ev:";
+    al_cat(rid, id, sizeof rid);
     g_icon = "schedule";
-    row(id, nice, m[0] ? m : from, tag, until_tag, tok, from, "", "");
+    row(rid, nice, m[0] ? m : from, tag, until_tag, tok, from, "", "");
 }
 
 static void push_map(void)
@@ -1363,16 +1388,16 @@ static void push_map(void)
 }
 
 /* ── Badges ───────────────────────────────────────────────────────────── */
-static void push_badges(void)
+/* The badge wall: a section of the logbook's list, under its own chip. */
+static void badges_section(int *any)
 {
-    rows_begin("badges");
-    int any = 0;
     if (db_query("SELECT badge, station, title, COUNT(*) AS n, MAX(ts) AS last FROM log"
                  " WHERE badge != '' GROUP BY badge, station, title ORDER BY last DESC", 0)) {
         const char *p = g_rows;
         while (*p && *p != '[') p++;
         if (*p == '[') p++;
-        section_begin("Collected", &any);
+        g_tab = "Badges";
+        section_begin("Badges", any);
         while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
             char badge[80], st[16], title[32], n[12], last[24], tok[88] = "file:", sub_[64], w[24], id[120];
             al_json(g_obj, "badge", badge, sizeof badge);
@@ -1394,8 +1419,10 @@ static void push_badges(void)
         }
         section_end();
     }
-    rows_end();
 }
+
+/* The badges are part of the logbook's list. */
+static void push_badges(void) { push_log(); }
 
 /* ── Events (chaser side) ─────────────────────────────────────────────── */
 /* A label as a name: dashes to spaces, each word capitalised. */
@@ -1429,6 +1456,7 @@ static int has_tag(const char *wire, const char *tag)
 static void push_events(void)
 {
     rows_begin("events");
+    unsigned head = al_len(g_out);    /* the sections start here */
     int any = 0;
     load_points();
     if (g_npts) {
@@ -1452,7 +1480,8 @@ static void push_events(void)
     g_nseen = 0;
     each_event(event_row, 0);
     section_end();
-    rows_end();
+    al_cpy(g_explore, g_out + head, sizeof g_explore);
+    push_nearby();
 }
 
 /* ── My station ───────────────────────────────────────────────────────── */
@@ -1550,11 +1579,21 @@ static void push_station(void)
             al_cat(where, ")", sizeof where);
         }
     }
-    /* The one thing a station needs before it can give check-ins. */
+    /* The one thing a station needs before it can give check-ins, and the
+     * button under it opens the setting itself (share_location). */
     const char *loc[] = {
-        "Location", where[0] ? where : "Not shared. Turn on in Settings > Privacy.",
+        "Location", where[0] ? where : "Not shared yet. Needed to give check-ins.",
     };
     details("st_info", loc, 1);
+    field_set_str("share_location__label", where[0] ? "Change location" : "Share my location");
+    char visitors[32] = "Visitors", n[12];
+    count("SELECT COUNT(*) AS n FROM guests", n, sizeof n);
+    if (n[0] && !al_eq(n, "0")) {
+        al_cat(visitors, " (", sizeof visitors);
+        al_cat(visitors, n, sizeof visitors);
+        al_cat(visitors, ")", sizeof visitors);
+    }
+    field_set_str("guests_open__label", visitors);
     char title[32], ebadge[80], nice[40] = "None running";
     active_event(title, sizeof title, ebadge, sizeof ebadge);
     if (title[0]) label_name(nice, sizeof nice, title);
@@ -1655,9 +1694,8 @@ static void push_all(void)
 {
     push_map();
     push_nearby();
-    push_log();
-    push_badges();
-    push_events();
+    push_log();          /* with the badges */
+    push_events();       /* and Nearby with them */
     push_station();
 }
 
@@ -1709,13 +1747,18 @@ static void on_command(void)
     if (!al_json(g_buf, "command", cmd, sizeof cmd) &&
         !al_json(g_buf, "action", cmd, sizeof cmd)) return;
     if (al_eq(cmd, "ready") || al_eq(cmd, "refresh")) { who_am_i(); push_all(); return; }
-    if (al_eq(cmd, "nearby_refresh")) { push_nearby(); return; }
+    if (al_eq(cmd, "nearby_refresh")) { push_events(); push_map(); return; }
     if (al_eq(cmd, "nearby_asking")) {
         toast("info", "Still waiting for an answer.");
         return;
     }
     if (al_eq(cmd, "nearby_checkin") || al_eq(cmd, "nearby_tap")) {
-        if (al_json(g_buf, "nearby_id", id, sizeof id) && id[0]) do_checkin(id);
+        if (!al_json(g_buf, "nearby_id", id, sizeof id) || !id[0]) return;
+        /* A station or event further down the list opens its sheet; a
+         * station in reach is checked in at. */
+        if (al_starts(id, "st:")) point_sheet(id + 3);
+        else if (al_starts(id, "ev:")) event_sheet(id + 3);
+        else do_checkin(id);
         return;
     }
     if (al_eq(cmd, "set_chase")) {
@@ -1728,6 +1771,7 @@ static void on_command(void)
     }
     if (al_eq(cmd, "log_tap")) {
         if (!al_json(g_buf, "log_id", id, sizeof id)) return;
+        for (const char *q = id; *q; q++) if (*q == '|') return;   /* a badge row */
         al_cpy(g_sel, id, sizeof g_sel);
         push_entry();
         screen_open("Entry", "Check-in");
@@ -1758,7 +1802,14 @@ static void on_command(void)
     if (al_eq(cmd, "events_tap")) {
         if (!al_json(g_buf, "events_id", id, sizeof id) || !id[0]) return;
         if (al_starts(id, "st:")) point_sheet(id + 3);
-        else event_sheet(id);
+        else event_sheet(al_starts(id, "ev:") ? id + 3 : id);
+        return;
+    }
+    /* Back from the position setting the button opened: show what it is now. */
+    if (al_eq(cmd, "share_location")) { push_station(); push_map(); return; }
+    if (al_eq(cmd, "guests_open")) {
+        push_guests();
+        screen_open("Visitors", "Visitors");
         return;
     }
     if (al_eq(cmd, "prompt")) {
@@ -1818,19 +1869,21 @@ static void on_command(void)
         return;
     }
     if (al_eq(cmd, "save_intro") || al_eq(cmd, "save_greeting") || al_eq(cmd, "save_texts")) {
-        /* One Save for the greeting and the intro; each old command still
-         * saves its own field. */
-        int intro = !al_eq(cmd, "save_greeting"), greet = !al_eq(cmd, "save_intro");
-        if (greet) {
+        /* Sent by each text field as it is typed (its `apply`), so saved
+         * quietly: no Save button, no toast per pause. */
+        if (!al_eq(cmd, "save_intro")) {
             al_json(g_buf, "greeting", g_greeting, sizeof g_greeting);
             hal_kv_set("greet", 5, g_greeting, al_len(g_greeting));
         }
-        if (intro) {
+        if (!al_eq(cmd, "save_greeting")) {
+            char was[sizeof g_intro];
+            al_cpy(was, g_intro, sizeof was);
             al_json(g_buf, "intro", g_intro, sizeof g_intro);
             hal_kv_set("intro", 5, g_intro, al_len(g_intro));
-            if (g_bot_on) announce_point(0);
+            /* The new line goes out with the point at the next wake, not once
+             * per pause in the typing. */
+            if (g_bot_on && !al_eq(was, g_intro)) g_point_at = 0;
         }
-        toast("success", "Saved.");
         return;
     }
     if (al_eq(cmd, "set_bot")) {
@@ -1845,7 +1898,7 @@ static void on_command(void)
                  * know where it stands has none to give. */
                 g_bot_on = 0;
                 field_set_bool("bot_on", 0);
-                toast("warning", "Share your location first: Settings > Privacy.");
+                toast("warning", "Share your location first: tap Share my location.");
             }
         }
         kv_put_bool("bot", g_bot_on);

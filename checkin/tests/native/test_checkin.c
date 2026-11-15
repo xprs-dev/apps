@@ -185,7 +185,7 @@ static void test_station(void)
     /* The owner shares the station's position (Settings > Privacy). */
     strcpy(g_shared, "{\"pos\":\"38.7071,-9.1393\",\"acc\":10}");
     cmd("{\"command\":\"save_intro\",\"intro\":\"Hilltop shack, ring the bell\"}");
-    CHECK(said("Saved."), "an intro is saved");
+    CHECK(!said("Saved."), "an intro is saved as it is typed, without a toast per pause");
     mock_clear();
     cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
     CHECK(mock_subscribed("xprs.command"), "on: listens for asks");
@@ -292,6 +292,12 @@ static void test_station(void)
     CHECK(said("\"field\":\"st_info\"") && said("\"label\":\"Location\"") &&
           said("\"field\":\"ev_info\"") && said("Field Day 2026"),
           "the station's location and the event running");
+    CHECK(said("\"field\":\"share_location__label\",\"value\":\"Change location\""),
+          "the button under the location opens the setting to change it");
+    mock_clear();
+    cmd("{\"command\":\"guests_open\"}");
+    CHECK(said("\"field\":\"guests\"") && said("\"type\":\"ui.screen.open\",\"name\":\"Visitors\""),
+          "Visitors opens the guestbook as a page of its own");
     snprintf(g_put_token, sizeof g_put_token, "file:%s", REF);
 
     cmd("{\"command\":\"set_bot\",\"bot_on\":false}");
@@ -368,7 +374,7 @@ static void test_chaser(void)
     snprintf(want, sizeof want, "file:%s", EREF);
     CHECK(g_fetched_n >= 1 && !strcmp(g_fetched[0], want), "the event's badge is asked of the core by its hash");
     CHECK(said("\"value\":\"1\""), "the logbook counts it");
-    CHECK(said("\"title\":\"Collected\"") && said(EREF), "the badge wall shows it");
+    CHECK(said("\"tab\":\"Badges\",\"title\":\"Badges\"") && said(EREF), "the logbook's Badges chip shows it");
 
     /* A certificate that names no place is not a check-in. */
     {
@@ -454,6 +460,12 @@ static void test_chaser(void)
               said("Rooftop station, ask at the bar"), "a station to visit, how far, and its intro");
         CHECK(!said("Check-ins Open"), "its point is not listed again as an event");
         CHECK(said("\"id\":\"st:X3PNT1\"") && said("#43A047"), "and it is a green pin");
+        CHECK(said("\"field\":\"nearby\"") && said("\"title\":\"In reach now\""),
+              "the stations heard are listed on Nearby, under the ones in reach");
+        mock_clear();
+        cmd("{\"command\":\"nearby_tap\",\"nearby_id\":\"st:X3PNT1\"}");
+        CHECK(said("\"type\":\"ui.prompt\"") && said("\"copy\":\"38.7161,-9.1393\"") && g_aired_n == 0,
+              "tapping one opens its details, and asks nobody for a check-in");
         mock_clear();
         cmd("{\"command\":\"events_tap\",\"events_id\":\"st:X3PNT1\"}");
         CHECK(said("\"type\":\"ui.prompt\"") && said("\"copy\":\"38.7161,-9.1393\"") &&

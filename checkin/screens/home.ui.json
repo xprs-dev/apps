@@ -39,14 +39,14 @@
     "$": "screen",
     "name": "Nearby",
     "icon": "radar",
-    "tip": "Stations in reach right now.",
+    "tip": "Tap Check in on a station in reach. Under them, every station and event heard, nearest first.",
     "children": [
       {
         "$": "field",
         "name": "nearby",
         "$type": "people",
-        "empty_title": "No stations in reach",
-        "empty": "Walk up to a station to see it here."
+        "empty_title": "No stations yet",
+        "empty": "Walk up to a station to check in. Stations and events heard appear here too."
       },
       {
         "$": "field",
@@ -81,52 +81,36 @@
         "name": "log",
         "$type": "people",
         "empty_title": "No check-ins yet",
-        "empty": "Check in at a station to start your log."
-      }
-    ]
-  },
-  {
-    "$": "screen",
-    "name": "Badges",
-    "icon": "star",
-    "children": [
-      {
-        "$": "field",
-        "name": "badges",
-        "$type": "people",
-        "empty_title": "No badges yet",
-        "empty": "Each check-in earns the station's badge."
-      }
-    ]
-  },
-  {
-    "$": "screen",
-    "name": "Explore",
-    "icon": "public",
-    "tip": "Stations and events, nearest first.",
-    "children": [
-      {
-        "$": "field",
-        "name": "events",
-        "$type": "people",
-        "empty_title": "Nothing to explore yet",
-        "empty": "Stations and events appear here once heard."
-      },
-      {
-        "$": "action",
-        "name": "events_refresh",
-        "label": "Refresh",
-        "icon": "refresh"
+        "empty": "Check in at a station to start your log and collect its badge."
       }
     ],
-    "toolbar": true
+    "tabs": "Check-ins,Badges"
   },
   {
     "$": "screen",
     "name": "My station",
     "icon": "cell_tower",
-    "tip": "To answer with the app closed, long-press Check-in on the home screen and turn on Run in background.",
+    "tip": "Let people near you check in here. Your station answers while XPRS runs; to answer with it closed, long-press Check-in on the home screen and turn on Run in background.",
     "children": [
+      {
+        "$": "group",
+        "name": "Location",
+        "children": [
+          {
+            "$": "field",
+            "name": "st_info",
+            "$type": "details",
+            "empty": ""
+          }
+        ]
+      },
+      {
+        "$": "action",
+        "name": "share_location",
+        "label": "Share my location",
+        "icon": "map",
+        "open": "host:position"
+      },
       {
         "$": "group",
         "name": "Check-ins",
@@ -137,7 +121,7 @@
             "$type": "bool",
             "label": "Give check-ins",
             "default": false,
-            "tip": "Let people nearby check in here.",
+            "tip": "People nearby can check in here.",
             "apply": "set_bot"
           },
           {
@@ -148,12 +132,6 @@
             "default": true,
             "tip": "Off: anyone in LoRa range can check in.",
             "apply": "set_local"
-          },
-          {
-            "$": "field",
-            "name": "st_info",
-            "$type": "details",
-            "empty": ""
           }
         ]
       },
@@ -168,7 +146,8 @@
             "label": "Greeting",
             "hint": "Welcome to the hill, 73!",
             "max": 150,
-            "tip": "Sent to each visitor."
+            "tip": "Sent to each visitor.",
+            "apply": "save_greeting"
           },
           {
             "$": "field",
@@ -177,15 +156,10 @@
             "label": "About this station",
             "hint": "Hilltop shack, ring the bell",
             "max": 100,
-            "tip": "Shown with your pin on the map."
+            "tip": "Shown with your pin on the map.",
+            "apply": "save_intro"
           }
         ]
-      },
-      {
-        "$": "action",
-        "name": "save_texts",
-        "label": "Save",
-        "icon": "check"
       },
       {
         "$": "group",
@@ -224,15 +198,20 @@
         "name": "new_event",
         "label": "New event",
         "icon": "campaign"
+      },
+      {
+        "$": "action",
+        "name": "guests_open",
+        "label": "Visitors",
+        "icon": "people"
       }
     ]
   },
   {
     "$": "screen",
-    "name": "Guestbook",
+    "name": "Visitors",
     "icon": "people",
-    "toolbar": true,
-    "tip": "Your events and visitors.",
+    "tip": "Your events and the people who checked in here.",
     "children": [
       {
         "$": "field",
@@ -241,7 +220,8 @@
         "empty_title": "No visitors yet",
         "empty": "People who check in here are listed here."
       }
-    ]
+    ],
+    "hidden": true
   },
   {
     "$": "screen",
