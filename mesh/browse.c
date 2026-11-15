@@ -59,7 +59,7 @@ static unsigned num(const char *json, const char *key)
 
 static void cat_ago(char *d, unsigned s, unsigned cap)
 {
-    if (s < 90) { al_cat_u(d, s, cap); al_cat(d, " s ago", cap); }
+    if (s < 90) al_cat(d, "now", cap);
     else if (s < 5400) { al_cat_u(d, s / 60, cap); al_cat(d, " min ago", cap); }
     else if (s < 172800) { al_cat_u(d, s / 3600, cap); al_cat(d, " h ago", cap); }
     else { al_cat_u(d, s / 86400, cap); al_cat(d, " days ago", cap); }
@@ -123,7 +123,6 @@ static const char *kind_name(const char *k)
 /* ── The list ─────────────────────────────────────────────────────────── */
 static void push_list(void)
 {
-    static unsigned counts[3];
     g_list_dirty = 0;
     al_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"stations\",\"sections\":[", sizeof g_out);
     for (int s = 0; s < 3; s++) {
@@ -133,19 +132,13 @@ static void push_list(void)
         al_cat_u(g_req, (unsigned)g_off[s], sizeof g_req);
         al_cat(g_req, "}", sizeof g_req);
         unsigned total = 0, shown = 0;
-        if (sread()) {
-            total = num(g_in, "total");
-            char c[96];
-            if (al_json_obj(g_in, "counts", c, sizeof c)) counts[s] = num(c, SCOPE[s]);
-        }
+        if (sread()) total = num(g_in, "total");
         if (s) al_cat(g_out, ",", sizeof g_out);
         al_cat(g_out, "{\"tab\":\"", sizeof g_out);
         al_cat(g_out, SCOPE_TAB[s], sizeof g_out);
         al_cat(g_out, "\",\"title\":\"", sizeof g_out);
         al_cat(g_out, SCOPE_TAB[s], sizeof g_out);
-        al_cat(g_out, " (", sizeof g_out);
-        al_cat_u(g_out, total, sizeof g_out);
-        al_cat(g_out, ")\",\"items\":[", sizeof g_out);
+        al_cat(g_out, "\",\"items\":[", sizeof g_out);
         const char *p = al_json_arr(g_in, "rows");
         while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
             char call[16], kind[12], api[8];
@@ -198,22 +191,6 @@ static void push_list(void)
             al_cat(g_out, "\"}", sizeof g_out);
         }
         al_cat(g_out, "]}", sizeof g_out);
-    }
-    al_cat(g_out, "]}", sizeof g_out);
-    say(g_out);
-
-    al_cpy(g_out, "{\"type\":\"ui.stats.set\",\"field\":\"st_stats\",\"tiles\":[", sizeof g_out);
-    for (int s = 0; s < 3; s++) {
-        if (s) al_cat(g_out, ",", sizeof g_out);
-        al_cat(g_out, "{\"id\":\"", sizeof g_out);
-        al_cat(g_out, SCOPE[s], sizeof g_out);
-        al_cat(g_out, "\",\"label\":\"", sizeof g_out);
-        al_cat(g_out, SCOPE_TAB[s], sizeof g_out);
-        al_cat(g_out, "\",\"value\":\"", sizeof g_out);
-        al_cat_u(g_out, counts[s], sizeof g_out);
-        al_cat(g_out, "\",\"hint\":\"", sizeof g_out);
-        al_cat(g_out, s == 0 ? "Bluetooth, WiFi, LAN" : s == 1 ? "LoRa and radio" : "Over Reticulum", sizeof g_out);
-        al_cat(g_out, "\"}", sizeof g_out);
     }
     al_cat(g_out, "]}", sizeof g_out);
     say(g_out);
@@ -296,9 +273,9 @@ static void push_station(void)
     al_json(g_in, "known", known, sizeof known);
 
     al_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"s_offers\",\"sections\":[", sizeof g_out);
-    al_cat(g_out, "{\"title\":\"\",\"items\":[", sizeof g_out);
+    al_cat(g_out, "{\"title\":\"This station\",\"items\":[", sizeof g_out);
     one_row("profile", "person", "Profile and messages", "Message, mail and who this is");
-    al_cat(g_out, "]},{\"title\":\"What it shares\",\"items\":[", sizeof g_out);
+    al_cat(g_out, ",", sizeof g_out);
     int n = 0;
     if (al_eq(state, "ready")) {
         const char *p = al_json_arr(g_in, "rooms");

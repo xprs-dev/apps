@@ -3,14 +3,8 @@
     "$": "screen",
     "name": "@screen.stations",
     "icon": "cell_tower",
-    "tabs": "Local,Regional,Global",
     "tip": "@screen.stations_tip",
     "children": [
-      {
-        "$": "field",
-        "name": "st_stats",
-        "$type": "stats"
-      },
       {
         "$": "field",
         "name": "stations",
