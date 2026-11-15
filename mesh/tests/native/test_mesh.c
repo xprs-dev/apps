@@ -20,6 +20,7 @@ int  cap_contains(const char *s);
 int  cap_count(void);
 const char *cap_at(int i);
 void inbox_set(const char *s);
+void event_push(const char *topic);
 const char *last_filter(void);
 uint32_t hal_kv_get(const char *k, uint32_t kl, char *out, uint32_t cap);
 
@@ -172,6 +173,79 @@ int main(void) {
     inbox_set("{\"command\":\"ready\"}");
     module_handle_event();
     check(cap_contains("\"type\":\"ui.graph.set\""), "ready streams a graph frame");
+
+    /* ── The stations as a list, by scope and by page ── */
+    extern char g_station_req[8][256];
+    extern int g_station_reqn;
+    void module_tick(void);
+    cap_clear();
+    inbox_set("{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"more:global\"}}");
+    module_handle_event();
+    check(cap_contains("\"tab\":\"Local\",\"title\":\"Local (2)\""), "the list has a Local section with its count");
+    check(cap_contains("\"title\":\"X3PTZM\",\"subtitle\":\"Station \\u00b7 LAN, Bluetooth \\u00b7 420 m\""),
+          "a row says what it is, how it is heard and how far");
+    check(cap_contains("\"12 s ago\",\"Browse\""), "a station with an API is marked to browse");
+    check(cap_contains("\"tab\":\"Global\",\"title\":\"Global (300)\""), "300 global stations are counted");
+    check(cap_contains("X1PAGE2") && !cap_contains("X1FAR"), "Show the next ones turns the page");
+    check(cap_contains("61 to 61 of 300"), "the page says where it is");
+    check(cap_contains("\"type\":\"ui.stats.set\",\"field\":\"st_stats\"") && cap_contains("\"value\":\"300\""),
+          "the strip counts each scope");
+
+    /* ── One station: how it is reached, and what it shares ── */
+    cap_clear();
+    inbox_set("{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"X3PTZM\"}}");
+    module_handle_event();
+    check(cap_contains("\"field\":\"s_ways\",\"value\":{\"call\":\"X3PTZM\"") && cap_contains("\"know\":\"heard\""),
+          "the ways are handed to the screen as the core gave them");
+    check(cap_contains("\"id\":\"room:X562EL:gallery\"") && cap_contains("\"title\":\"Landscapes\""),
+          "its public gallery is listed");
+    check(cap_contains("\"id\":\"room:X5VK3U:music\",\"icon\":\"lock\"") && cap_contains("private, you are a member"),
+          "a private room this profile belongs to is listed, with a lock");
+    check(cap_contains("\"type\":\"ui.screen.open\",\"name\":\"Station\",\"title\":\"X3PTZM\""), "the station screen opens");
+
+    cap_clear();
+    inbox_set("{\"command\":\"s_offers_tap\",\"fields\":{\"s_offers_id\":\"profile\"}}");
+    module_handle_event();
+    check(cap_contains("\"type\":\"ui.profile.open\",\"callsign\":\"X3PTZM\""), "Profile and messages opens the host profile");
+
+    cap_clear();
+    inbox_set("{\"command\":\"s_offers_tap\",\"fields\":{\"s_offers_id\":\"room:X562EL:gallery\"}}");
+    module_handle_event();
+    check(cap_contains("\"field\":\"r_folders\"") && cap_contains("\"title\":\"Coast and city\",\"subtitle\":\"2 items\""),
+          "a gallery lists its events by name and count");
+    check(cap_contains("\"name\":\"Room\",\"title\":\"Gallery\""), "the room screen opens");
+
+    cap_clear();
+    g_station_reqn = 0;
+    inbox_set("{\"command\":\"r_folders_tap\",\"fields\":{\"r_folders_id\":\"f:ab12cd\"}}");
+    module_handle_event();
+    check(cap_contains("\"field\":\"f_media\",\"value\":{\"layout\":\"grid\"") &&
+          cap_contains("\"token\":\"file:Uc3nRw8kFa5xPd1qGz7mYb0tJe6vHs2iLoA9XfCqK4E.jpg\",\"preview\":\"file:nYxKzGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg\",\"title\":\"the mast\""),
+          "a gallery folder is a grid of its files by token");
+    check(cap_contains("\"label\":\"Coast and city\",\"value\":\"1 to 2 of 2\""), "the folder says its name and count");
+    check(cap_contains("\"field\":\"f_more__hidden\",\"value\":true"), "no next page when everything is shown");
+    {
+        int named = 0;
+        for (int i = 0; i < g_station_reqn; i++)
+            if (strstr(g_station_req[i], "ble") || strstr(g_station_req[i], "lan") || strstr(g_station_req[i], "rns")) named = 1;
+        check(!named, "no request names a bearer");
+    }
+
+    /* ── core.station redraws the screen that is open, the room does not ── */
+    cap_clear();
+    event_push("core.station");
+    module_handle_event();
+    check(cap_contains("\"field\":\"f_media\"") && !cap_contains("ui.graph.set"),
+          "core.station redraws the open folder and not the graph");
+    cap_clear();
+    event_push("core.monitor");
+    module_handle_event();
+    check(!cap_contains("\"field\":\"stations\""), "a heard packet does not redraw the list at once");
+    module_tick();
+    check(cap_contains("\"field\":\"stations\""), "the list redraws on the tick after something moved");
+    cap_clear();
+    module_tick();
+    check(cap_count() == 0, "and not again while nothing moves");
 
     printf(g_fail ? "\nRESULT: FAIL\n" : "\nRESULT: PASS\n");
     return g_fail;

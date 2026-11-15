@@ -5,7 +5,7 @@
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/../.."
-cc -O0 -g -I"$SRC" -I"$SRC/../hal" -Wno-attributes \
-  "$HERE/test_mesh.c" "$HERE/hal_mock.c" "$SRC/main.c" \
+cc -O0 -g -I"$SRC" -I"$SRC/../hal" -I"$SRC/../alerts" -Wno-attributes \
+  "$HERE/test_mesh.c" "$HERE/hal_mock.c" "$SRC/main.c" "$SRC/browse.c" "$SRC/../alerts/util.c" \
   -o /tmp/mesh_cttest
 exec /tmp/mesh_cttest

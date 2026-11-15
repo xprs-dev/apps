@@ -1425,6 +1425,55 @@ int32_t hal_archive_set_pref(const char *kv, uint32_t kv_len);
 __attribute__((import_module("hal"), import_name("xprs_stations")))
 int32_t hal_xprs_stations(char *out, uint32_t out_cap);
 
+/* What another station offers through its visitor API (spec/API-HTTP.md):
+ * the same rooms, galleries, music and libraries its web page shows, read as
+ * this profile (so the private rooms it belongs to are there too).
+ *
+ * The answer is what the last visit learned, at once; when there is none, or
+ * none recent, the core visits the station and publishes `core.station`:
+ * subscribe to it while the screen is open and read again. The wapp never
+ * says how the station is reached.
+ *
+ * Request (JSON): {"call":"X3PTZM","get":"offers"}
+ *                 {"call":..,"get":"folders","room":"X5.."}
+ *                 {"call":..,"get":"items","room":"X5..","folder":"<id>","offset":0}
+ *                 {"call":..,"get":"forget"}        (the screen closed)
+ * Every answer: "state":"loading|ready|failed", "busy":bool, "why" when
+ * failed (unknown = it never announced an API, unreached, refused, or what
+ * was wrong with its proof).
+ *   offers:  "serve":[..], "tabs":[..], "known":bool (the station accepted
+ *            this profile's key), "rooms":[{"call","name","about",
+ *            "kind":"chat|forum|gallery|music|library|mesh","private":bool,
+ *            "role","can_post","members"}]
+ *   folders: "folders":[{"id","title","count","cover"}]
+ *   items:   "total","offset","items":[{"id","caption","name","size","from",
+ *            "ts","likes","liked","preview","file"}], 60 at most per read
+ *   list (get:"list", no call; "scope":"local|regional|global|all",
+ *            "search", "offset"): the stations themselves, 60 per read,
+ *            nearest class and newest first: "counts":{"local","regional",
+ *            "global","all"}, "total", "offset", "rows":[{"call","kind",
+ *            "reach","bearers":[..],"age_s","api":bool (it offers this API),
+ *            "hops" and "dist_m" when known}]. Read it on core.monitor and
+ *            core.rns.graph. Scope is the class of the nearest bearer a
+ *            station is heard on (XPRS.md 9.11), decided by the core.
+ *   ways (get:"ways"): how a message from here gets to that station, to
+ *            SHOW, never to decide from: "self", "routes":[{"sure":bool,
+ *            "hops":[{"from","to","bearer","reach":"local|regional|global",
+ *            "know","age_s","rssi"}]}]. Each hop is "to" hearing "from" over
+ *            that bearer, and "know" says how that is known: heard (this
+ *            device heard it), asked (the hearing station answered when
+ *            asked), said (it disclosed it in its beacon), guess (inferred:
+ *            draw it as a guess; "?" names a station nobody named). "sure" is
+ *            false when any hop is a guess. The core asks the hearing
+ *            stations in the background and publishes core.station.
+ * cover, preview and file are media tokens ("" when none): hal_media_fetch
+ * gets them from that station, hal_media_state follows it, hal_media_open
+ * shows it.
+ * Returns the bytes written, 0 on a bad request, or the negated size needed. */
+__attribute__((import_module("hal"), import_name("station_read")))
+int32_t hal_station_read(const char *req, uint32_t req_len,
+                         char *out, uint32_t out_cap);
+
 /* One station, everything the host holds about it this hour, flat:
  *   {"call","kind","bearer","bearers":[..],"rssi","lastMs","agoMs",
  *    "lastDirectMs","packets", and when it has said so: "peers","mail",

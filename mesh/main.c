@@ -24,6 +24,7 @@
  */
 
 #include "../hal/xprs_wasm_hal.h"
+#include "browse.h"
 
 /* ── String helpers ──────────────────────────────────────────────────── */
 static unsigned str_len(const char *s) { unsigned n = 0; while (s[n]) n++; return n; }
@@ -320,6 +321,7 @@ void module_init(void) {
     }
     load_state();
     push_all();
+    browse_init();
 }
 
 /* The core says its state moved; redraw what depends on it. The event carries
@@ -331,15 +333,22 @@ static void drain_core_events(void) {
     int any = 0;
     for (int guard = 0; guard < 16; guard++) {
         if (hal_event_available() == 0) break;
+        for (unsigned i = 0; i < sizeof(topic); i++) topic[i] = '\0';
         if (hal_event_recv(topic, sizeof(topic) - 1, data, sizeof(data) - 1) == 0)
             break;
-        any = 1;
+        topic[sizeof(topic) - 1] = '\0';
+        browse_changed(topic);
+        /* core.station is the browser's alone: the graph did not move. */
+        if (!str_eq(topic, "core.station")) any = 1;
     }
     if (any) push_all();
 }
 
-/* No clock: the graph changes when an announce arrives, and the core says so. */
+/* The graph redraws when the core says it moved. The station list is three
+ * reads and a large message, so it redraws here, at most once a tick, when
+ * something moved since the last one. */
 void module_tick(void) {
+    browse_tick();
 }
 
 void module_handle_event(void) {
@@ -355,7 +364,7 @@ void module_handle_event(void) {
 
     char cmd[64];
     if (json_str(buf, "command", cmd, sizeof(cmd))) {
-        handle_command(cmd, buf);
+        if (!browse_command(cmd, buf)) handle_command(cmd, buf);
     }
 }
 
@@ -364,5 +373,5 @@ void module_destroy(void) {
     hal_log(1, "[mesh] destroy", 14);
 }
 
-/* 0 = no clock: see module_tick. */
-uint32_t module_tick_interval_ms(void) { return 0; }
+/* See module_tick: the list's redraw, when it is due. */
+uint32_t module_tick_interval_ms(void) { return 5000; }

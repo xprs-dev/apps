@@ -145,3 +145,48 @@ int32_t hal_rns_nodes(const char *filter, uint32_t filter_len, char *out, uint32
     uint32_t n = strlen(s); if (n > cap) return -(int32_t)n;
     memcpy(out, s, n); return (int32_t)n;
 }
+
+/* ── hal_station_read: canned answers per `get`, and the last request ───── */
+char g_station_req[8][256];
+int  g_station_reqn = 0;
+const char *g_offers =
+  "{\"state\":\"ready\",\"busy\":false,\"call\":\"X3PTZM\",\"serve\":[],\"tabs\":[\"chat\"],\"known\":true,"
+  "\"rooms\":[{\"call\":\"X562EL\",\"name\":\"Landscapes\",\"about\":\"photos\",\"kind\":\"gallery\",\"private\":false,\"role\":\"none\",\"can_post\":false,\"members\":0},"
+  "{\"call\":\"X5VK3U\",\"name\":\"Family\",\"about\":\"\",\"kind\":\"music\",\"private\":true,\"role\":\"member\",\"can_post\":false,\"members\":3}]}";
+int32_t hal_station_read(const char *req, uint32_t len, char *out, uint32_t cap) {
+    char r[256];
+    uint32_t n = len < sizeof r - 1 ? len : sizeof r - 1;
+    memcpy(r, req, n); r[n] = 0;
+    if (g_station_reqn < 8) strcpy(g_station_req[g_station_reqn++], r);
+    const char *a = "{\"state\":\"loading\",\"busy\":true}";
+    if (strstr(r, "\"get\":\"list\"")) {
+        if (strstr(r, "\"scope\":\"local\""))
+            a = "{\"counts\":{\"local\":2,\"regional\":0,\"global\":300,\"all\":302},\"scope\":\"local\",\"total\":2,\"offset\":0,"
+                "\"rows\":[{\"call\":\"X3PTZM\",\"kind\":\"station\",\"reach\":\"local\",\"bearers\":[\"lan\",\"ble\"],\"age_s\":12,\"api\":true,\"dist_m\":420},"
+                "{\"call\":\"X1NEAR\",\"kind\":\"user\",\"reach\":\"local\",\"bearers\":[\"ble\"],\"age_s\":200,\"api\":false}]}";
+        else if (strstr(r, "\"scope\":\"global\"") && strstr(r, "\"offset\":0"))
+            a = "{\"counts\":{\"local\":2,\"regional\":0,\"global\":300,\"all\":302},\"scope\":\"global\",\"total\":300,\"offset\":0,"
+                "\"rows\":[{\"call\":\"X1FAR\",\"kind\":\"user\",\"reach\":\"global\",\"bearers\":[\"rns\"],\"age_s\":7200,\"api\":false,\"hops\":4}]}";
+        else if (strstr(r, "\"scope\":\"global\""))
+            a = "{\"counts\":{\"local\":2,\"regional\":0,\"global\":300,\"all\":302},\"scope\":\"global\",\"total\":300,\"offset\":60,"
+                "\"rows\":[{\"call\":\"X1PAGE2\",\"kind\":\"user\",\"reach\":\"global\",\"bearers\":[\"rns\"],\"age_s\":9,\"api\":false}]}";
+        else
+            a = "{\"counts\":{\"local\":2,\"regional\":0,\"global\":300,\"all\":302},\"scope\":\"regional\",\"total\":0,\"offset\":0,\"rows\":[]}";
+    } else if (strstr(r, "\"get\":\"ways\"")) {
+        a = "{\"call\":\"X3PTZM\",\"self\":\"X1ME\",\"busy\":false,\"routes\":[{\"sure\":true,\"hops\":[{\"from\":\"X1ME\",\"to\":\"X3PTZM\",\"bearer\":\"lan\",\"reach\":\"local\",\"know\":\"heard\",\"age_s\":3}]}]}";
+    } else if (strstr(r, "\"get\":\"offers\"")) {
+        a = g_offers;
+    } else if (strstr(r, "\"get\":\"folders\"")) {
+        a = "{\"state\":\"ready\",\"busy\":false,\"folders\":[{\"id\":\"ab12cd\",\"title\":\"coast-and-city\",\"count\":2,\"cover\":\"\"}]}";
+    } else if (strstr(r, "\"get\":\"items\"")) {
+        a = "{\"state\":\"ready\",\"busy\":false,\"total\":2,\"offset\":0,\"items\":["
+            "{\"id\":\"i1\",\"caption\":\"the mast\",\"name\":\"mast.jpg\",\"size\":\"2.1MB\",\"from\":\"X1A\",\"ts\":1,\"likes\":0,\"liked\":false,"
+            "\"preview\":\"file:nYxKzGm4vT2pQ8dW5jR7cL0aFbNs9hUe3oXiC6EkM1w.jpg\",\"file\":\"file:Uc3nRw8kFa5xPd1qGz7mYb0tJe6vHs2iLoA9XfCqK4E.jpg\"},"
+            "{\"id\":\"i2\",\"caption\":\"\",\"name\":\"b.jpg\",\"size\":\"1MB\",\"from\":\"X1A\",\"ts\":2,\"likes\":0,\"liked\":false,"
+            "\"preview\":\"\",\"file\":\"file:Zc3nRw8kFa5xPd1qGz7mYb0tJe6vHs2iLoA9XfCqK4E.jpg\"}]}";
+    }
+    uint32_t l = (uint32_t)strlen(a);
+    if (l > cap) return -(int32_t)l;
+    memcpy(out, a, l);
+    return (int32_t)l;
+}

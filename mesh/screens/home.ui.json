@@ -1,13 +1,99 @@
 [
   {
     "$": "screen",
+    "name": "@screen.stations",
+    "icon": "cell_tower",
+    "tabs": "Local,Regional,Global",
+    "tip": "@screen.stations_tip",
+    "children": [
+      {
+        "$": "field",
+        "name": "st_stats",
+        "$type": "stats"
+      },
+      {
+        "$": "field",
+        "name": "stations",
+        "$type": "people",
+        "empty_title": "@stations.empty_title",
+        "empty": "@stations.empty"
+      }
+    ]
+  },
+  {
+    "$": "screen",
     "name": "@screen.mesh",
+    "icon": "hub",
     "tip": "@screen.mesh_tip",
     "children": [
       {
         "$": "group",
         "name": "network-graph",
         "$type": "graph"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Station",
+    "icon": "cell_tower",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "s_ways",
+        "$type": "route"
+      },
+      {
+        "$": "field",
+        "name": "s_offers",
+        "$type": "people",
+        "empty": ""
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Room",
+    "icon": "folder",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "r_folders",
+        "$type": "people",
+        "empty": ""
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Folder",
+    "icon": "folder",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "f_info",
+        "$type": "details",
+        "empty": ""
+      },
+      {
+        "$": "field",
+        "name": "f_media",
+        "$type": "media"
+      },
+      {
+        "$": "action",
+        "name": "f_more",
+        "label": "@folder.more",
+        "icon": "expand_more"
+      },
+      {
+        "$": "action",
+        "name": "f_first",
+        "label": "@folder.first",
+        "icon": "first_page"
       }
     ]
   }
