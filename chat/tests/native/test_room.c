@@ -2074,6 +2074,12 @@ TEST(a_request_to_join_reaches_the_moderator_who_accepts_it) {
   module_handle_event();
   /* Not a post: a note, and a row in the member panel. */
   CHECK(cap_contains("X1NEW asks to join: may I join?"));
+  /* The same request heard again (another bearer, a replay) is one request. */
+  cap_clear();
+  event_push("xprs.message",
+    "{\"id\":\"rq0001\",\"type\":\"message\",\"from\":\"X1NEW\",\"to\":\"X5ROOM\",\"request\":true,\"fields\":[[\"t\",\"message\"],[\"f\",\"X1NEW\"],[\"d\",\"X5ROOM\"],[\"m\",\"may I join?\"]],\"scope\":\"global\",\"bearer\":\"rns\",\"sig\":\"verified\"}");
+  module_handle_event();
+  CHECK(!cap_contains("asks to join"));
   mock_set_roster("[{\"call\":\"X1SELF\",\"role\":\"mod\",\"state\":\"member\"}]");
   cap_clear();
   inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5ROOM\"}");

@@ -182,5 +182,6 @@
   "msg.admin_only": "Only the group's admin can do that",
   "msg.now_private": "The group is private: only members read it",
   "msg.now_public": "The group is public: anyone can read it",
-  "prompt.private_toggle": "Private: only members read (sealed)"
+  "prompt.private_toggle": "Private: only members read (sealed)",
+  "prompt.invite_plain_public": ". Join to post in it; you can already read it."
 }

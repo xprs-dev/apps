@@ -182,5 +182,6 @@
   "msg.admin_only": "Solo el administrador del grupo puede hacerlo",
   "msg.now_private": "El grupo es privado: solo lo leen los miembros",
   "msg.now_public": "El grupo es público: cualquiera puede leerlo",
-  "prompt.private_toggle": "Privado: solo leen los miembros (sellado)"
+  "prompt.private_toggle": "Privado: solo leen los miembros (sellado)",
+  "prompt.invite_plain_public": ". Únete para escribir; ya puedes leerlo."
 }

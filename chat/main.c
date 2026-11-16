@@ -283,7 +283,9 @@ static void join_offer(const char *call, int force) {
                                     : wtr("prompt.folder_many", " folders"));
     jesc(m, sizeof(m), wtr("prompt.invite_until", "; until then you are only invited."));
   } else {
-    jesc(m, sizeof(m), wtr("prompt.invite_plain", ". Join to read and post in it; until then you are only invited."));
+    jesc(m, sizeof(m), xgroup_public(call)
+        ? wtr("prompt.invite_plain_public", ". Join to post in it; you can already read it.")
+        : wtr("prompt.invite_plain", ". Join to read and post in it; until then you are only invited."));
   }
   s_cat(m, "\",\"confirm\":\"", sizeof(m));
   jesc(m, sizeof(m), wtr("prompt.join", "Join"));
@@ -440,7 +442,7 @@ static void group_ask(const char *gid) {
 /* A request heard by this station, which may accept it. */
 static void join_request_note(const char *gid, const char *from, const char *text) {
   if (!from[0] || is_blocked(from)) return;
-  room_joinreq_add(gid, from, text);
+  if (!room_joinreq_add(gid, from, text)) return;
   if (!room_known(gid)) return;
   char line[700]; s_cpy(line, from, sizeof(line));
   s_cat(line, wtr("msg.asks_join", " asks to join: "), sizeof(line));

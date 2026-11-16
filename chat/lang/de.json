@@ -182,5 +182,6 @@
   "msg.admin_only": "Das kann nur die Verwaltung der Gruppe",
   "msg.now_private": "Die Gruppe ist privat: nur Mitglieder lesen sie",
   "msg.now_public": "Die Gruppe ist öffentlich: alle können sie lesen",
-  "prompt.private_toggle": "Privat: nur Mitglieder lesen (versiegelt)"
+  "prompt.private_toggle": "Privat: nur Mitglieder lesen (versiegelt)",
+  "prompt.invite_plain_public": ". Tritt bei, um zu schreiben; lesen kannst du schon."
 }

@@ -1487,10 +1487,15 @@ int room_set_notify(const char *id, int on) {
 }
 
 /* Requests to join a closed group this station may answer (10.3). */
-void room_joinreq_add(const char *gid, const char *call, const char *body) {
+int room_joinreq_add(const char *gid, const char *call, const char *body) {
+  /* The same request heard twice (two bearers, a replay) is one request. */
+  { pj_t q; pj_init(&q); pj_str(&q, gid); pj_str(&q, call); pj_str(&q, body ? body : "");
+    if (db_int(g_idx, "SELECT 1 AS n FROM joinreq WHERE gid=? AND call=? AND body=? LIMIT 1",
+               pj_done(&q), 0) == 1) return 0; }
   pj_t p; pj_init(&p); pj_str(&p, gid); pj_str(&p, call); pj_str(&p, body ? body : "");
   pj_int(&p, (long long)hal_time_epoch());
   db_exec(g_idx, "INSERT OR REPLACE INTO joinreq(gid, call, body, ts) VALUES(?,?,?,?)", pj_done(&p));
+  return 1;
 }
 void room_joinreq_del(const char *gid, const char *call) {
   pj_t p; pj_init(&p); pj_str(&p, gid); pj_str(&p, call);
