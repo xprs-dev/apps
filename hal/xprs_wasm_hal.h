@@ -1527,7 +1527,9 @@ int32_t hal_xprs_kind(const char *addr, uint32_t addr_len, char *out, uint32_t o
  * 12's middle tier), for what has no person's key to follow: a device found
  * nearby or in the archive. Its packets are then kept, observations included,
  * and while it is out of earshot the core asks this station's chosen
- * archivers for it (12.12.2). The wapp is told none of that; it reads the
+ * archivers for it (12.12.2). An open group's name ("PICNIC", 7.3) is
+ * followed as a room: its talk is kept and asked for, so somebody who joins
+ * sees what was said before. The wapp is told none of that; it reads the
  * archive. 0, or -1 for an empty, malformed or group (X5) callsign.
  * Permission archive.read. */
 __attribute__((import_module("hal"), import_name("xprs_follow")))

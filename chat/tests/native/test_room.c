@@ -26,7 +26,7 @@ void mock_set_groups(const char*);
 void mock_set_roster(const char*);
 const char* mock_created_nick(void); void mock_set_create_fail(int);
 const char* mock_invited(void); void mock_set_invite_rc(int32_t);
-const char* mock_removed(void); const char* mock_left(void);
+const char* mock_removed(void); const char* mock_left(void); const char* mock_follow(void);
 const char* mock_accepted(void); void mock_set_accept_rc(int32_t);
 void mock_set_send_rc(int32_t);
 void mock_clear_wire(void);
@@ -2019,6 +2019,21 @@ TEST(a_heart_that_came_before_its_message_shows_when_the_message_lands) {
   { const char *r = cap_find("ui.convo.react"); CHECK(r && strstr(r, "ab12cd") && strstr(r, "X1PEER")); }
 }
 
+TEST(joining_an_open_group_follows_it_and_deleting_it_lets_go) {
+  fresh();
+  inbox_set("{\"command\":\"searchall_tap\",\"searchall_id\":\"go:#PICNIC\"}");
+  module_handle_event();
+  CHECK(room_known("#PICNIC"));
+  CHECK(strcmp(mock_follow(), "PICNIC:1") == 0);
+  inbox_set("{\"command\":\"rooms_delete\",\"rooms_convo\":\"#PICNIC\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_follow(), "PICNIC:0") == 0);
+  /* A room by range, or a closed group, is not followed this way. */
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_follow(), "PICNIC:0") == 0);
+}
+
 TEST(info_tells_the_words_versions_and_how_the_packet_travelled) {
   fresh();
   dm("X1PEER", "aa1111", "the first words", 1, "", "", "verified", 1700000000);
@@ -2177,6 +2192,7 @@ int main(void) {
   run_a_removed_member_is_told_and_sees_nothing_new();
   run_a_folder_names_its_group_and_an_invitation_says_so();
   run_a_heart_that_came_before_its_message_shows_when_the_message_lands();
+  run_joining_an_open_group_follows_it_and_deleting_it_lets_go();
   run_info_tells_the_words_versions_and_how_the_packet_travelled();
   printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;

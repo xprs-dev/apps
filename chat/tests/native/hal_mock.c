@@ -207,6 +207,9 @@ static char g_invited[64]; static int32_t g_invite_rc=0;
 const char* mock_invited(void){ return g_invited; }
 void mock_set_invite_rc(int32_t rc){ g_invite_rc=rc; g_invited[0]=0; }
 int32_t hal_xprs_group_invite(const char* g,uint32_t gl,const char* c,uint32_t cl){ if(g_hk_invite) return g_hk_invite(g,gl,c,cl); snprintf(g_invited,sizeof(g_invited),"%.*s:%.*s",(int)gl,g,(int)cl,c); return g_invite_rc; }
+static char g_follow[64];
+const char* mock_follow(void){ return g_follow; }
+int32_t hal_xprs_follow(const char* c,uint32_t cl,int32_t on){ snprintf(g_follow,sizeof(g_follow),"%.*s:%d",(int)cl,c,(int)on); return 0; }
 static char g_removed[64]; static char g_left[24];
 const char* mock_removed(void){ return g_removed; }
 const char* mock_left(void){ return g_left; }

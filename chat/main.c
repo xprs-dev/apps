@@ -73,6 +73,17 @@ static int is_self_call(const char *c) {
 static int xroom_is(const char *id) {
   return s_eq(id, XROOM_LOCAL) || s_eq(id, XROOM_REGIONAL) || s_eq(id, XROOM_GLOBAL);
 }
+/* An open group's room (XPRS.md 7.3, "#PICNIC"): not a room by range, not a
+ * closed group's X5. */
+static int open_group_is(const char *id) {
+  return id[0] == '#' && id[1] && !xroom_is(id) &&
+         !(id[1] == 'X' && id[2] == '5' && s_len(id) == 7);
+}
+/* Following an open group is the core's (it keeps the group's talk and asks
+ * for what was said before): told whenever its room opens, and when it goes. */
+static void open_group_follow(const char *id, int on) {
+  if (open_group_is(id)) hal_xprs_follow(id + 1, s_len(id + 1), on ? 1 : 0);
+}
 /* The room a scope files into, as the core states it (local, regional,
  * global, country); an unknown word is in no room. */
 static const char *xroom_of(const char *scope) {
@@ -1787,6 +1798,7 @@ static void go_tap(const char *buf, const char *key) {
   }
   if (!room_renderable(target)) return;
   char title[48]; room_title(target, title, sizeof(title));
+  open_group_follow(target, 1);
   room_start(target, title);
   screen_close();
 }
@@ -1816,6 +1828,7 @@ static void do_open(const char *buf) {
   /* And the acts of authority already in force on this group's posts, folded
    * in BEFORE the tail is drawn, so the first paint is the corrected one. */
   if (xgroup_is(convo)) room_moderation_sync(convo);
+  open_group_follow(convo, 1);
   room_open(convo);
   /* Opening the room is the one moment somebody is asking to SEE it. The
    * guard is a memory of the last refill, not a schedule. */
@@ -2063,7 +2076,7 @@ void module_handle_event(void) {
   }
   else if (s_eq(cmd, "rooms_delete")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
-    if (id[0]) { room_delete(id); notify("info", wtr("msg.deleted", "Chat deleted")); }
+    if (id[0]) { open_group_follow(id, 0); room_delete(id); notify("info", wtr("msg.deleted", "Chat deleted")); }
   }
   /* The "Archived" row at the top of the list, and a tap on one of them:
    * it comes back to the list and opens. */
