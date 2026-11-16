@@ -161,6 +161,9 @@ int32_t hal_xprs_set_pref(const char *kv, uint32_t n) {
     g_host_serving = strstr(g_set_pref, "=1") != 0;
     return 0;
 }
+const char *g_own_offers =
+  "{\"state\":\"ready\",\"busy\":false,\"call\":\"X1MINE\",\"known\":true,"
+  "\"rooms\":[{\"call\":\"X5OWNR\",\"name\":\"Photos\",\"about\":\"\",\"kind\":\"gallery\",\"private\":true,\"role\":\"admin\",\"can_post\":true,\"members\":1,\"people\":[{\"call\":\"X1PAL\"}]}]}";
 int32_t hal_station_read(const char *req, uint32_t len, char *out, uint32_t cap) {
     char r[256];
     uint32_t n = len < sizeof r - 1 ? len : sizeof r - 1;
@@ -186,6 +189,8 @@ int32_t hal_station_read(const char *req, uint32_t len, char *out, uint32_t cap)
             a = "{\"counts\":{\"local\":2,\"regional\":0,\"global\":300,\"all\":302},\"scope\":\"regional\",\"total\":0,\"offset\":0,\"rows\":[]}";
     } else if (strstr(r, "\"get\":\"ways\"")) {
         a = "{\"call\":\"X3PTZM\",\"self\":\"X1ME\",\"busy\":false,\"routes\":[{\"sure\":true,\"hops\":[{\"from\":\"X1ME\",\"to\":\"X3PTZM\",\"bearer\":\"lan\",\"reach\":\"local\",\"know\":\"heard\",\"age_s\":3}]}]}";
+    } else if (strstr(r, "\"get\":\"offers\"") && strstr(r, "X1MINE")) {
+        a = g_own_offers;
     } else if (strstr(r, "\"get\":\"offers\"")) {
         a = g_offers;
     } else if (strstr(r, "\"get\":\"folders\"")) {

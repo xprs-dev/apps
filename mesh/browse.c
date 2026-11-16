@@ -407,8 +407,52 @@ static void cat_title(char *d, const char *slug, unsigned cap)
     al_jesc(d, t, cap);
 }
 
+static int g_room_private;
+
+/* The owner's own room: who sees it, who was added, and stop sharing it.
+ * Reads the offers (which name the room's audience and people) into g_in. */
+static int cat_own_room(void)
+{
+    char v[8], call[16];
+    int rows = 0;
+    req_call("offers");
+    al_cat(g_req, "}", sizeof g_req);
+    if (!sread()) return 0;
+    const char *p = al_json_arr(g_in, "rooms");
+    while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+        if (!al_json(g_obj, "call", call, sizeof call) || !al_eq(call, g_room)) continue;
+        g_room_private = al_json(g_obj, "private", v, sizeof v) && al_eq(v, "true");
+        one_row("own:vis", g_room_private ? "lock" : "public",
+                g_room_private ? "Only people you add see this" : "Everybody can see this",
+                g_room_private ? "Tap to open it to everybody." : "Tap to make it private.");
+        rows++;
+        if (g_room_private) {
+            const char *q = al_json_arr(g_obj, "people");
+            char who[16], id[24], one[64];
+            while (q && (q = al_json_next(q, one, sizeof one)) != 0) {
+                if (!al_json(one, "call", who, sizeof who) || !who[0]) continue;
+                al_cpy(id, "m:", sizeof id);
+                al_cat(id, who, sizeof id);
+                al_cat(g_out, ",", sizeof g_out);
+                one_row(id, "person", who, "Sees this. Tap to remove.");
+            }
+            al_cat(g_out, ",", sizeof g_out);
+            one_row("own:add", "person_add", "Add a person", "By callsign. They see it the next time they open your phone.");
+        }
+        al_cat(g_out, ",", sizeof g_out);
+        one_row("own:close", "delete", "Stop sharing this", "Removes it from what your phone offers.");
+        break;
+    }
+    return rows;
+}
+
 static void push_room(void)
 {
+    int own = is_me();
+    al_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"r_folders\",\"sections\":[{\"title\":\"", sizeof g_out);
+    al_cat(g_out, folder_word(), sizeof g_out);
+    al_cat(g_out, "\",\"items\":[", sizeof g_out);
+    int n = own ? cat_own_room() : 0;
     req_call("folders");
     al_cat(g_req, ",\"room\":\"", sizeof g_req);
     al_cat(g_req, g_room, sizeof g_req);
@@ -417,10 +461,7 @@ static void push_room(void)
     char state[12] = "", why[24] = "";
     al_json(g_in, "state", state, sizeof state);
     al_json(g_in, "why", why, sizeof why);
-    al_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"r_folders\",\"sections\":[{\"title\":\"", sizeof g_out);
-    al_cat(g_out, folder_word(), sizeof g_out);
-    al_cat(g_out, "\",\"items\":[", sizeof g_out);
-    int n = 0;
+    int folders = 0;
     const char *p = al_json_arr(g_in, "folders");
     while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
         char id[16], title[64], rid[24];
@@ -428,6 +469,7 @@ static void push_room(void)
         al_json(g_obj, "title", title, sizeof title);
         unsigned count = num(g_obj, "count");
         if (n++) al_cat(g_out, ",", sizeof g_out);
+        folders++;
         al_cpy(rid, "f:", sizeof rid);
         al_cat(rid, id, sizeof rid);
         al_cat(g_out, "{\"id\":\"", sizeof g_out);
@@ -443,7 +485,8 @@ static void push_room(void)
                     : (count == 1 ? " file" : " files"), sizeof g_out);
         al_cat(g_out, "\"}", sizeof g_out);
     }
-    if (!n) {
+    if (!folders) {
+        if (n) al_cat(g_out, ",", sizeof g_out);
         if (al_eq(state, "ready")) one_row("none", "info", "Empty", "Nothing was added here yet.");
         else if (al_eq(state, "failed")) one_row("retry", "refresh", "Nothing to show", why_text(why));
         else one_row("wait", "hourglass_empty", "Asking the station\xe2\x80\xa6", "");
@@ -614,8 +657,56 @@ int browse_command(const char *cmd, const char *full)
         screen_open("Room", room_what(g_room_kind));
         return 1;
     }
+    if (al_eq(cmd, "prompt")) {
+        /* The owner said yes to something asked below. */
+        char pid[32], in[24], m[200];
+        if (!al_json(full, "prompt_id", pid, sizeof pid) || !is_me()) return 1;
+        al_cpy(m, "{\"type\":\"station.manage\",\"room\":\"", sizeof m);
+        al_cat(m, g_room, sizeof m);
+        al_cat(m, "\",\"action\":\"", sizeof m);
+        if (al_eq(pid, "own:add")) {
+            if (!al_json(full, "prompt_input", in, sizeof in) || !in[0]) return 1;
+            al_cat(m, "add\",\"member\":\"", sizeof m);
+            al_jesc(m, in, sizeof m);
+        } else if (al_starts(pid, "m:")) {
+            al_cat(m, "remove\",\"member\":\"", sizeof m);
+            al_jesc(m, pid + 2, sizeof m);
+        } else if (al_eq(pid, "own:close")) {
+            al_cat(m, "close", sizeof m);
+        } else return 1;
+        al_cat(m, "\"}", sizeof m);
+        say(m);
+        if (al_eq(pid, "own:close")) {      /* the room is gone: back to the phone's page */
+            g_view = V_STATION;
+            say("{\"type\":\"ui.screen.close\"}");
+            screen_open("Station", g_call);
+        }
+        return 1;
+    }
     if (al_eq(cmd, "r_folders_tap")) {
         if (!al_json(full, "r_folders_id", id, sizeof id) || !id[0]) return 1;
+        if (is_me() && al_eq(id, "own:vis")) {
+            char m[160] = "{\"type\":\"station.manage\",\"room\":\"";
+            al_cat(m, g_room, sizeof m);
+            al_cat(m, g_room_private ? "\",\"action\":\"public\"}" : "\",\"action\":\"private\"}", sizeof m);
+            say(m);
+            return 1;
+        }
+        if (is_me() && al_eq(id, "own:add")) {
+            say("{\"type\":\"ui.prompt\",\"id\":\"own:add\",\"title\":\"Add a person\","
+                "\"body\":\"Their callsign, as it shows in the list.\","
+                "\"input\":{\"hint\":\"X1\u2026\"},\"confirm\":\"Add\"}");
+            return 1;
+        }
+        if (is_me() && (al_eq(id, "own:close") || al_starts(id, "m:"))) {
+            char m[300] = "{\"type\":\"ui.prompt\",\"id\":\"";
+            al_cat(m, id, sizeof m);
+            al_cat(m, "\",\"title\":\"", sizeof m);
+            if (al_eq(id, "own:close")) al_cat(m, "Stop sharing this?\",\"body\":\"Nobody will see it on your phone any more.\",\"confirm\":\"Stop sharing\"}", sizeof m);
+            else { al_cat(m, "Remove ", sizeof m); al_cat(m, id + 2, sizeof m); al_cat(m, "?\",\"body\":\"They will no longer see this.\",\"confirm\":\"Remove\"}", sizeof m); }
+            say(m);
+            return 1;
+        }
         if (!al_starts(id, "f:")) { push_room(); return 1; }
         al_cpy(g_folder, id + 2, sizeof g_folder);
         g_folder_off = 0;

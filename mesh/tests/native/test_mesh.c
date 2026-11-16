@@ -298,6 +298,30 @@ int main(void) {
         inbox_set("{\"command\":\"s_offers_tap\",\"fields\":{\"s_offers_id\":\"host:music\"}}");
         module_handle_event();
         check(cap_contains("\"type\":\"station.share\",\"kind\":\"music\""), "sharing music asks the host to pick and file it");
+        /* A room of its own: who sees it, the people added, stop sharing. */
+        cap_clear();
+        inbox_set("{\"command\":\"s_offers_tap\",\"fields\":{\"s_offers_id\":\"room:X5OWNR:gallery\"}}");
+        module_handle_event();
+        check(cap_contains("own:vis") && cap_contains("Only people you add see this") &&
+              cap_contains("\"id\":\"m:X1PAL\"") && cap_contains("own:add") && cap_contains("own:close"),
+              "the owner's room shows its audience, the people added and how to stop");
+        cap_clear();
+        inbox_set("{\"command\":\"r_folders_tap\",\"fields\":{\"r_folders_id\":\"own:vis\"}}");
+        module_handle_event();
+        check(cap_contains("\"type\":\"station.manage\",\"room\":\"X5OWNR\",\"action\":\"public\""),
+              "a tap on the audience opens a private room to everybody");
+        cap_clear();
+        inbox_set("{\"command\":\"r_folders_tap\",\"fields\":{\"r_folders_id\":\"m:X1PAL\"}}");
+        module_handle_event();
+        check(cap_contains("ui.prompt") && !cap_contains("station.manage"), "removing a person is asked first");
+        cap_clear();
+        inbox_set("{\"command\":\"prompt\",\"fields\":{\"prompt_id\":\"m:X1PAL\",\"prompt_input\":\"\"}}");
+        module_handle_event();
+        check(cap_contains("\"action\":\"remove\",\"member\":\"X1PAL\""), "and done on yes");
+        cap_clear();
+        inbox_set("{\"command\":\"prompt\",\"fields\":{\"prompt_id\":\"own:add\",\"prompt_input\":\"X1NEW\"}}");
+        module_handle_event();
+        check(cap_contains("\"action\":\"add\",\"member\":\"X1NEW\""), "a person is added by callsign");
     }
 
     printf(g_fail ? "\nRESULT: FAIL\n" : "\nRESULT: PASS\n");

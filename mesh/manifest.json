@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.mesh",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "kind": "app",
   "title": "Mesh",
   "description": "See every station around you and across the mesh, how each is reached, and what it shares.",

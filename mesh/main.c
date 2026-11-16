@@ -359,7 +359,7 @@ void module_handle_event(void) {
     /* Every command this wapp takes is a short control message: a graph
      * filter, a hub address, a settings toggle. It was 4 KB to hold a composed
      * DM body, and that composition is gone. */
-    static char buf[512];
+    static char buf[2048];   /* a command carries every scalar field of the page */
     if (hal_msg_available() == 0) return;
     uint32_t n = hal_msg_recv(buf, sizeof(buf) - 1);
     if (n == 0) return;
