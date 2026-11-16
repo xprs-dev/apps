@@ -121,9 +121,14 @@ static const char *kind_name(const char *k)
 }
 
 /* ── The list ─────────────────────────────────────────────────────────── */
+static void read_host(void);
+static char g_me[16];
+static int g_serving;
+
 static void push_list(void)
 {
     g_list_dirty = 0;
+    read_host();
     al_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"stations\",\"sections\":[", sizeof g_out);
     for (int s = 0; s < 3; s++) {
         al_cpy(g_req, "{\"get\":\"list\",\"scope\":\"", sizeof g_req);
@@ -140,6 +145,19 @@ static void push_list(void)
         al_cat(g_out, SCOPE_TAB[s], sizeof g_out);
         al_cat(g_out, "\",\"items\":[", sizeof g_out);
         const char *p = al_json_arr(g_in, "rows");
+        /* The phone in the hand comes first: it is a station too. */
+        if (s == 0 && g_me[0]) {
+            shown++;
+            al_cat(g_out, "{\"id\":\"", sizeof g_out);
+            al_cat(g_out, g_me, sizeof g_out);
+            al_cat(g_out, "\",\"icon\":\"smartphone\",\"title\":\"This phone\",\"subtitle\":\"", sizeof g_out);
+            al_cat(g_out, g_me, sizeof g_out);
+            al_cat(g_out, g_serving ? " \\u00b7 others can browse what you share"
+                                    : " \\u00b7 what you share, and with whom", sizeof g_out);
+            al_cat(g_out, "\",\"tags\":[\"", sizeof g_out);
+            al_cat(g_out, g_serving ? "Sharing" : "Private", sizeof g_out);
+            al_cat(g_out, "\"]}", sizeof g_out);
+        }
         while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
             char call[16], kind[12], api[8];
             if (!al_json(g_obj, "call", call, sizeof call) || !call[0]) continue;
@@ -195,6 +213,24 @@ static void push_list(void)
     al_cat(g_out, "]}", sizeof g_out);
     say(g_out);
 }
+
+/* ── This phone as a station ──────────────────────────────────────────── */
+static int g_share_busy, g_was_busy;
+static unsigned g_share_done, g_share_total;
+
+static void read_host(void)
+{
+    char v[8];
+    al_cpy(g_req, "{\"get\":\"host\"}", sizeof g_req);
+    if (!sread()) return;
+    al_json(g_in, "call", g_me, sizeof g_me);
+    g_serving = al_json(g_in, "serving", v, sizeof v) && al_eq(v, "true");
+    g_share_busy = al_json(g_in, "busy", v, sizeof v) && al_eq(v, "true");
+    g_share_done = num(g_in, "done");
+    g_share_total = num(g_in, "total");
+}
+
+static int is_me(void) { return g_me[0] && al_eq(g_call, g_me); }
 
 /* ── One station ──────────────────────────────────────────────────────── */
 static void req_call(const char *get)
@@ -254,10 +290,21 @@ static const char *why_text(const char *why)
 
 static void push_station(void)
 {
+    read_host();
+    int me = is_me();
+    /* A share that just ended changed what this phone offers: read it anew. */
+    if (me && g_was_busy && !g_share_busy) {
+        req_call("forget");
+        al_cat(g_req, "}", sizeof g_req);
+        sread();
+    }
+    g_was_busy = g_share_busy;
+    unsigned sh_done = g_share_done, sh_total = g_share_total;
     /* How a message gets there: the core's diagnostic, drawn as it is. */
     req_call("ways");
     al_cat(g_req, "}", sizeof g_req);
-    if (sread()) {
+    if (me) say("{\"type\":\"ui.field.set\",\"field\":\"s_ways\",\"value\":{\"routes\":[],\"here\":true}}");
+    else if (sread()) {
         al_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"s_ways\",\"value\":", sizeof g_out);
         al_cat(g_out, g_in, sizeof g_out);
         al_cat(g_out, "}", sizeof g_out);
@@ -273,8 +320,30 @@ static void push_station(void)
     al_json(g_in, "known", known, sizeof known);
 
     al_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"s_offers\",\"sections\":[", sizeof g_out);
-    al_cat(g_out, "{\"title\":\"This station\",\"items\":[", sizeof g_out);
-    one_row("profile", "person", "Profile and messages", "Message, mail and who this is");
+    if (me) {
+        al_cat(g_out, "{\"title\":\"This phone\",\"items\":[", sizeof g_out);
+        one_row("host:toggle", g_serving ? "toggle_on" : "toggle_off",
+                g_serving ? "Others can browse this phone" : "Nobody can browse this phone",
+                g_serving ? "Public rooms for everybody, private ones for their members. Tap to stop."
+                          : "Tap to let others see what you share below.");
+        al_cat(g_out, ",", sizeof g_out);
+        if (g_share_busy) {
+            char sub[64] = "";
+            al_cat_u(sub, sh_done, sizeof sub);
+            al_cat(sub, " of ", sizeof sub);
+            al_cat_u(sub, sh_total, sizeof sub);
+            one_row("host:busy", "hourglass_empty", "Adding files\xe2\x80\xa6", sub);
+        } else {
+            one_row("host:gallery", "add_photo_alternate", "Share photos", "A folder of pictures and films");
+            al_cat(g_out, ",", sizeof g_out);
+            one_row("host:music", "library_add", "Share music", "A folder of tracks");
+            al_cat(g_out, ",", sizeof g_out);
+            one_row("host:library", "note_add", "Share files", "A folder, or one file");
+        }
+    } else {
+        al_cat(g_out, "{\"title\":\"This station\",\"items\":[", sizeof g_out);
+        one_row("profile", "person", "Profile and messages", "Message, mail and who this is");
+    }
     al_cat(g_out, ",", sizeof g_out);
     int n = 0;
     if (al_eq(state, "ready")) {
@@ -296,7 +365,8 @@ static void push_station(void)
             if (n++) al_cat(g_out, ",", sizeof g_out);
             one_row(id, al_eq(priv, "true") ? "lock" : room_icon(kind), name[0] ? name : call, sub);
         }
-        if (!n) one_row("none", "info", "Nothing shared with you",
+        if (!n && me) one_row("none", "info", "Nothing shared yet", "What you add above appears here.");
+        else if (!n) one_row("none", "info", "Nothing shared with you",
                         al_eq(known, "true") ? "This station hosts no rooms you can see."
                                              : "It hosts no public rooms.");
     } else if (al_eq(state, "failed")) {
@@ -505,6 +575,19 @@ int browse_command(const char *cmd, const char *full)
         if (al_eq(id, "profile")) {
             char m[96] = "{\"type\":\"ui.profile.open\",\"callsign\":\"";
             al_cat(m, g_call, sizeof m);
+            al_cat(m, "\"}", sizeof m);
+            say(m);
+            return 1;
+        }
+        if (al_eq(id, "host:toggle")) {
+            const char *kv = g_serving ? "hostStation=0" : "hostStation=1";
+            hal_xprs_set_pref(kv, al_len(kv));
+            return 1;                    /* core.station redraws when it is done */
+        }
+        if (al_starts(id, "host:")) {
+            if (al_eq(id, "host:busy")) return 1;
+            char m[96] = "{\"type\":\"station.share\",\"kind\":\"";
+            al_cat(m, id + 5, sizeof m);
             al_cat(m, "\"}", sizeof m);
             say(m);
             return 1;

@@ -153,13 +153,25 @@ const char *g_offers =
   "{\"state\":\"ready\",\"busy\":false,\"call\":\"X3PTZM\",\"serve\":[],\"tabs\":[\"chat\"],\"known\":true,"
   "\"rooms\":[{\"call\":\"X562EL\",\"name\":\"Landscapes\",\"about\":\"photos\",\"kind\":\"gallery\",\"private\":false,\"role\":\"none\",\"can_post\":false,\"members\":0},"
   "{\"call\":\"X5VK3U\",\"name\":\"Family\",\"about\":\"\",\"kind\":\"music\",\"private\":true,\"role\":\"member\",\"can_post\":false,\"members\":3}]}";
+int g_host_serving = 0;
+char g_set_pref[64];
+int32_t hal_xprs_set_pref(const char *kv, uint32_t n) {
+    if (n >= sizeof g_set_pref) n = sizeof g_set_pref - 1;
+    memcpy(g_set_pref, kv, n); g_set_pref[n] = 0;
+    g_host_serving = strstr(g_set_pref, "=1") != 0;
+    return 0;
+}
 int32_t hal_station_read(const char *req, uint32_t len, char *out, uint32_t cap) {
     char r[256];
     uint32_t n = len < sizeof r - 1 ? len : sizeof r - 1;
     memcpy(r, req, n); r[n] = 0;
     if (g_station_reqn < 8) strcpy(g_station_req[g_station_reqn++], r);
     const char *a = "{\"state\":\"loading\",\"busy\":true}";
-    if (strstr(r, "\"get\":\"list\"")) {
+    if (strstr(r, "\"get\":\"host\"")) {
+        g_station_reqn--;                 /* asked on every draw: not a request the checks count */
+        a = g_host_serving ? "{\"call\":\"X1MINE\",\"serving\":true,\"share\":{\"busy\":false,\"done\":0,\"total\":0,\"failed\":0}}"
+                           : "{\"call\":\"X1MINE\",\"serving\":false,\"share\":{\"busy\":false,\"done\":0,\"total\":0,\"failed\":0}}";
+    } else if (strstr(r, "\"get\":\"list\"")) {
         if (strstr(r, "\"scope\":\"local\""))
             a = "{\"counts\":{\"local\":2,\"regional\":0,\"global\":300,\"all\":302},\"scope\":\"local\",\"total\":2,\"offset\":0,"
                 "\"rows\":[{\"call\":\"X3PTZM\",\"kind\":\"station\",\"reach\":\"local\",\"bearers\":[\"lan\",\"ble\"],\"age_s\":12,\"api\":true,\"dist_m\":420},"

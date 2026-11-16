@@ -269,6 +269,37 @@ int main(void) {
     module_tick();
     check(cap_count() == 0, "and not again while nothing moves");
 
+    /* ── this phone is a station too ─────────────────────────────────── */
+    {
+        extern int g_host_serving;
+        extern char g_set_pref[];
+        cap_clear();
+        inbox_set("{\"command\":\"screen_closed\"}"); module_handle_event();
+        inbox_set("{\"command\":\"screen_closed\"}"); module_handle_event();
+        inbox_set("{\"command\":\"screen_closed\"}"); module_handle_event();
+        cap_clear();
+        event_push("core.monitor"); module_handle_event(); module_tick();
+        check(cap_contains("\"id\":\"X1MINE\"") && cap_contains("\"title\":\"This phone\"") &&
+              cap_contains("\"Private\""), "the list starts with this phone, private until its owner says");
+        cap_clear();
+        inbox_set("{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"X1MINE\"}}");
+        module_handle_event();
+        check(cap_contains("host:toggle") && cap_contains("host:gallery") && cap_contains("host:music") &&
+              cap_contains("host:library") && !cap_contains("\"id\":\"profile\""),
+              "its page has the switch and the three things to share, not a profile row");
+        check(cap_contains("\"here\":true"), "and no route to itself");
+        inbox_set("{\"command\":\"s_offers_tap\",\"fields\":{\"s_offers_id\":\"host:toggle\"}}");
+        module_handle_event();
+        check(strcmp(g_set_pref, "hostStation=1") == 0 && g_host_serving, "the switch asks the core to answer visitors");
+        cap_clear();
+        event_push("core.station"); module_handle_event();
+        check(cap_contains("Others can browse this phone"), "and the page says so when the core did");
+        cap_clear();
+        inbox_set("{\"command\":\"s_offers_tap\",\"fields\":{\"s_offers_id\":\"host:music\"}}");
+        module_handle_event();
+        check(cap_contains("\"type\":\"station.share\",\"kind\":\"music\""), "sharing music asks the host to pick and file it");
+    }
+
     printf(g_fail ? "\nRESULT: FAIL\n" : "\nRESULT: PASS\n");
     return g_fail;
 }

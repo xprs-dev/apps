@@ -1469,7 +1469,13 @@ int32_t hal_xprs_stations(char *out, uint32_t out_cap);
  * cover, preview and file are media tokens ("" when none): hal_media_fetch
  * gets them from that station, hal_media_state follows it, hal_media_open
  * shows it.
- * Returns the bytes written, 0 on a bad request, or the negated size needed. */
+ * Returns the bytes written, 0 on a bad request, or the negated size needed.  * `{"get":"host"}` (no `call`): this device as a station:
+ * `{call, serving, share:{busy, done, total, failed}}`. Its own callsign is
+ * browsed like any other; `hal_xprs_set_pref("hostStation=1|0")` says
+ * whether visitors are answered, and the host message
+ * `{"type":"station.share","kind":"gallery"|"music"|"library"}` lets the
+ * person pick a folder to share.
+ */
 __attribute__((import_module("hal"), import_name("station_read")))
 int32_t hal_station_read(const char *req, uint32_t req_len,
                          char *out, uint32_t out_cap);
