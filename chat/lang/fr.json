@@ -159,5 +159,7 @@
   "prompt.leave": "Quitter",
   "msg.leave_failed": "Impossible de quitter le groupe",
   "msg.left": "Vous avez quitté ",
-  "msg.no_longer_member": "Vous n'êtes plus membre de ce groupe. Les nouveaux messages ne s'affichent plus ici et vous ne pouvez plus écrire."
+  "msg.no_longer_member": "Vous n'êtes plus membre de ce groupe. Les nouveaux messages ne s'affichent plus ici et vous ne pouvez plus écrire.",
+  "msg.group_key_wait": "La clé de ce groupe n'est pas encore arrivée sur cet appareil. Votre message attend et part scellé dès qu'elle arrive.",
+  "room.invited_hint": "Invitation : touchez pour répondre"
 }

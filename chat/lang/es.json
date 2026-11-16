@@ -159,5 +159,7 @@
   "prompt.leave": "Salir",
   "msg.leave_failed": "No se pudo salir del grupo",
   "msg.left": "Has salido de ",
-  "msg.no_longer_member": "Ya no eres miembro de este grupo. Los mensajes nuevos no se muestran aquí y no puedes escribir."
+  "msg.no_longer_member": "Ya no eres miembro de este grupo. Los mensajes nuevos no se muestran aquí y no puedes escribir.",
+  "msg.group_key_wait": "La clave de este grupo aún no ha llegado a este dispositivo. Tu mensaje espera y se envía sellado en cuanto llegue.",
+  "room.invited_hint": "Invitación: toca para responder"
 }

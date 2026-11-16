@@ -824,6 +824,18 @@ void room_set_title(const char *id, const char *title) {
   room_rail();
 }
 
+/* The line under a room's name when it has no words of its own yet: an
+ * invitation says so, rather than looking like a group already joined. An
+ * empty [line] clears it. Redrawn only on a change. */
+void room_set_hint(const char *id, const char *line) {
+  if (!room_known(id)) return;
+  const char *l = line ? line : "";
+  pj_t p; pj_init(&p); pj_str(&p, l); pj_str(&p, id); pj_str(&p, l);
+  if (db_exec(g_idx, "UPDATE rooms SET last_line=? WHERE id=? AND last_line IS NOT ?", pj_done(&p)) != 0) return;
+  if (db_int(g_idx, "SELECT changes() AS n", 0, 0) <= 0) return;
+  emit_upsert(id, 0, 0);
+}
+
 /* A room that just became ours (a group made, an invitation arriving, one
  * accepted) has no message yet, so its activity is 0 and the rail would sort
  * it under every old chat, where a new user never looks. Stamp it with now:
@@ -975,6 +987,18 @@ int room_admit(const room_msg_t *m) {
   emit_msg(m->room, m->mid, m->dir, sender, ts, body, parent, via,
            m->path ? m->path : "", auth,
            m->enc, rid, status, m->sys, 0, m->obf, viewed ? &view : 0);
+  /* Hearts that arrived before the words they name: a member catching up is
+   * replayed newest first, so a like can land ahead of its message. They are
+   * already stored; draw them on the bubble now. */
+  { pj_t p; pj_init(&p); pj_str(&p, m->mid);
+    static char rq[1200];
+    if (db_query(h, "SELECT who FROM reactions WHERE mid=? LIMIT 40", pj_done(&p), rq, sizeof(rq)) > 0) {
+      const char *cur = rq; char r[64];
+      while (next_object(&cur, r, sizeof(r))) {
+        char who[24] = ""; jstr(r, "who", who, sizeof(who));
+        if (who[0]) emit_react(m->room, m->mid, who, 0, s_eq(who, g_self));
+      }
+    } }
   if (!m->replay) {
     if (created > 0 || !s_eq(g_top, m->room)) room_rail();
     /* Not for an archived conversation: archiving is how a person says "do

@@ -159,5 +159,7 @@
   "prompt.leave": "Leave",
   "msg.leave_failed": "Could not leave the group",
   "msg.left": "You left ",
-  "msg.no_longer_member": "You are no longer a member of this group. New messages are not shown here, and you cannot post."
+  "msg.no_longer_member": "You are no longer a member of this group. New messages are not shown here, and you cannot post.",
+  "msg.group_key_wait": "This group's key has not reached this device yet. Your message waits and is sent sealed as soon as it arrives.",
+  "room.invited_hint": "Invitation: tap to answer"
 }

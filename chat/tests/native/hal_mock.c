@@ -137,7 +137,10 @@ int32_t hal_xprs_kind(const char* a,uint32_t l,char* o,uint32_t cap){
 /* The core's verdict for a node of another network (XPRS.md 3.2, MT/MC and
  * eight hex): never sealed (-3), plain through a gateway (3). */
 static int mock_is_foreign(const char* to,uint32_t tl){ if(tl!=10||to[0]!='M'||(to[1]!='T'&&to[1]!='C')) return 0; for(uint32_t i=2;i<tl;i++){ char c=to[i]; if(!((c>='0'&&c<='9')||(c>='A'&&c<='F'))) return 0; } return 1; }
-int32_t hal_xprs_message(const char* to,uint32_t tl,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){ if(g_hk_message) return g_hk_message(to,tl,t,l,priv,id,cap); (void)t;(void)l; int fx=mock_is_foreign(to,tl); if(fx&&priv) return -3; snprintf(id,cap,"m%05d",++g_bcast_n); return fx?3:(priv?1:2); }
+/* A closed group's post goes through here now (sealed by the core): what the
+ * core was ASKED to send is kept as a pseudo-wire in g_last_wire, and the
+ * core's "not a member" (mock_set_send_rc(-2)) is answered for a group. */
+int32_t hal_xprs_message(const char* to,uint32_t tl,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){ if(g_hk_message) return g_hk_message(to,tl,t,l,priv,id,cap); int grp=tl>=2&&to[0]=='X'&&to[1]=='5'; if(grp&&g_send_rc) return g_send_rc; if(grp) snprintf(g_last_wire,sizeof(g_last_wire),"t:message f:X1SELF d:%.*s x:sealed m:%.*s",(int)tl,to,(int)l,t); int fx=mock_is_foreign(to,tl); if(fx&&priv) return -3; snprintf(id,cap,"m%05d",++g_bcast_n); return fx?3:(priv?1:2); }
 static char g_bcast_scope[16];
 /* The scope the wapp asked for on the last broadcast. 13.11 makes this the
  * only difference between the two broadcast rooms, so a test has to see it. */
@@ -241,6 +244,7 @@ void mock_set_moderation(const char* json){ snprintf(g_moderation,sizeof(g_moder
 int32_t hal_xprs_edit(const char* to,uint32_t tl,const char* orig,uint32_t ol,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){
   if(g_hk_edit) return g_hk_edit(to,tl,orig,ol,t,l,priv,id,cap);
   snprintf(g_edit_ask,sizeof(g_edit_ask),"%.*s|%.*s|%.*s|%u",(int)tl,to,(int)ol,orig,(int)l,t,priv);
+  if(tl>=2&&to[0]=='X'&&to[1]=='5') snprintf(g_last_wire,sizeof(g_last_wire),"t:message f:X1SELF d:%.*s edit:%.*s x:sealed m:%.*s",(int)tl,to,(int)ol,orig,(int)l,t);
   int fx=mock_is_foreign(to,tl);
   if(fx&&priv) return -3;
   snprintf(id,cap,"m%05d",++g_bcast_n);

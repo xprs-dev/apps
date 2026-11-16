@@ -1365,6 +1365,9 @@ TEST(finding_a_group_opens_the_group_room_and_the_core_decides_posting) {
   inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#X5ROOM\",\"rooms_input\":\"hello all\"}");
   module_handle_event();
   CHECK(mock_last_wire() && strstr(mock_last_wire(), "d:X5ROOM"));
+  /* Through the core's message door, which seals it to the group's reading
+   * key: never a plain wire composed here. */
+  CHECK(mock_last_wire() && strstr(mock_last_wire(), "x:sealed"));
   CHECK(cap_count("ui.convo.msg") == 1);
 }
 
@@ -1987,6 +1990,35 @@ TEST(a_removed_member_is_told_and_sees_nothing_new) {
   CHECK(!cap_contains("after you went"));
 }
 
+TEST(a_folder_names_its_group_and_an_invitation_says_so) {
+  fresh();
+  cap_clear();
+  mock_set_groups("[{\"call\":\"X5FAMY\",\"nick\":\"Family\",\"role\":\"member\"},"
+                  " {\"call\":\"X5TRVL\",\"nick\":\"Travel\",\"role\":\"member\",\"parent\":\"X5FAMY\"},"
+                  " {\"call\":\"X5OTHR\",\"nick\":\"Choir\",\"role\":\"invited\"}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  CHECK(cap_contains("Family \xE2\x80\xBA Travel"));
+  CHECK(cap_contains("Invitation: tap to answer"));
+}
+
+TEST(a_heart_that_came_before_its_message_shows_when_the_message_lands) {
+  fresh();
+  member_of("X5ROOM");
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5ROOM\"}");
+  module_handle_event();
+  /* A late joiner's catch-up is newest first: the like arrives first. */
+  event_push("xprs.reaction",
+    "{\"id\":\"rx09\",\"type\":\"reaction\",\"from\":\"X1PEER\",\"to\":\"X5ROOM\",\"fields\":[[\"t\",\"reaction\"],[\"f\",\"X1PEER\"],[\"d\",\"X5ROOM\"],[\"r\",\"ab12cd\"],[\"add\",\"like\"]],\"sig\":\"verified\"}");
+  module_handle_event();
+  cap_clear();
+  event_push("xprs.message",
+    "{\"id\":\"ab12cd\",\"type\":\"message\",\"call\":\"X1BEA\",\"from\":\"X1BEA\",\"title\":\"#X5ROOM\",\"to\":\"#X5ROOM\",\"content\":\"lunch on sunday\",\"sig\":\"verified\",\"sealed\":true}");
+  module_handle_event();
+  CHECK(cap_contains("lunch on sunday"));
+  { const char *r = cap_find("ui.convo.react"); CHECK(r && strstr(r, "ab12cd") && strstr(r, "X1PEER")); }
+}
+
 TEST(info_tells_the_words_versions_and_how_the_packet_travelled) {
   fresh();
   dm("X1PEER", "aa1111", "the first words", 1, "", "", "verified", 1700000000);
@@ -2143,6 +2175,8 @@ int main(void) {
   run_the_admin_removes_a_member_after_asking_twice();
   run_a_member_leaves_and_the_group_goes_from_the_list();
   run_a_removed_member_is_told_and_sees_nothing_new();
+  run_a_folder_names_its_group_and_an_invitation_says_so();
+  run_a_heart_that_came_before_its_message_shows_when_the_message_lands();
   run_info_tells_the_words_versions_and_how_the_packet_travelled();
   printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;

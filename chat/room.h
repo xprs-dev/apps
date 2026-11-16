@@ -117,6 +117,7 @@ int  room_set_notify(const char *id, int on);
  * rail, empty; any other conversation leaves the index until it is used
  * again. */
 void room_delete(const char *id);
+void room_set_hint(const char *id, const char *line);
 /* The Archived screen's list (people field "archived"). */
 void room_archived_publish(void);
 /* The conversations whose id or title contains [q], as one people-field

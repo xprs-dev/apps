@@ -160,6 +160,15 @@ static void room_title(const char *id, char *out, unsigned osz) {
     /* Name AND callsign: the name is a label anybody can choose; the X5
      * callsign is derived from the key and is what identifies the group. */
     int i = xgroup_find(id + 1);
+    /* A folder says which group it is in: "Family › Travel". The group's
+     * own title carries the callsign that identifies the tree. */
+    int up = (i >= 0 && g_xgroup[i].parent[0]) ? xgroup_find(g_xgroup[i].parent) : -1;
+    if (i >= 0 && g_xgroup[i].nick[0] && up >= 0 && g_xgroup[up].nick[0]) {
+      s_cpy(out, g_xgroup[up].nick, osz);
+      s_cat(out, " \xE2\x80\xBA ", osz);
+      s_cat(out, g_xgroup[i].nick, osz);
+      return;
+    }
     if (i >= 0 && g_xgroup[i].nick[0]) {
       s_cpy(out, g_xgroup[i].nick, osz);
       s_cat(out, " (", osz); s_cat(out, id + 1, osz); s_cat(out, ")", osz);
@@ -319,6 +328,7 @@ static void xgroups_refresh(void) {
        * arrival: it sits in the tree under the group, and a prompt for every
        * folder the admin adds would be a prompt per topic. */
       xgroup_room(id, t);
+      room_set_hint(id, wtr("room.invited_hint", "Invitation: tap to answer"));
       const char *up = g_xgroup[k].parent;
       if (!ask && !(up[0] && xgroup_may_post(up))) ask = k + 1;
     }
@@ -677,23 +687,27 @@ static void send_message(const char *id, const char *text_in) {
         return;
       }
     }
+    /* The words are SEALED to the group's reading key (the core's: XPRS.md
+     * 13.11.3, "only x: keeps content private"), so a post goes through the
+     * core's message door, which composes, seals, splits and names it. A
+     * reply's marker rides inside the sealed words, as in a 1:1. */
+    static char full[900]; s_cpy(full, text, sizeof(full));
     char parent[8]; strip_reply6(text, parent);
     if (!text[0]) return;
-    char ts[24]; xprs_stamp(ts, sizeof(ts), hal_time_epoch());
-    char wire[400] = "t:message f:";
-    s_cat(wire, g_call, sizeof(wire));
-    s_cat(wire, " d:", sizeof(wire)); s_cat(wire, id + 1, sizeof(wire));
-    s_cat(wire, " ts:", sizeof(wire)); s_cat(wire, ts, sizeof(wire));
-    if (parent[0]) { s_cat(wire, " r:", sizeof(wire)); s_cat(wire, parent, sizeof(wire)); }
-    s_cat(wire, " m:", sizeof(wire)); s_cat(wire, text, sizeof(wire));
-    if (s_len(wire) > 250) { notify("warning", wtr("msg.too_long", "Message too long")); return; }
-    /* Whether we may post here is the CORE's decision (26.7), given back as
-     * the send result; this wapp only says it in words. */
-    int32_t rc = hal_xprs_send(wire, s_len(wire));
-    if (rc == -2) { group_refused(id); return; }
-    if (rc != 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
-    char gmid[7]; xprs_id(wire, s_len(wire), gmid);
-    admit(id, gmid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0, 0, "");
+    char gmid[8] = "";
+    int32_t form = hal_xprs_message(id + 1, s_len(id + 1), full, s_len(full),
+                                    3u, gmid, sizeof(gmid));
+    if (form == -2) { group_refused(id); return; }
+    if (form == 4 && gmid[0]) {
+      /* This device has not been handed the group's key yet: the words wait
+       * in the core's outbox and leave sealed when it lands. Never plain. */
+      room_tx_note(gmid, id);
+      admit(id, gmid, "out", g_call, text, parent, "", "verified", 1, 0, gmid, "key", 0, 0, "");
+      sysnote(id, wtr("msg.group_key_wait", "This group's key has not reached this device yet. Your message waits and is sent sealed as soon as it arrives."));
+      return;
+    }
+    if (form <= 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
+    admit(id, gmid, "out", g_call, text, parent, "", "verified", form == 1, 0, "", "", 0, 0, "");
     return;
   }
 
@@ -861,11 +875,17 @@ static void edit_message(const char *id, const char *orig, const char *text_in) 
     if (form <= 0 || !eid[0]) { notify("warning", wtr("msg.could_not_edit", "Could not edit")); return; }
     enc = form == 1;
     room_tx_note(eid, id);
-  } else if (xgroup_is(id) || xroom_is(id)) {
+  } else if (xgroup_is(id)) {
+    /* A closed group's correction is sealed as its posts are (the core). */
+    int32_t form = hal_xprs_edit(id + 1, s_len(id + 1), orig, s_len(orig), text, s_len(text),
+                                 1u, eid, sizeof(eid));
+    if (form == -2) { group_refused(id); return; }
+    if (form <= 0 || !eid[0]) { notify("warning", wtr("msg.could_not_edit", "Could not edit")); return; }
+    enc = form == 1;
+  } else if (xroom_is(id)) {
     char wire[400];
     if (!wire_for_room(id, orig, text, wire, sizeof(wire))) { notify("warning", wtr("msg.too_long", "Message too long")); return; }
     int32_t rc = hal_xprs_send(wire, s_len(wire));
-    if (rc == -2) { notify("warning", wtr("msg.accept_first", "You can post here once you accept the invitation")); return; }
     if (rc != 0) { notify("warning", wtr("msg.could_not_edit", "Could not edit")); return; }
     xprs_id(wire, s_len(wire), eid);
   } else {
@@ -1146,6 +1166,8 @@ static void on_core_event(const char *topic, const char *row) {
     /* A closed group's post, addressed to the group. Membership is the
      * core's answer; a post it delivered is one we may see. */
     if (!xgroup_is(title)) return;
+    /* Shown to members only (26.7), as on the packet path. */
+    if (!xgroup_may_post(title + 1)) return;
     room = title;
   } else {
     room = call;
@@ -1575,10 +1597,14 @@ static void group_join(const char *gid) {
     notify("warning", wtr("msg.invite_closed", "Could not join: the invitation is no longer open"));
     return;
   }
+  room_set_hint(gid, "");
   /* The folders below it that we were offered too, which the prompt named. */
   for (int i = 0; i < g_xgroup_n; i++)
-    if (s_eq(g_xgroup[i].role, "invited") && xgroup_below(g_xgroup[i].call, gid + 1))
+    if (s_eq(g_xgroup[i].role, "invited") && xgroup_below(g_xgroup[i].call, gid + 1)) {
       hal_xprs_group_accept(g_xgroup[i].call, s_len(g_xgroup[i].call));
+      char fid[10] = "#"; s_cat(fid, g_xgroup[i].call, sizeof(fid));
+      room_set_hint(fid, "");
+    }
   xgroups_refresh();
   /* Accepting is the newest thing that happened here: the group goes to the
    * top of the chat list, where somebody new to the app will look. */
