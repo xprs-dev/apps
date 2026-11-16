@@ -66,11 +66,15 @@ int main(void) {
     cap_clear();
     event_push("core.rns.graph");
     module_handle_event();
-    check(cap_contains("\"type\":\"ui.graph.set\""), "an announce redraws");
+    check(!cap_contains("\"type\":\"ui.graph.set\""),
+          "an announce does not redraw the graph at once (two a second on a busy hub)");
+    module_tick();
+    check(cap_contains("\"type\":\"ui.graph.set\""), "an announce redraws on the next tick");
 
     cap_clear();
     event_push("core.monitor");
     module_handle_event();
+    module_tick();
     check(cap_contains("\"type\":\"ui.graph.set\""),
           "a station heard on the air redraws");
 

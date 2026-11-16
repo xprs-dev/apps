@@ -327,6 +327,7 @@ void module_init(void) {
 /* The core says its state moved; redraw what depends on it. The event carries
  * a revision, not the data -- we read what we always read, when there is a
  * reason to rather than on a clock. */
+static int g_graph_dirty;
 static void drain_core_events(void) {
     static char topic[48];
     static char data[256];
@@ -341,13 +342,15 @@ static void drain_core_events(void) {
         /* core.station is the browser's alone: the graph did not move. */
         if (!str_eq(topic, "core.station")) any = 1;
     }
-    if (any) push_all();
+    /* A busy room is two packets a second and each redraw was 200 ms of
+     * reads and JSON (performance.md 8): once a tick, like the list. */
+    if (any) g_graph_dirty = 1;
 }
 
-/* The graph redraws when the core says it moved. The station list is three
- * reads and a large message, so it redraws here, at most once a tick, when
- * something moved since the last one. */
+/* The graph and the station list redraw here, at most once a tick, when the
+ * core said something moved since the last one. */
 void module_tick(void) {
+    if (g_graph_dirty) { g_graph_dirty = 0; push_all(); }
     browse_tick();
 }
 
