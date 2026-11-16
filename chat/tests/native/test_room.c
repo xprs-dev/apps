@@ -37,6 +37,16 @@ void module_init(void); void module_handle_event(void); void module_destroy(void
 
 static int g_fail = 0, g_pass = 0;
 #define CHECK(c) do { if (!(c)) { printf("  FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); g_fail++; } else g_pass++; } while (0)
+/* This station is a member of closed group [call]: what the core's
+ * hal_xprs_groups says once the person has joined. */
+static void member_of(const char *call) {
+  char g[160];
+  snprintf(g, sizeof(g), "[{\"call\":\"%s\",\"nick\":\"room\",\"role\":\"member\"}]", call);
+  mock_set_groups(g);
+  event_push("core.groups", "{}");
+  module_handle_event();
+}
+
 #define TEST(name) static void name(void); static void run_##name(void) { printf("%s\n", #name); cap_clear(); log_clear(); name(); } static void name(void)
 
 static void fresh(void) {
@@ -1265,6 +1275,7 @@ TEST(a_1to1_like_is_a_directed_reaction_65) {
 
 TEST(a_closed_group_like_is_a_directed_reaction_with_a_local_echo_65) {
   fresh();
+  member_of("X5ROOM");
   /* The heart on a closed-group bubble leaves as t:reaction d:<X5group>
    * (6.5), never as a message, and our own heart shows at once. */
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5ROOM\"}");
@@ -1606,11 +1617,12 @@ TEST(a_group_room_learns_its_name_when_it_arrives_after_the_room) {
 
 TEST(a_closed_group_post_renders_from_either_shape_the_core_delivers) {
   fresh();
+  member_of("X5ROOM");
   /* 13.11.3: a closed group's post is a PLAIN BROADCAST, so it arrives as a
    * heard packet (fields, no `content`) and must render like an open-group
    * bulletin -- not be dropped as "the other shape". The sealed/reassembled
    * shape (`content`) renders too. WHO may post is the core's decision at its
-   * receive door (26.7); whatever reaches this wapp, it shows. */
+   * receive door (26.7); for a member, whatever reaches this wapp, it shows. */
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5ROOM\"}");
   module_handle_event();
 
@@ -1660,6 +1672,7 @@ TEST(the_host_can_open_a_1to1_with_a_station_and_name_it) {
 
 TEST(a_shared_file_reaches_the_bubble_on_both_shapes_and_only_once) {
   fresh();
+  member_of("X5ROOM");
   /* 7.7.7: the reference travels as the `file:` FIELD, outside the caption, so
    * it survives a sealed 1:1. The host draws an attachment from a token in the
    * message text, so the wapp puts it back there -- once. The wapp never sees
@@ -1956,6 +1969,24 @@ TEST(a_member_leaves_and_the_group_goes_from_the_list) {
   CHECK(cap_contains("You left"));
 }
 
+TEST(a_removed_member_is_told_and_sees_nothing_new) {
+  fresh();
+  member_of("X5ROOM");
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5ROOM\"}");
+  module_handle_event();
+  /* The admin removes us: the core's answer no longer lists us as a member. */
+  cap_clear();
+  mock_set_groups("[{\"call\":\"X5ROOM\",\"nick\":\"room\",\"role\":\"none\"}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  CHECK(cap_contains("You are no longer a member of this group"));
+  cap_clear();
+  event_push("xprs.message",
+    "{\"id\":\"gp0009\",\"type\":\"message\",\"from\":\"X1PEER\",\"to\":\"X5ROOM\",\"fields\":[[\"t\",\"message\"],[\"f\",\"X1PEER\"],[\"d\",\"X5ROOM\"],[\"m\",\"after you went\"]],\"scope\":\"global\",\"bearer\":\"lan\",\"sig\":\"verified\"}");
+  module_handle_event();
+  CHECK(!cap_contains("after you went"));
+}
+
 TEST(info_tells_the_words_versions_and_how_the_packet_travelled) {
   fresh();
   dm("X1PEER", "aa1111", "the first words", 1, "", "", "verified", 1700000000);
@@ -2111,6 +2142,7 @@ int main(void) {
   run_tapping_a_member_opens_a_conversation_not_a_block_prompt();
   run_the_admin_removes_a_member_after_asking_twice();
   run_a_member_leaves_and_the_group_goes_from_the_list();
+  run_a_removed_member_is_told_and_sees_nothing_new();
   run_info_tells_the_words_versions_and_how_the_packet_travelled();
   printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;

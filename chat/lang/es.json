@@ -158,5 +158,6 @@
   "prompt.leave_body": "Ya no podrás escribir en él ni en sus carpetas, y sus conversaciones se borran de este dispositivo. Para volver hace falta una nueva invitación.",
   "prompt.leave": "Salir",
   "msg.leave_failed": "No se pudo salir del grupo",
-  "msg.left": "Has salido de "
+  "msg.left": "Has salido de ",
+  "msg.no_longer_member": "Ya no eres miembro de este grupo. Los mensajes nuevos no se muestran aquí y no puedes escribir."
 }

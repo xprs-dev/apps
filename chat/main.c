@@ -260,6 +260,7 @@ static void xgroup_room(const char *id, const char *t) {
   if (r == 1) { room_bump(id); room_rail(); }
   else if (r == 0) { room_set_title(id, t); room_bump_idle(id); }
 }
+static void sysnote(const char *room, const char *text);
 static void xgroups_refresh(void) {
   static char gb[12288];
   int ask = 0;
@@ -274,6 +275,11 @@ static void xgroups_refresh(void) {
     s_cat(was, g_xgroup[i].call, sizeof(was)); s_cat(was, ">", sizeof(was));
     s_cat(was, g_xgroup[i].parent, sizeof(was)); s_cat(was, ";", sizeof(was));
   }
+  /* Which groups we were IN before this answer, to notice one we are no
+   * longer in (removed by its admin) and say so in its room once. */
+  static char was_in[XGROUP_MAX][8]; int was_n = 0;
+  for (int i = 0; i < g_xgroup_n && was_n < XGROUP_MAX; i++)
+    if (xgroup_may_post(g_xgroup[i].call)) s_cpy(was_in[was_n++], g_xgroup[i].call, 8);
   g_xgroup_n = 0;
   const char *cur = gb; char obj[600];
   while (g_xgroup_n < XGROUP_MAX && next_object(&cur, obj, sizeof(obj))) {
@@ -317,6 +323,12 @@ static void xgroups_refresh(void) {
       if (!ask && !(up[0] && xgroup_may_post(up))) ask = k + 1;
     }
     else if (room_known(id)) room_set_title(id, t);
+  }
+  for (int i = 0; i < was_n; i++) {
+    if (xgroup_may_post(was_in[i])) continue;
+    char gid[10] = "#"; s_cat(gid, was_in[i], sizeof(gid));
+    if (room_known(gid))
+      sysnote(gid, wtr("msg.no_longer_member", "You are no longer a member of this group. New messages are not shown here, and you cannot post."));
   }
   if (moved) room_rail();
   if (ask) join_offer(g_xgroup[ask - 1].call, 0);
@@ -971,7 +983,8 @@ static void on_core_packet(const char *topic, const char *row) {
       room_react(from, r, from, rem[0] ? 1 : 0, 0);
     } else if (to[0]) {
       char gid[24] = "#"; s_cat(gid, to, sizeof(gid));
-      if (xgroup_is(gid) && room_known(gid)) room_react(gid, r, from, rem[0] ? 1 : 0, 0);
+      if (xgroup_is(gid) && room_known(gid) && xgroup_may_post(gid + 1))
+        room_react(gid, r, from, rem[0] ? 1 : 0, 0);
     }
     return;
   }
@@ -1050,6 +1063,11 @@ static void on_core_packet(const char *topic, const char *row) {
    * decide, at its receive door (26.7): a post that reaches this wapp is one
    * it may show. */
   if (!room_known(gid)) return;
+  /* A closed group's talk is shown to its members (26.7). Somebody removed,
+   * or only invited, keeps the room and what it held, and sees nothing new:
+   * the words still crossed the air in clear, so this is what the screen
+   * says, not a lock (XPRS.md 10.7). */
+  if (closed && !xgroup_may_post(gid + 1)) return;
   char lmid[70]; int unlike; const char *ck; char tgt[5];
   if (votemark_parse(m, lmid, &unlike, &ck)) { room_react(gid, lmid, from, unlike, 0); return; }
   if (like_parse(m, tgt, &unlike)) { room_react(gid, tgt, from, unlike, 0); return; }
@@ -1611,10 +1629,25 @@ static void invite_pick(const char *buf) {
 /* ── Removing a member, and leaving (26.3, 26.3.1) ───────────────────────
  * A member tapped by the admin: talk to them, or take their place away. The
  * removal is asked once more, because it is on the group's public record. */
+/* "Bea (X13SUZ)" when the roster the panel holds names them, else the
+ * callsign: how a person is called in the prompts about them. */
+static void mp_label(const char *call, char *out, unsigned osz) {
+  s_cpy(out, call, osz);
+  const char *cur = g_mp_roster; char obj[128];
+  while (g_mp_roster_ok && next_object(&cur, obj, sizeof(obj))) {
+    char c[16] = "", nick[24] = "";
+    jstr(obj, "call", c, sizeof(c));
+    if (!s_eq(c, call)) continue;
+    jstr(obj, "nick", nick, sizeof(nick));
+    if (nick[0]) { s_cpy(out, nick, osz); s_cat(out, " (", osz); s_cat(out, call, osz); s_cat(out, ")", osz); }
+    return;
+  }
+}
 static void member_menu(const char *call) {
+  char who[48]; mp_label(call, who, sizeof(who));
   char m[600] = "{\"type\":\"ui.prompt\",\"id\":\"xgmem:";
   jesc(m, sizeof(m), g_mp_gid); s_cat(m, "|", sizeof(m)); jesc(m, sizeof(m), call);
-  s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), call);
+  s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), who);
   s_cat(m, "\",\"chips\":[{\"label\":\"", sizeof(m));
   jesc(m, sizeof(m), wtr("label.message", "Message"));
   s_cat(m, "\",\"value\":\"msg\"},{\"label\":\"", sizeof(m));
@@ -1634,8 +1667,9 @@ static void remove_ask(const char *arg) {
   char m[700] = "{\"type\":\"ui.prompt\",\"id\":\"xgrm:";
   jesc(m, sizeof(m), arg);
   s_cat(m, "\",\"title\":\"", sizeof(m));
+  char who[48]; mp_label(bar + 1, who, sizeof(who));
   jesc(m, sizeof(m), wtr("prompt.remove_title", "Remove "));
-  jesc(m, sizeof(m), bar + 1); s_cat(m, "?", sizeof(m));
+  jesc(m, sizeof(m), who); s_cat(m, "?", sizeof(m));
   s_cat(m, "\",\"body\":\"", sizeof(m));
   jesc(m, sizeof(m), wtr("prompt.remove_body_a", "They can no longer post in "));
   jesc(m, sizeof(m), t);

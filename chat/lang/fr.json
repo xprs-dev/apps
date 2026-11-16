@@ -158,5 +158,6 @@
   "prompt.leave_body": "Vous ne pourrez plus écrire dans ce groupe ni dans ses dossiers, et ses conversations sont retirées de cet appareil. Revenir demande une nouvelle invitation.",
   "prompt.leave": "Quitter",
   "msg.leave_failed": "Impossible de quitter le groupe",
-  "msg.left": "Vous avez quitté "
+  "msg.left": "Vous avez quitté ",
+  "msg.no_longer_member": "Vous n'êtes plus membre de ce groupe. Les nouveaux messages ne s'affichent plus ici et vous ne pouvez plus écrire."
 }

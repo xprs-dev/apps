@@ -158,5 +158,6 @@
   "prompt.leave_body": "Deixa de poder escrever nele e nas suas pastas, e as conversas são removidas deste dispositivo. Voltar exige um novo convite.",
   "prompt.leave": "Sair",
   "msg.leave_failed": "Não foi possível sair do grupo",
-  "msg.left": "Saiu de "
+  "msg.left": "Saiu de ",
+  "msg.no_longer_member": "Já não é membro deste grupo. As mensagens novas não aparecem aqui e não pode escrever."
 }

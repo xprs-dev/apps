@@ -158,5 +158,6 @@
   "prompt.leave_body": "You will no longer post in it or its folders, and its conversations are removed from this device. Coming back takes a new invitation.",
   "prompt.leave": "Leave",
   "msg.leave_failed": "Could not leave the group",
-  "msg.left": "You left "
+  "msg.left": "You left ",
+  "msg.no_longer_member": "You are no longer a member of this group. New messages are not shown here, and you cannot post."
 }

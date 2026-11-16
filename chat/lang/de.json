@@ -158,5 +158,6 @@
   "prompt.leave_body": "Du kannst dort und in den Ordnern nicht mehr schreiben, und die Unterhaltungen werden von diesem Gerät entfernt. Zurück geht es nur mit einer neuen Einladung.",
   "prompt.leave": "Verlassen",
   "msg.leave_failed": "Gruppe konnte nicht verlassen werden",
-  "msg.left": "Verlassen: "
+  "msg.left": "Verlassen: ",
+  "msg.no_longer_member": "Du bist kein Mitglied dieser Gruppe mehr. Neue Nachrichten werden hier nicht angezeigt, und du kannst nicht schreiben."
 }
