@@ -2034,6 +2034,20 @@ TEST(joining_an_open_group_follows_it_and_deleting_it_lets_go) {
   CHECK(strcmp(mock_follow(), "PICNIC:0") == 0);
 }
 
+TEST(a_reply_in_an_open_group_names_its_parent_in_r_and_keeps_every_word) {
+  fresh();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#PICNIC\"}");
+  module_handle_event();
+  cap_clear(); mock_clear_wire();
+  inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#PICNIC\",\"rooms_input\":\"+c51151 Great, I will bring a frisbee\"}");
+  module_handle_event();
+  const char *w = mock_last_wire();
+  CHECK(w && strstr(w, "d:PICNIC") && strstr(w, " r:c51151 "));
+  CHECK(w && strstr(w, "m:Great, I will bring a frisbee"));
+  CHECK(w && !strstr(w, "+c51151"));
+  CHECK(cap_contains("Great, I will bring a frisbee"));
+}
+
 TEST(info_tells_the_words_versions_and_how_the_packet_travelled) {
   fresh();
   dm("X1PEER", "aa1111", "the first words", 1, "", "", "verified", 1700000000);
@@ -2193,6 +2207,7 @@ int main(void) {
   run_a_folder_names_its_group_and_an_invitation_says_so();
   run_a_heart_that_came_before_its_message_shows_when_the_message_lands();
   run_joining_an_open_group_follows_it_and_deleting_it_lets_go();
+  run_a_reply_in_an_open_group_names_its_parent_in_r_and_keeps_every_word();
   run_info_tells_the_words_versions_and_how_the_packet_travelled();
   printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;

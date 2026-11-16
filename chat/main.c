@@ -726,6 +726,24 @@ static void send_message(const char *id, const char *text_in) {
    * rides the same path as text ("<id>:like"), and is a reaction, not words. */
   if (id[0] == '#') {
     char wire[900];
+    /* A reply names its parent in `r:` (7.4), as in a closed group: the
+     * composer's "+<6hex> " marker is taken off the words. The older path
+     * knew only a 4-hex marker and sent the 6-hex one as part of the text. */
+    static char rbody[900]; s_cpy(rbody, text, sizeof(rbody));
+    char rpar[8] = ""; strip_reply6(rbody, rpar);
+    if (rpar[0] && rbody[0]) {
+      char ts[24]; xprs_stamp(ts, sizeof(ts), hal_time_epoch());
+      s_cpy(wire, "t:message f:", sizeof(wire));
+      s_cat(wire, g_call, sizeof(wire));
+      s_cat(wire, " d:", sizeof(wire)); s_cat(wire, id + 1, sizeof(wire));
+      s_cat(wire, " ts:", sizeof(wire)); s_cat(wire, ts, sizeof(wire));
+      s_cat(wire, " r:", sizeof(wire)); s_cat(wire, rpar, sizeof(wire));
+      s_cat(wire, " m:", sizeof(wire)); s_cat(wire, rbody, sizeof(wire));
+      if (hal_xprs_send(wire, s_len(wire)) != 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
+      char rmid[7]; xprs_id(wire, s_len(wire), rmid);
+      admit(id, rmid, "out", g_call, rbody, rpar, "", "verified", 0, 0, "", "", 0, 0, "");
+      return;
+    }
     if (!xprs_pack(wire, sizeof(wire), g_call, id, text, hal_time_epoch())) {
       notify("warning", wtr("msg.could_not_send", "Could not send")); return;
     }
