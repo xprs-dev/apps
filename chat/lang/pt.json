@@ -143,5 +143,6 @@
   "label.role_invited": "Convidado, ainda não entrou",
   "room.group_unnamed": "Grupo ",
   "room.folder_unnamed": "Pasta ",
-  "prompt.not_now": "Agora não"
+  "prompt.not_now": "Agora não",
+  "msg.not_member_note": "Só os membros deste grupo podem escrever aqui. A sua mensagem NÃO foi enviada. Peça ao administrador do grupo para o convidar."
 }

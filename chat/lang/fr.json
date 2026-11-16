@@ -143,5 +143,6 @@
   "label.role_invited": "Invité, n'a pas encore rejoint",
   "room.group_unnamed": "Groupe ",
   "room.folder_unnamed": "Dossier ",
-  "prompt.not_now": "Pas maintenant"
+  "prompt.not_now": "Pas maintenant",
+  "msg.not_member_note": "Seuls les membres de ce groupe peuvent écrire ici. Votre message n'a PAS été envoyé. Demandez à l'administrateur du groupe de vous inviter."
 }

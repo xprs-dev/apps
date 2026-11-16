@@ -1342,8 +1342,10 @@ TEST(finding_a_group_opens_the_group_room_and_the_core_decides_posting) {
   inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#X5ROOM\",\"rooms_input\":\"let me in\"}");
   module_handle_event();
   CHECK(mock_last_wire() == 0 || !strstr(mock_last_wire(), "d:X5ROOM"));
-  CHECK(cap_contains("once you accept the invitation"));
-  CHECK(cap_count("ui.convo.msg") == 0);
+  /* Somebody never invited is told in the room, where the words were
+   * typed, and the words are not drawn as if they had gone. */
+  CHECK(cap_contains("Only members of this group can post here"));
+  CHECK(!cap_contains("let me in"));
 
   /* And when the core says yes, the post goes out and the bubble is drawn. */
   mock_set_send_rc(0);

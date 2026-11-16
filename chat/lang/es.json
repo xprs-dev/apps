@@ -143,5 +143,6 @@
   "label.role_invited": "Invitado, aún no se ha unido",
   "room.group_unnamed": "Grupo ",
   "room.folder_unnamed": "Carpeta ",
-  "prompt.not_now": "Ahora no"
+  "prompt.not_now": "Ahora no",
+  "msg.not_member_note": "Solo los miembros de este grupo pueden escribir aquí. Tu mensaje NO se envió. Pide al administrador del grupo que te invite."
 }

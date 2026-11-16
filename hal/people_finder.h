@@ -283,9 +283,13 @@ static __attribute__((unused)) void pf_render_ex(const char *field, const char *
     }
     if (typed) {
       if (!first) pf_cat(o, sz, ",");
+      /* A closed group's callsign (X5) typed whole is a group, not a person
+       * to add: say so, and open its room (the wapp routes go:X5...). */
+      int grp = want[0] == 'X' && want[1] == '5';
       pf_cat(o, sz, "{\"id\":\"go:"); pf_esc(o, sz, want);
       pf_cat(o, sz, "\",\"title\":\""); pf_esc(o, sz, want);
-      pf_cat(o, sz, "\",\"subtitle\":\"Not heard yet\",\"icon\":\"person_add\"}");
+      pf_cat(o, sz, grp ? "\",\"subtitle\":\"Closed group\",\"icon\":\"tag\"}"
+                        : "\",\"subtitle\":\"Not heard yet\",\"icon\":\"person_add\"}");
     }
     pf_cat(o, sz, "]}");
   }

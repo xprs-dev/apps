@@ -143,5 +143,6 @@
   "label.role_invited": "Invited, has not joined yet",
   "room.group_unnamed": "Group ",
   "room.folder_unnamed": "Folder ",
-  "prompt.not_now": "Not now"
+  "prompt.not_now": "Not now",
+  "msg.not_member_note": "Only members of this group can post here. Your message was NOT sent. Ask the group's admin to invite you."
 }

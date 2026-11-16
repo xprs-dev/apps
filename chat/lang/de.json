@@ -143,5 +143,6 @@
   "label.role_invited": "Eingeladen, noch nicht beigetreten",
   "room.group_unnamed": "Gruppe ",
   "room.folder_unnamed": "Ordner ",
-  "prompt.not_now": "Nicht jetzt"
+  "prompt.not_now": "Nicht jetzt",
+  "msg.not_member_note": "Nur Mitglieder dieser Gruppe können hier schreiben. Deine Nachricht wurde NICHT gesendet. Bitte die Person, die die Gruppe verwaltet, dich einzuladen."
 }

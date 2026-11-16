@@ -346,6 +346,19 @@ static void sysnote(const char *room, const char *text) {
   room_msg_t m = { room, 0, mid, "in", "", text, "", "", "", "", "", 0, 0, 0, 1, 0, 0 };
   room_admit(&m);
 }
+/* The core refused a post to a closed group we are not a member of (26.7).
+ * Said in the room, where the words were typed: a notice alone can pass
+ * unseen, and the composer has already been cleared. Somebody invited is
+ * asked to join; anybody else is told who can let them in. */
+static void group_refused(const char *gid) {
+  int i = xgroup_find(gid + 1);
+  if (i >= 0 && s_eq(g_xgroup[i].role, "invited")) {
+    notify("warning", wtr("msg.accept_first", "You can post here once you accept the invitation"));
+    join_offer(gid + 1, 1);
+    return;
+  }
+  sysnote(gid, wtr("msg.not_member_note", "Only members of this group can post here. Your message was NOT sent. Ask the group's admin to invite you."));
+}
 /* A reply marker on a wire with room for a section 5 id: "+<6hex> text". */
 static int strip_reply6(char *text, char parent[8]) {
   parent[0] = 0;
@@ -646,7 +659,7 @@ static void send_message(const char *id, const char *text_in) {
         s_cat(wire, unlike ? " remove:like" : " add:like", sizeof(wire));
         s_cat(wire, " r:", sizeof(wire)); s_cat(wire, lmid, sizeof(wire));
         int32_t rc = hal_xprs_send(wire, s_len(wire));
-        if (rc == -2) { notify("warning", wtr("msg.accept_first", "You can post here once you accept the invitation")); return; }
+        if (rc == -2) { group_refused(id); return; }
         if (rc != 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
         room_react(id, lmid, g_call, unlike, 1);   /* our own heart, now */
         return;
@@ -665,7 +678,7 @@ static void send_message(const char *id, const char *text_in) {
     /* Whether we may post here is the CORE's decision (26.7), given back as
      * the send result; this wapp only says it in words. */
     int32_t rc = hal_xprs_send(wire, s_len(wire));
-    if (rc == -2) { notify("warning", wtr("msg.accept_first", "You can post here once you accept the invitation")); return; }
+    if (rc == -2) { group_refused(id); return; }
     if (rc != 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
     char gmid[7]; xprs_id(wire, s_len(wire), gmid);
     admit(id, gmid, "out", g_call, text, parent, "", "verified", 0, 0, "", "", 0, 0, "");
