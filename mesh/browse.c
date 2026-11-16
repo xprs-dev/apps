@@ -431,10 +431,15 @@ static int cat_own_room(void)
             char who[16], id[24], one[64];
             while (q && (q = al_json_next(q, one, sizeof one)) != 0) {
                 if (!al_json(one, "call", who, sizeof who) || !who[0]) continue;
+                if (al_eq(who, g_me)) continue;      /* the owner is offered its own room */
                 al_cpy(id, "m:", sizeof id);
                 al_cat(id, who, sizeof id);
                 al_cat(g_out, ",", sizeof g_out);
-                one_row(id, "person", who, "Sees this. Tap to remove.");
+                char inv[8];
+                int waiting = al_json(one, "invited", inv, sizeof inv) && al_eq(inv, "true");
+                one_row(id, waiting ? "person_add" : "person", who,
+                        waiting ? "Added. Sees it once they open your phone. Tap to remove."
+                                : "Sees this. Tap to remove.");
             }
             al_cat(g_out, ",", sizeof g_out);
             one_row("own:add", "person_add", "Add a person", "By callsign. They see it the next time they open your phone.");
