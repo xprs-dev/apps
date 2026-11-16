@@ -334,11 +334,11 @@ static void push_station(void)
             al_cat_u(sub, sh_total, sizeof sub);
             one_row("host:busy", "hourglass_empty", "Adding files\xe2\x80\xa6", sub);
         } else {
-            one_row("host:gallery", "add_photo_alternate", "Share photos", "A folder of pictures and films");
+            one_row("host:gallery", "add_photo_alternate", "Share photos", "Pictures and films from this phone");
             al_cat(g_out, ",", sizeof g_out);
-            one_row("host:music", "library_add", "Share music", "A folder of tracks");
+            one_row("host:music", "library_add", "Share music", "Tracks from this phone");
             al_cat(g_out, ",", sizeof g_out);
-            one_row("host:library", "note_add", "Share files", "A folder, or one file");
+            one_row("host:library", "note_add", "Share files", "Any files from this phone");
         }
     } else {
         al_cat(g_out, "{\"title\":\"This station\",\"items\":[", sizeof g_out);
