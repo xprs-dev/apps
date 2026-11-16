@@ -1594,10 +1594,18 @@ static void group_join(const char *gid) {
  * core signs with the group key and refuses if we are not the admin. */
 static char g_invite_gid[12];
 static char g_invite_q[24];
+/* A picker opens with an empty search box: the host keeps the box's text
+ * between opens, and "Bea" left in it made the next search "BeaCai". */
+static void search_clear(const char *field) {
+  char m[96] = "{\"type\":\"ui.field.set\",\"field\":\"";
+  s_cat(m, field, sizeof(m)); s_cat(m, "_query\",\"value\":\"\"}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
 static void invite_open(const char *gid) {
   if (!xgroup_is(gid)) return;
   s_cpy(g_invite_gid, gid, sizeof(g_invite_gid));
   g_invite_q[0] = 0;
+  search_clear("inviteuser");
   pf_hide_groups = 1; pf_people_only = 1;
   render_people("inviteuser", "", 0);
   pf_hide_groups = 0; pf_people_only = 0;
@@ -2067,6 +2075,7 @@ void module_handle_event(void) {
   }
   else if (s_eq(cmd, "rooms_newchat")) {
     g_find_q[0] = 0;
+    search_clear("finduser");
     render_people("finduser", "", 0);
     screen_open("@screen.newchat");
   }
