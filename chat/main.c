@@ -2243,7 +2243,7 @@ void module_handle_event(void) {
     char pm[560] = "{\"type\":\"ui.prompt\",\"id\":\"xgnew:\",\"title\":\"";
     jesc(pm, sizeof(pm), wtr("prompt.newgroup_title", "New group"));
     s_cat(pm, "\",\"body\":\"", sizeof(pm));
-    jesc(pm, sizeof(pm), wtr("prompt.newgroup_body", "A closed group: only the people you invite can post in it. The name is a label; the group's callsign comes from its own key."));
+    jesc(pm, sizeof(pm), wtr("prompt.newgroup_body", "Public: anyone can read it; only members post, and people ask to join. Private: only members read it, sealed. The name is a label; the group's callsign comes from its own key."));
     s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
     jesc(pm, sizeof(pm), wtr("prompt.create", "Create"));
     s_cat(pm, "\",\"toggle\":{\"label\":\"", sizeof(pm));
