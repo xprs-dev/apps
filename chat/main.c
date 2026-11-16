@@ -81,8 +81,14 @@ static int open_group_is(const char *id) {
 }
 /* Following an open group is the core's (it keeps the group's talk and asks
  * for what was said before): told whenever its room opens, and when it goes. */
+static int xgroup_may_post(const char *call);
 static void open_group_follow(const char *id, int on) {
   if (open_group_is(id)) hal_xprs_follow(id + 1, s_len(id + 1), on ? 1 : 0);
+  /* A closed group read from outside (public, 10.7.1): followed like an open
+   * group, so its posts are kept and asked for. */
+  else if (id[0] == '#' && id[1] == 'X' && id[2] == '5' && s_len(id) == 7 &&
+           (!on || !xgroup_may_post(id + 1)))
+    hal_xprs_follow(id + 1, s_len(id + 1), on ? 1 : 0);
 }
 /* The room a scope files into, as the core states it (local, regional,
  * global, country); an unknown word is in no room. */
@@ -145,7 +151,7 @@ static void chan_load(void) {
 /* `parent`: the group that lists this one as a folder (10.2), "" for a root.
  * The tree is the core's answer (hal_xprs_groups), five levels and no cycles
  * already applied; this wapp only draws it. */
-static struct { char call[8]; char nick[24]; char role[8]; char parent[8]; } g_xgroup[XGROUP_MAX];
+static struct { char call[8]; char nick[24]; char role[8]; char parent[8]; int pub; } g_xgroup[XGROUP_MAX];
 static int g_xgroup_n;
 
 static int xgroup_is(const char *id) {
@@ -229,6 +235,17 @@ static int xgroup_is_admin(const char *call) {
   int i = xgroup_find(call);
   return i >= 0 && s_eq(g_xgroup[i].role, "admin");
 }
+/* May we let somebody in, or take their place away (10.3)? The admin, and a
+ * moderator: a small group with no moderators is run by its admin alone. */
+static int xgroup_can_moderate(const char *call) {
+  int i = xgroup_find(call);
+  return i >= 0 && (s_eq(g_xgroup[i].role, "admin") || s_eq(g_xgroup[i].role, "mod"));
+}
+/* Anyone may read it (10.7.1): its posts travel in the clear. */
+static int xgroup_public(const char *call) {
+  int i = xgroup_find(call);
+  return i >= 0 && g_xgroup[i].pub;
+}
 /* Accepting an invitation (26.3.1). The core finds the offer and signs the
  * acceptance with our profile key; the wapp only asks the person. Asked once
  * per run when it arrives (a refresh must not nag), and again whenever its
@@ -309,6 +326,7 @@ static void xgroups_refresh(void) {
     jstr(obj, "role", g_xgroup[k].role, sizeof(g_xgroup[k].role));
     if (!jstr(obj, "parent", g_xgroup[k].parent, sizeof(g_xgroup[k].parent)))
       g_xgroup[k].parent[0] = 0;
+    g_xgroup[k].pub = jbool(obj, "public");
     if (!g_xgroup[k].call[0]) continue;
     g_xgroup_n++;
   }
@@ -349,7 +367,9 @@ static void xgroups_refresh(void) {
     if (xgroup_may_post(was_in[i])) continue;
     char gid[10] = "#"; s_cat(gid, was_in[i], sizeof(gid));
     if (room_known(gid))
-      sysnote(gid, wtr("msg.no_longer_member", "You are no longer a member of this group. New messages are not shown here, and you cannot post."));
+      sysnote(gid, xgroup_public(was_in[i])
+          ? wtr("msg.no_longer_member_public", "You are no longer a member of this group. You can still read it, but you cannot post.")
+          : wtr("msg.no_longer_member", "You are no longer a member of this group. New messages are not shown here, and you cannot post."));
   }
   if (moved) room_rail();
   if (ask) join_offer(g_xgroup[ask - 1].call, 0);
@@ -383,14 +403,51 @@ static void sysnote(const char *room, const char *text) {
  * Said in the room, where the words were typed: a notice alone can pass
  * unseen, and the composer has already been cleared. Somebody invited is
  * asked to join; anybody else is told who can let them in. */
-static void group_refused(const char *gid) {
+static char g_ask_text[600];
+static void group_refused(const char *gid, const char *text) {
   int i = xgroup_find(gid + 1);
   if (i >= 0 && s_eq(g_xgroup[i].role, "invited")) {
     notify("warning", wtr("msg.accept_first", "You can post here once you accept the invitation"));
     join_offer(gid + 1, 1);
     return;
   }
-  sysnote(gid, wtr("msg.not_member_note", "Only members of this group can post here. Your message was NOT sent. Ask the group's admin to invite you."));
+  /* Not a member: the words can be this person's request to join (10.3). */
+  s_cpy(g_ask_text, text ? text : "", sizeof(g_ask_text));
+  char t[48]; room_title(gid, t, sizeof(t));
+  char m[900] = "{\"type\":\"ui.prompt\",\"id\":\"xgask:";
+  jesc(m, sizeof(m), gid);
+  s_cat(m, "\",\"title\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.ask_title", "Ask to join "));
+  jesc(m, sizeof(m), t); s_cat(m, "?", sizeof(m));
+  s_cat(m, "\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.ask_body", "Only members post here. Your message goes to the group's admin and moderators as your request to join; nobody else sees it."));
+  s_cat(m, "\",\"confirm\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.ask", "Ask to join"));
+  s_cat(m, "\"}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+/* The request, as an ordinary message to the group (10.3), past the core's
+ * membership door (bit 4 of hal_xprs_message). */
+static void group_ask(const char *gid) {
+  if (!xgroup_is(gid)) return;
+  const char *text = g_ask_text[0] ? g_ask_text : wtr("msg.ask_default", "I would like to join.");
+  char mid[8] = "";
+  int32_t form = hal_xprs_message(gid + 1, s_len(gid + 1), text, s_len(text), 4u, mid, sizeof(mid));
+  g_ask_text[0] = 0;
+  if (form <= 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
+  sysnote(gid, wtr("msg.ask_sent", "Your request to join was sent to the group's admin and moderators."));
+}
+/* A request heard by this station, which may accept it. */
+static void join_request_note(const char *gid, const char *from, const char *text) {
+  if (!from[0] || is_blocked(from)) return;
+  room_joinreq_add(gid, from, text);
+  if (!room_known(gid)) return;
+  char line[700]; s_cpy(line, from, sizeof(line));
+  s_cat(line, wtr("msg.asks_join", " asks to join: "), sizeof(line));
+  s_cat(line, text ? text : "", sizeof(line));
+  s_cat(line, wtr("msg.asks_join_where", " (Members, to answer)"), sizeof(line));
+  sysnote(gid, line);
+  notify("info", line);
 }
 /* A reply marker on a wire with room for a section 5 id: "+<6hex> text". */
 static int strip_reply6(char *text, char parent[8]) {
@@ -692,7 +749,7 @@ static void send_message(const char *id, const char *text_in) {
         s_cat(wire, unlike ? " remove:like" : " add:like", sizeof(wire));
         s_cat(wire, " r:", sizeof(wire)); s_cat(wire, lmid, sizeof(wire));
         int32_t rc = hal_xprs_send(wire, s_len(wire));
-        if (rc == -2) { group_refused(id); return; }
+        if (rc == -2) { group_refused(id, ""); return; }
         if (rc != 0) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
         room_react(id, lmid, g_call, unlike, 1);   /* our own heart, now */
         return;
@@ -708,7 +765,7 @@ static void send_message(const char *id, const char *text_in) {
     char gmid[8] = "";
     int32_t form = hal_xprs_message(id + 1, s_len(id + 1), full, s_len(full),
                                     3u, gmid, sizeof(gmid));
-    if (form == -2) { group_refused(id); return; }
+    if (form == -2) { group_refused(id, full); return; }
     if (form == 4 && gmid[0]) {
       /* This device has not been handed the group's key yet: the words wait
        * in the core's outbox and leave sealed when it lands. Never plain. */
@@ -908,7 +965,7 @@ static void edit_message(const char *id, const char *orig, const char *text_in) 
     /* A closed group's correction is sealed as its posts are (the core). */
     int32_t form = hal_xprs_edit(id + 1, s_len(id + 1), orig, s_len(orig), text, s_len(text),
                                  1u, eid, sizeof(eid));
-    if (form == -2) { group_refused(id); return; }
+    if (form == -2) { group_refused(id, ""); return; }
     if (form <= 0 || !eid[0]) { notify("warning", wtr("msg.could_not_edit", "Could not edit")); return; }
     enc = form == 1;
   } else if (xroom_is(id)) {
@@ -1116,7 +1173,12 @@ static void on_core_packet(const char *topic, const char *row) {
    * or only invited, keeps the room and what it held, and sees nothing new:
    * the words still crossed the air in clear, so this is what the screen
    * says, not a lock (XPRS.md 10.7). */
-  if (closed && !xgroup_may_post(gid + 1)) return;
+  /* Somebody outside the group asking to join (10.3): the core hands it only
+   * to the group's admin and moderators. Kept as a request, not a post. */
+  if (closed && jbool(row, "request")) { join_request_note(gid, from, m); return; }
+  /* A post in the clear is public by its nature (10.7.1): anybody who opened
+   * the group reads it. A private group's posts are sealed, and only its
+   * members' devices can open those. */
   char lmid[70]; int unlike; const char *ck; char tgt[5];
   if (votemark_parse(m, lmid, &unlike, &ck)) { room_react(gid, lmid, from, unlike, 0); return; }
   if (like_parse(m, tgt, &unlike)) { room_react(gid, tgt, from, unlike, 0); return; }
@@ -1439,6 +1501,27 @@ static void push_members_page(int offset, int header, int reset) {
   { char nb[12]; u_lltoa((unsigned long long)offset, nb); s_cat(o, nb, sz); }
   if (reset) s_cat(o, ",\"reset\":true", sz);
   static char rows[4608]; rows[0] = 0;
+  /* People asking to join, first, for whoever may let them in (10.3). */
+  int n_req = 0;
+  if (offset == 0 && xgroup_can_moderate(g_mp_gid + 1)) {
+    static char rq[3000];
+    if (room_joinreq_list(g_mp_gid, rq, sizeof(rq)) > 0) {
+      const char *cur = rq; char obj[400];
+      while (next_object(&cur, obj, sizeof(obj))) {
+        char call[16] = "", body[200] = "";
+        jstr(obj, "call", call, sizeof(call)); jstr(obj, "body", body, sizeof(body));
+        if (!call[0]) continue;
+        if (n_req++) s_cat(rows, ",", sizeof(rows));
+        s_cat(rows, "{\"id\":\"req:", sizeof(rows)); jesc(rows, sizeof(rows), call);
+        s_cat(rows, "\",\"title\":\"", sizeof(rows)); jesc(rows, sizeof(rows), call);
+        s_cat(rows, "\",\"subtitle\":\"", sizeof(rows));
+        jesc(rows, sizeof(rows), wtr("label.asks_join", "Asks to join: "));
+        jesc(rows, sizeof(rows), body);
+        s_cat(rows, "\",\"icon\":\"person_add\"}", sizeof(rows));
+      }
+    }
+  }
+  int sent_base = n_req;
   for (int rank = 0; rank < 4; rank++) {
     const char *cur = g_mp_roster; char obj[128];
     while (next_object(&cur, obj, sizeof(obj))) {
@@ -1458,7 +1541,7 @@ static void push_members_page(int offset, int header, int reset) {
       if (!mp_match(call, role, st)) continue;
       total++;
       if (seen++ < offset || sent >= MP_PAGE) continue;
-      if (sent) s_cat(rows, ",", sizeof(rows));
+      if (sent || sent_base) s_cat(rows, ",", sizeof(rows));
       sent++;
       s_cat(rows, "{\"id\":\"go:", sizeof(rows)); jesc(rows, sizeof(rows), call);
       /* The name the person gave themselves leads; the callsign beside it is
@@ -1484,13 +1567,22 @@ static void push_members_page(int offset, int header, int reset) {
     char sub[48] = ""; char nb[12];
     u_lltoa((unsigned long long)n_all, nb); s_cat(sub, nb, sizeof(sub));
     s_cat(sub, n_all == 1 ? " member" : " members", sizeof(sub));
+    s_cat(sub, xgroup_public(g_mp_gid + 1) ? wtr("label.public_suffix", " - public: anyone reads")
+                                           : wtr("label.private_suffix", " - private: members read"), sizeof(sub));
     s_cat(o, ",\"subtitle\":\"", sz); s_cat(o, sub, sz); s_cat(o, "\"", sz);
     /* Only the admin can offer membership (26.3), and the group's own things
      * are signed with the group key: its picture (6.3.2, 10.1) and listing a
      * folder (10.2), which stops at the fifth level because every client
      * ignores deeper. A member gets the list alone. */
     s_cat(o, ",\"actions\":[", sz);
-    if (xgroup_is_admin(g_mp_gid + 1)) {
+    if (!xgroup_is_admin(g_mp_gid + 1) && xgroup_can_moderate(g_mp_gid + 1)) {
+      /* A moderator lets people in and takes places away (10.3). */
+      s_cat(o, "{\"id\":\"inv\",\"label\":\"", sz); jesc(o, sz, wtr("label.invite", "Invite")); s_cat(o, "\",\"icon\":\"person_add\",\"primary\":true},", sz);
+      s_cat(o, "{\"id\":\"leave\",\"label\":\"", sz);
+      jesc(o, sz, wtr("label.leave", "Leave group"));
+      s_cat(o, "\",\"icon\":\"logout\"}", sz);
+    }
+    else if (xgroup_is_admin(g_mp_gid + 1)) {
       s_cat(o, "{\"id\":\"inv\",\"label\":\"", sz); jesc(o, sz, wtr("label.invite", "Invite")); s_cat(o, "\",\"icon\":\"person_add\",\"primary\":true}", sz);
       if (xgroup_depth(g_mp_gid + 1) < 5) {
         s_cat(o, ",{\"id\":\"fold\",\"label\":\"", sz);
@@ -1498,6 +1590,13 @@ static void push_members_page(int offset, int header, int reset) {
         s_cat(o, "\",\"icon\":\"create_new_folder\"}", sz);
       }
       s_cat(o, ",{\"id\":\"pic\",\"label\":\"", sz); jesc(o, sz, wtr("label.picture", "Picture")); s_cat(o, "\",\"icon\":\"image\"}", sz);
+      /* Public (anyone reads) or private (sealed, members read), 10.7.1. */
+      s_cat(o, ",{\"id\":\"vis\",\"label\":\"", sz);
+      jesc(o, sz, xgroup_public(g_mp_gid + 1) ? wtr("label.make_private", "Make private")
+                                             : wtr("label.make_public", "Make public"));
+      s_cat(o, "\",\"icon\":\"", sz);
+      s_cat(o, xgroup_public(g_mp_gid + 1) ? "lock" : "public", sz);
+      s_cat(o, "\"}", sz);
     }
     else if (xgroup_may_post(g_mp_gid + 1)) {
       /* A member's own door out (26.3.1): leaving is theirs to decide. */
@@ -1546,7 +1645,7 @@ static void members_open(const char *gid) {
  * that callsign at once, as the admin's own; core.groups follows and finds
  * it already there. Inviting people is the member panel's business
  * (invite_open). */
-static void group_create(const char *nick) {
+static void group_create(const char *nick, int private_) {
   char call[16] = "";
   int n = hal_xprs_group_create(nick, s_len(nick), call, sizeof(call) - 1);
   if (n <= 0 || n >= (int)sizeof(call)) {
@@ -1554,6 +1653,8 @@ static void group_create(const char *nick) {
     return;
   }
   call[n] = 0;
+  /* Public by default (anyone reads, members post); private is sealed. */
+  if (private_) hal_xprs_group_private(call, s_len(call), 1);
   xgroups_refresh();
   char id[10] = "#"; s_cat(id, call, sizeof(id));
   char title[48]; room_title(id, title, sizeof(title));
@@ -1597,6 +1698,8 @@ static void folder_create(const char *gid, const char *nick) {
     return;
   }
   call[n] = 0;
+  /* A folder of a private group is private too. */
+  if (!xgroup_public(gid + 1)) hal_xprs_group_private(call, s_len(call), 1);
   folder_offer_members(gid, call);
   xgroups_refresh();
   char id[10] = "#"; s_cat(id, call, sizeof(id));
@@ -1675,7 +1778,7 @@ static void invite_pick(const char *buf) {
     return;
   }
   if (hal_xprs_group_invite(g_invite_gid, s_len(g_invite_gid), call, s_len(call)) != 0) {
-    notify("warning", wtr("msg.admin_invite", "Only the group's admin can invite"));
+    notify("warning", wtr("msg.admin_invite", "Only the group's admin or a moderator can invite"));
     return;
   }
   /* And into the folders below it that we keep: a group's topics are part of
@@ -2143,7 +2246,10 @@ void module_handle_event(void) {
     jesc(pm, sizeof(pm), wtr("prompt.newgroup_body", "A closed group: only the people you invite can post in it. The name is a label; the group's callsign comes from its own key."));
     s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
     jesc(pm, sizeof(pm), wtr("prompt.create", "Create"));
-    s_cat(pm, "\",\"input\":{\"hint\":\"", sizeof(pm));
+    s_cat(pm, "\",\"toggle\":{\"label\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.private_toggle", "Private: only members read (sealed)"));
+    s_cat(pm, "\",\"value\":false}", sizeof(pm));
+    s_cat(pm, ",\"input\":{\"hint\":\"", sizeof(pm));
     jesc(pm, sizeof(pm), wtr("prompt.group_name_hint", "group name"));
     s_cat(pm, "\",\"max\":24}}", sizeof(pm));
     hal_msg_send(pm, s_len(pm));
@@ -2159,12 +2265,27 @@ void module_handle_event(void) {
   }
   else if (s_eq(cmd, "members_tap")) {
     char id[48] = ""; jstr(buf, "members_id", id, sizeof(id));
+    /* Somebody asking to join: let them in, or decline. */
+    if (s_pre(id, "req:") && xgroup_is(g_mp_gid) && xgroup_can_moderate(g_mp_gid + 1)) {
+      char m[600] = "{\"type\":\"ui.prompt\",\"id\":\"xgreq:";
+      jesc(m, sizeof(m), g_mp_gid); s_cat(m, "|", sizeof(m)); jesc(m, sizeof(m), id + 4);
+      s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), id + 4);
+      s_cat(m, "\",\"body\":\"", sizeof(m));
+      jesc(m, sizeof(m), wtr("prompt.req_body", "Asks to join. Accepting invites them; they become a member when they say yes."));
+      s_cat(m, "\",\"chips\":[{\"label\":\"", sizeof(m));
+      jesc(m, sizeof(m), wtr("label.accept", "Accept"));
+      s_cat(m, "\",\"value\":\"yes\"},{\"label\":\"", sizeof(m));
+      jesc(m, sizeof(m), wtr("label.decline", "Decline"));
+      s_cat(m, "\",\"value\":\"no\"}]}", sizeof(m));
+      hal_msg_send(m, s_len(m));
+      return;
+    }
     /* A member tapped: talk to them. Blocking and the rest live on the
      * person's messages, in the menu every bubble already has. */
     if (s_pre(id, "go:") && !is_self_call(id + 3) && room_renderable(id + 3)) {
       /* The admin may also take the person's place away; anybody else
        * just talks to them. */
-      if (xgroup_is(g_mp_gid) && xgroup_is_admin(g_mp_gid + 1)) member_menu(id + 3);
+      if (xgroup_is(g_mp_gid) && xgroup_can_moderate(g_mp_gid + 1)) member_menu(id + 3);
       else {
         char title[48]; room_title(id + 3, title, sizeof(title));
         room_start(id + 3, title);
@@ -2190,6 +2311,18 @@ void module_handle_event(void) {
       hal_msg_send(pm, s_len(pm));
     }
     else if (s_eq(id, "leave") && xgroup_is(g_mp_gid)) leave_ask(g_mp_gid);
+    else if (s_eq(id, "vis") && xgroup_is(g_mp_gid) && xgroup_is_admin(g_mp_gid + 1)) {
+      int to_private = xgroup_public(g_mp_gid + 1);
+      if (hal_xprs_group_private(g_mp_gid + 1, s_len(g_mp_gid + 1), to_private ? 1 : 0) != 0) {
+        notify("warning", wtr("msg.admin_only", "Only the group's admin can do that"));
+      } else {
+        notify("info", to_private ? wtr("msg.now_private", "The group is private: only members read it")
+                                  : wtr("msg.now_public", "The group is public: anyone can read it"));
+        xgroups_refresh();
+        g_mp_roster_ok = 0;
+        push_members_page(0, 1, 1);
+      }
+    }
     else if (s_eq(id, "pic") && xgroup_is(g_mp_gid)) {
       char pm[96] = "{\"type\":\"ui.pick.picture\",\"id\":\"gpic:";
       jesc(pm, sizeof(pm), g_mp_gid);
@@ -2262,10 +2395,35 @@ void module_handle_event(void) {
       }
     }
     else if (s_pre(pid, "xgrm:")) remove_member(pid + 5);
+    else if (s_pre(pid, "xgask:")) group_ask(pid + 6);
+    else if (s_pre(pid, "xgreq:")) {
+      const char *bar = s_find(pid + 6, "|");
+      if (bar && bar[1]) {
+        char gid[12] = ""; unsigned n = (unsigned)(bar - (pid + 6));
+        if (n < sizeof(gid)) {
+          for (unsigned i = 0; i < n; i++) gid[i] = pid[6 + i];
+          gid[n] = 0;
+          const char *call = bar + 1;
+          if (s_eq(val, "yes")) {
+            if (hal_xprs_group_invite(gid + 1, s_len(gid + 1), call, s_len(call)) != 0) {
+              notify("warning", wtr("msg.admin_invite", "Only the group's admin or a moderator can invite"));
+              return;
+            }
+            char m2[64]; s_cpy(m2, wtr("msg.invited", "Invited "), sizeof(m2)); s_cat(m2, call, sizeof(m2));
+            notify("info", m2);
+          }
+          if (s_eq(val, "yes") || s_eq(val, "no")) {
+            room_joinreq_del(gid, call);
+            g_mp_roster_ok = 0;
+            push_members_page(0, 1, 1);
+          }
+        }
+      }
+    }
     else if (s_pre(pid, "xgleave:")) group_leave(pid + 8);
     else if (s_eq(pid, "xgnew:")) {
       char nick[64] = ""; jstr(buf, "prompt_input", nick, sizeof(nick));
-      group_create(nick);
+      group_create(nick, jbool(buf, "prompt_toggle"));
     }
     else if (s_pre(pid, "xgfold:")) {
       char nick[64] = ""; jstr(buf, "prompt_input", nick, sizeof(nick));

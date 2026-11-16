@@ -275,6 +275,10 @@ void db_init_index(int h) {
   db_exec(h, "CREATE INDEX IF NOT EXISTS statuses_ts ON statuses(ts DESC)", 0);
   db_exec(h, "CREATE TABLE IF NOT EXISTS blocked(call TEXT PRIMARY KEY)", 0);
   db_exec(h, "CREATE TABLE IF NOT EXISTS hidden(mid TEXT PRIMARY KEY)", 0);
+  /* People asking to join a closed group this station moderates (10.3):
+   * shown to its admin and moderators until accepted or declined. */
+  db_exec(h, "CREATE TABLE IF NOT EXISTS joinreq(gid TEXT NOT NULL, call TEXT NOT NULL, "
+             "body TEXT, ts INTEGER, PRIMARY KEY(gid, call))", 0);
   /* Which room a 1:1 we sent lives in, keyed by the receipt id the core
    * reports on xprs.status.tx -- so a tick can find its bubble after a
    * restart. */

@@ -1758,6 +1758,11 @@ int32_t hal_xprs_redact(const char *convo, uint32_t convo_len,
  * goes looking for the key (q:identity to the station, `cmd:history
  * kind:identity` to the chosen archivers, XPRS.md 12.12.1), and seals and
  * sends the message the moment the key arrives. The wapp is not told how.
+ * Bit 2 (4): [to] is a closed group this station is NOT a member of, and the
+ * words are its request to join (10.3): sent in the clear past the membership
+ * door, shown only to the group's admin and moderators. A closed group's
+ * ordinary post is sealed to its reading key when the group is private and
+ * goes in the clear when it is public (10.7.1).
  *
  * Returns  1 sealed, 2 plain,
  *          3 plain, to a node of another network (section 3.2, `MT...`)
@@ -1926,6 +1931,13 @@ int32_t hal_xprs_group_remove(const char *group, uint32_t group_len,
  * -1 = refused (not a member). */
 __attribute__((import_module("hal"), import_name("xprs_group_leave")))
 int32_t hal_xprs_group_leave(const char *group, uint32_t group_len);
+
+/* Make closed group `group` private (on=1: sealed with a reading key, only
+ * members read) or public (on=0: anyone reads, only members post), XPRS.md
+ * 10.7.1. A group is public until its admin says otherwise. 0 = done, -1 =
+ * refused (not the admin). */
+__attribute__((import_module("hal"), import_name("xprs_group_private")))
+int32_t hal_xprs_group_private(const char *group, uint32_t group_len, int32_t on);
 
 /* Correct a message this station sent to `to` (XPRS.md 7.8.1). Exactly
  * hal_xprs_message, plus `orig`, the section 5 identifier of the ORIGINAL it

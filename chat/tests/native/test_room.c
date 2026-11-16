@@ -26,7 +26,7 @@ void mock_set_groups(const char*);
 void mock_set_roster(const char*);
 const char* mock_created_nick(void); void mock_set_create_fail(int);
 const char* mock_invited(void); void mock_set_invite_rc(int32_t);
-const char* mock_removed(void); const char* mock_left(void); const char* mock_follow(void);
+const char* mock_removed(void); const char* mock_left(void); const char* mock_follow(void); const char* mock_private(void);
 const char* mock_accepted(void); void mock_set_accept_rc(int32_t);
 void mock_set_send_rc(int32_t);
 void mock_clear_wire(void);
@@ -1354,10 +1354,16 @@ TEST(finding_a_group_opens_the_group_room_and_the_core_decides_posting) {
   inbox_set("{\"command\":\"rooms_send\",\"rooms_convo\":\"#X5ROOM\",\"rooms_input\":\"let me in\"}");
   module_handle_event();
   CHECK(mock_last_wire() == 0 || !strstr(mock_last_wire(), "d:X5ROOM"));
-  /* Somebody never invited is told in the room, where the words were
-   * typed, and the words are not drawn as if they had gone. */
-  CHECK(cap_contains("Only members of this group can post here"));
-  CHECK(!cap_contains("let me in"));
+  /* Somebody never invited is offered to send the words as a request to
+   * join (10.3), and they are not drawn as if they had gone. */
+  CHECK(cap_contains("xgask:#X5ROOM") && cap_contains("Ask to join"));
+  CHECK(!cap_contains("ui.convo.msg"));
+  /* Saying yes sends them as the request, past the membership door. */
+  cap_clear(); mock_clear_wire();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgask:#X5ROOM\"}");
+  mock_set_send_rc(0);
+  module_handle_event();
+  CHECK(cap_contains("Your request to join was sent"));
 
   /* And when the core says yes, the post goes out and the bubble is drawn. */
   mock_set_send_rc(0);
@@ -1532,7 +1538,7 @@ TEST(the_admin_invites_from_the_member_panel_and_the_core_signs) {
   mock_set_invite_rc(-1);
   inbox_set("{\"command\":\"inviteuser_tap\",\"inviteuser_id\":\"go:X1FAR\"}");
   module_handle_event();
-  CHECK(cap_contains("Only the group's admin can invite"));
+  CHECK(cap_contains("Only the group's admin or a moderator can invite"));
   mock_set_invite_rc(0);
   mock_set_groups("[]");
 }
@@ -1972,7 +1978,7 @@ TEST(a_member_leaves_and_the_group_goes_from_the_list) {
   CHECK(cap_contains("You left"));
 }
 
-TEST(a_removed_member_is_told_and_sees_nothing_new) {
+TEST(a_removed_member_is_told_and_reads_only_what_is_public) {
   fresh();
   member_of("X5ROOM");
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5ROOM\"}");
@@ -1985,9 +1991,16 @@ TEST(a_removed_member_is_told_and_sees_nothing_new) {
   CHECK(cap_contains("You are no longer a member of this group"));
   cap_clear();
   event_push("xprs.message",
-    "{\"id\":\"gp0009\",\"type\":\"message\",\"from\":\"X1PEER\",\"to\":\"X5ROOM\",\"fields\":[[\"t\",\"message\"],[\"f\",\"X1PEER\"],[\"d\",\"X5ROOM\"],[\"m\",\"after you went\"]],\"scope\":\"global\",\"bearer\":\"lan\",\"sig\":\"verified\"}");
+    "{\"id\":\"gp0009\",\"type\":\"message\",\"from\":\"X1PEER\",\"to\":\"X5ROOM\",\"fields\":[[\"t\",\"message\"],[\"f\",\"X1PEER\"],[\"d\",\"X5ROOM\"],[\"m\",\"said in the open\"]],\"scope\":\"global\",\"bearer\":\"lan\",\"sig\":\"verified\"}");
   module_handle_event();
-  CHECK(!cap_contains("after you went"));
+  /* A post in the clear is public (10.7.1): anybody reads it. */
+  CHECK(cap_contains("said in the open"));
+  /* A private group's post opened by the core reaches members only. */
+  cap_clear();
+  event_push("xprs.message",
+    "{\"id\":\"gp0010\",\"type\":\"message\",\"call\":\"X1PEER\",\"from\":\"X1PEER\",\"title\":\"#X5ROOM\",\"to\":\"#X5ROOM\",\"content\":\"sealed words\",\"sig\":\"verified\",\"sealed\":true}");
+  module_handle_event();
+  CHECK(!cap_contains("sealed words"));
 }
 
 TEST(a_folder_names_its_group_and_an_invitation_says_so) {
@@ -2046,6 +2059,42 @@ TEST(a_reply_in_an_open_group_names_its_parent_in_r_and_keeps_every_word) {
   CHECK(w && strstr(w, "m:Great, I will bring a frisbee"));
   CHECK(w && !strstr(w, "+c51151"));
   CHECK(cap_contains("Great, I will bring a frisbee"));
+}
+
+TEST(a_request_to_join_reaches_the_moderator_who_accepts_it) {
+  fresh();
+  mock_set_groups("[{\"call\":\"X5ROOM\",\"nick\":\"room\",\"role\":\"mod\",\"public\":true}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5ROOM\"}");
+  module_handle_event();
+  cap_clear();
+  event_push("xprs.message",
+    "{\"id\":\"rq0001\",\"type\":\"message\",\"from\":\"X1NEW\",\"to\":\"X5ROOM\",\"request\":true,\"fields\":[[\"t\",\"message\"],[\"f\",\"X1NEW\"],[\"d\",\"X5ROOM\"],[\"m\",\"may I join?\"]],\"scope\":\"global\",\"bearer\":\"lan\",\"sig\":\"verified\"}");
+  module_handle_event();
+  /* Not a post: a note, and a row in the member panel. */
+  CHECK(cap_contains("X1NEW asks to join: may I join?"));
+  mock_set_roster("[{\"call\":\"X1SELF\",\"role\":\"mod\",\"state\":\"member\"}]");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5ROOM\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.members.set");
+    CHECK(m && strstr(m, "req:X1NEW") && strstr(m, "\"id\":\"inv\"") && strstr(m, "public: anyone reads")); }
+  cap_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgreq:#X5ROOM|X1NEW\",\"prompt_value\":\"yes\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_invited(), "X5ROOM:X1NEW") == 0);
+  { const char *m = cap_find("ui.members.set"); CHECK(m && !strstr(m, "req:X1NEW")); }
+}
+
+TEST(a_new_group_is_public_unless_the_toggle_says_private) {
+  fresh();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgnew:\",\"prompt_input\":\"Choir\"}");
+  module_handle_event();
+  CHECK(mock_private()[0] == 0);
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgnew:\",\"prompt_input\":\"Secret\",\"prompt_toggle\":true}");
+  module_handle_event();
+  CHECK(strstr(mock_private(), ":1") != 0);
 }
 
 TEST(info_tells_the_words_versions_and_how_the_packet_travelled) {
@@ -2203,11 +2252,13 @@ int main(void) {
   run_tapping_a_member_opens_a_conversation_not_a_block_prompt();
   run_the_admin_removes_a_member_after_asking_twice();
   run_a_member_leaves_and_the_group_goes_from_the_list();
-  run_a_removed_member_is_told_and_sees_nothing_new();
+  run_a_removed_member_is_told_and_reads_only_what_is_public();
   run_a_folder_names_its_group_and_an_invitation_says_so();
   run_a_heart_that_came_before_its_message_shows_when_the_message_lands();
   run_joining_an_open_group_follows_it_and_deleting_it_lets_go();
   run_a_reply_in_an_open_group_names_its_parent_in_r_and_keeps_every_word();
+  run_a_request_to_join_reaches_the_moderator_who_accepts_it();
+  run_a_new_group_is_public_unless_the_toggle_says_private();
   run_info_tells_the_words_versions_and_how_the_packet_travelled();
   printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;

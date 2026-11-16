@@ -87,6 +87,7 @@
   {"file":"bluetooth/bluetooth-0.2.1.wapp","id":"tools.xprs.bluetooth","version":"0.2.1","size":8348,"title":"Bluetooth","description":"Bluetooth - the BLE street mesh: devices within reach and how far messages can travel."},
   {"file":"bluetooth/bluetooth-0.2.2.wapp","id":"tools.xprs.bluetooth","version":"0.2.2","size":8769,"title":"Bluetooth","description":"See the phones and devices in Bluetooth range."},
   {"file":"bluetooth/bluetooth-0.2.3.wapp","id":"tools.xprs.bluetooth","version":"0.2.3","size":8821,"title":"Bluetooth","description":"See the phones and devices in Bluetooth range."},
+  {"file":"chat/chat-0.10.0.wapp","id":"tools.xprs.chat","version":"0.10.0","size":207351,"title":"Chat","description":"Group and private chats with the stations around you."},
   {"file":"chat/chat-0.2.100.wapp","id":"tools.geogram.chat","version":"0.2.100","size":179109,"title":"Chat","description":"Chat - messaging, live map and beacons over the APRS network."},
   {"file":"chat/chat-0.2.101.wapp","id":"tools.geogram.chat","version":"0.2.101","size":179343,"title":"Chat","description":"Chat - messaging, live map and beacons over the APRS network."},
   {"file":"chat/chat-0.2.102.wapp","id":"tools.geogram.chat","version":"0.2.102","size":179700,"title":"Chat","description":"Chat - messaging, live map and beacons over the APRS network."},

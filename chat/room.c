@@ -1486,6 +1486,22 @@ int room_set_notify(const char *id, int on) {
   return on ? 1 : 0;
 }
 
+/* Requests to join a closed group this station may answer (10.3). */
+void room_joinreq_add(const char *gid, const char *call, const char *body) {
+  pj_t p; pj_init(&p); pj_str(&p, gid); pj_str(&p, call); pj_str(&p, body ? body : "");
+  pj_int(&p, (long long)hal_time_epoch());
+  db_exec(g_idx, "INSERT OR REPLACE INTO joinreq(gid, call, body, ts) VALUES(?,?,?,?)", pj_done(&p));
+}
+void room_joinreq_del(const char *gid, const char *call) {
+  pj_t p; pj_init(&p); pj_str(&p, gid); pj_str(&p, call);
+  db_exec(g_idx, "DELETE FROM joinreq WHERE gid=? AND call=?", pj_done(&p));
+}
+int room_joinreq_list(const char *gid, char *out, unsigned cap) {
+  pj_t p; pj_init(&p); pj_str(&p, gid);
+  return db_query(g_idx, "SELECT call,body FROM joinreq WHERE gid=? ORDER BY ts DESC LIMIT 20",
+                  pj_done(&p), out, cap);
+}
+
 void room_delete(const char *id) {
   if (!room_known(id)) return;
   int h = room_handle(id);
