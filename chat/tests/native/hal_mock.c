@@ -204,6 +204,11 @@ static char g_invited[64]; static int32_t g_invite_rc=0;
 const char* mock_invited(void){ return g_invited; }
 void mock_set_invite_rc(int32_t rc){ g_invite_rc=rc; g_invited[0]=0; }
 int32_t hal_xprs_group_invite(const char* g,uint32_t gl,const char* c,uint32_t cl){ if(g_hk_invite) return g_hk_invite(g,gl,c,cl); snprintf(g_invited,sizeof(g_invited),"%.*s:%.*s",(int)gl,g,(int)cl,c); return g_invite_rc; }
+static char g_removed[64]; static char g_left[24];
+const char* mock_removed(void){ return g_removed; }
+const char* mock_left(void){ return g_left; }
+int32_t hal_xprs_group_remove(const char* g,uint32_t gl,const char* c,uint32_t cl){ snprintf(g_removed,sizeof(g_removed),"%.*s:%.*s",(int)gl,g,(int)cl,c); return 0; }
+int32_t hal_xprs_group_leave(const char* g,uint32_t gl){ snprintf(g_left,sizeof(g_left),"%.*s",(int)gl,g); return 0; }
 /* The member's own half: the mock records the group and, on success, turns
  * our role in what hal_xprs_groups reports from invited into member. */
 static char g_accepted[16]; static int32_t g_accept_rc=0;

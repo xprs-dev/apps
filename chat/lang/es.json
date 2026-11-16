@@ -144,5 +144,19 @@
   "room.group_unnamed": "Grupo ",
   "room.folder_unnamed": "Carpeta ",
   "prompt.not_now": "Ahora no",
-  "msg.not_member_note": "Solo los miembros de este grupo pueden escribir aquí. Tu mensaje NO se envió. Pide al administrador del grupo que te invite."
+  "msg.not_member_note": "Solo los miembros de este grupo pueden escribir aquí. Tu mensaje NO se envió. Pide al administrador del grupo que te invite.",
+  "label.leave": "Salir del grupo",
+  "label.message": "Mensaje",
+  "label.remove_member": "Quitar del grupo",
+  "prompt.remove_title": "¿Quitar a ",
+  "prompt.remove_body_a": "Ya no podrá escribir en ",
+  "prompt.remove_body_b": " ni en sus carpetas, y su salida queda en el registro del grupo. Lo que ya recibió se queda con esa persona.",
+  "prompt.remove": "Quitar",
+  "msg.admin_remove": "Solo el administrador del grupo puede quitar miembros",
+  "msg.removed": "Quitado: ",
+  "prompt.leave_title": "¿Salir de ",
+  "prompt.leave_body": "Ya no podrás escribir en él ni en sus carpetas, y sus conversaciones se borran de este dispositivo. Para volver hace falta una nueva invitación.",
+  "prompt.leave": "Salir",
+  "msg.leave_failed": "No se pudo salir del grupo",
+  "msg.left": "Has salido de "
 }

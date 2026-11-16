@@ -144,5 +144,19 @@
   "room.group_unnamed": "Grupo ",
   "room.folder_unnamed": "Pasta ",
   "prompt.not_now": "Agora não",
-  "msg.not_member_note": "Só os membros deste grupo podem escrever aqui. A sua mensagem NÃO foi enviada. Peça ao administrador do grupo para o convidar."
+  "msg.not_member_note": "Só os membros deste grupo podem escrever aqui. A sua mensagem NÃO foi enviada. Peça ao administrador do grupo para o convidar.",
+  "label.leave": "Sair do grupo",
+  "label.message": "Mensagem",
+  "label.remove_member": "Remover do grupo",
+  "prompt.remove_title": "Remover ",
+  "prompt.remove_body_a": "Deixa de poder escrever em ",
+  "prompt.remove_body_b": " nem nas suas pastas, e a remoção fica no registo do grupo. O que já recebeu fica consigo.",
+  "prompt.remove": "Remover",
+  "msg.admin_remove": "Só o administrador do grupo pode remover membros",
+  "msg.removed": "Removido: ",
+  "prompt.leave_title": "Sair de ",
+  "prompt.leave_body": "Deixa de poder escrever nele e nas suas pastas, e as conversas são removidas deste dispositivo. Voltar exige um novo convite.",
+  "prompt.leave": "Sair",
+  "msg.leave_failed": "Não foi possível sair do grupo",
+  "msg.left": "Saiu de "
 }

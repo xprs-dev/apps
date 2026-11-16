@@ -26,6 +26,7 @@ void mock_set_groups(const char*);
 void mock_set_roster(const char*);
 const char* mock_created_nick(void); void mock_set_create_fail(int);
 const char* mock_invited(void); void mock_set_invite_rc(int32_t);
+const char* mock_removed(void); const char* mock_left(void);
 const char* mock_accepted(void); void mock_set_accept_rc(int32_t);
 void mock_set_send_rc(int32_t);
 void mock_clear_wire(void);
@@ -1475,12 +1476,13 @@ TEST(the_admin_invites_from_the_member_panel_and_the_core_signs) {
     " {\"call\":\"X5MEMB\",\"nick\":\"memb\",\"role\":\"member\"}]");
   event_push("core.groups", "{}");
   module_handle_event();
-  /* Only the admin is offered Invite, New folder and Picture. */
+  /* Only the admin is offered Invite, New folder and Picture; a member gets
+   * their own door out, Leave, and nothing else. */
   cap_clear();
   inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5MEMB\"}");
   module_handle_event();
   { const char *m = cap_find("ui.members.set");
-    CHECK(m && strstr(m, "\"actions\":[]")); }
+    CHECK(m && strstr(m, "\"actions\":[{\"id\":\"leave\"") && !strstr(m, "\"id\":\"inv\"")); }
   cap_clear();
   inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5MINE\"}");
   module_handle_event();
@@ -1900,6 +1902,60 @@ TEST(tapping_a_member_opens_a_conversation_not_a_block_prompt) {
   CHECK(!cap_contains("ui.prompt"));
 }
 
+TEST(the_admin_removes_a_member_after_asking_twice) {
+  fresh();
+  mock_set_groups("[{\"call\":\"X5MINE\",\"nick\":\"mine\",\"role\":\"admin\"},"
+                  " {\"call\":\"X5SUB1\",\"nick\":\"sub\",\"role\":\"admin\",\"parent\":\"X5MINE\"}]");
+  mock_set_roster("[{\"call\":\"X1PEER\",\"role\":\"member\",\"state\":\"member\"}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5MINE\"}");
+  module_handle_event();
+  /* The admin's tap on a member offers a choice, not a chat at once. */
+  cap_clear();
+  inbox_set("{\"command\":\"members_tap\",\"members_id\":\"go:X1PEER\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.prompt");
+    CHECK(m && strstr(m, "xgmem:#X5MINE|X1PEER") && strstr(m, "Remove from group")); }
+  /* Remove is asked again: it goes on the group's record. */
+  cap_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgmem:#X5MINE|X1PEER\",\"prompt_value\":\"rm\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.prompt");
+    CHECK(m && strstr(m, "xgrm:#X5MINE|X1PEER") && strstr(m, "\"confirm\":\"Remove\"")); }
+  CHECK(mock_removed()[0] == 0);
+  cap_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgrm:#X5MINE|X1PEER\"}");
+  module_handle_event();
+  /* The group, then its folder: the last call is the folder's. */
+  CHECK(strcmp(mock_removed(), "X5SUB1:X1PEER") == 0);
+  CHECK(cap_contains("Removed X1PEER"));
+}
+
+TEST(a_member_leaves_and_the_group_goes_from_the_list) {
+  fresh();
+  mock_set_groups("[{\"call\":\"X5MEMB\",\"nick\":\"memb\",\"role\":\"member\"}]");
+  mock_set_roster("[{\"call\":\"X1SELF\",\"role\":\"member\",\"state\":\"member\"}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  CHECK(room_known("#X5MEMB"));
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5MEMB\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.members.set");
+    CHECK(m && strstr(m, "\"id\":\"leave\"") && !strstr(m, "\"id\":\"inv\"")); }
+  cap_clear();
+  inbox_set("{\"command\":\"members_action\",\"members_id\":\"leave\"}");
+  module_handle_event();
+  { const char *m = cap_find("ui.prompt"); CHECK(m && strstr(m, "xgleave:#X5MEMB")); }
+  CHECK(mock_left()[0] == 0);
+  cap_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgleave:#X5MEMB\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_left(), "X5MEMB") == 0);
+  CHECK(cap_contains("You left"));
+}
+
 TEST(info_tells_the_words_versions_and_how_the_packet_travelled) {
   fresh();
   dm("X1PEER", "aa1111", "the first words", 1, "", "", "verified", 1700000000);
@@ -2053,6 +2109,8 @@ int main(void) {
   run_a_message_without_a_key_waits_in_the_outbox_and_moves_when_it_goes();
   run_a_waiting_message_can_be_sent_in_the_open_instead();
   run_tapping_a_member_opens_a_conversation_not_a_block_prompt();
+  run_the_admin_removes_a_member_after_asking_twice();
+  run_a_member_leaves_and_the_group_goes_from_the_list();
   run_info_tells_the_words_versions_and_how_the_packet_travelled();
   printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;

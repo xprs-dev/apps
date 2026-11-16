@@ -1430,6 +1430,12 @@ static void push_members_page(int offset, int header, int reset) {
       }
       s_cat(o, ",{\"id\":\"pic\",\"label\":\"", sz); jesc(o, sz, wtr("label.picture", "Picture")); s_cat(o, "\",\"icon\":\"image\"}", sz);
     }
+    else if (xgroup_may_post(g_mp_gid + 1)) {
+      /* A member's own door out (26.3.1): leaving is theirs to decide. */
+      s_cat(o, "{\"id\":\"leave\",\"label\":\"", sz);
+      jesc(o, sz, wtr("label.leave", "Leave group"));
+      s_cat(o, "\",\"icon\":\"logout\"}", sz);
+    }
     s_cat(o, "],\"filters\":[{\"id\":\"\",\"label\":\"", sz); jesc(o, sz, wtr("label.all", "All")); s_cat(o, "\",\"count\":", sz);
     u_lltoa((unsigned long long)(n_all + n_inv), nb); s_cat(o, nb, sz);
     /* A chip only for a kind the group has: the core can list its admin as a
@@ -1600,6 +1606,101 @@ static void invite_pick(const char *buf) {
   notify("info", m);
   screen_close();
   push_group_members(g_invite_gid);
+}
+
+/* ── Removing a member, and leaving (26.3, 26.3.1) ───────────────────────
+ * A member tapped by the admin: talk to them, or take their place away. The
+ * removal is asked once more, because it is on the group's public record. */
+static void member_menu(const char *call) {
+  char m[600] = "{\"type\":\"ui.prompt\",\"id\":\"xgmem:";
+  jesc(m, sizeof(m), g_mp_gid); s_cat(m, "|", sizeof(m)); jesc(m, sizeof(m), call);
+  s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), call);
+  s_cat(m, "\",\"chips\":[{\"label\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("label.message", "Message"));
+  s_cat(m, "\",\"value\":\"msg\"},{\"label\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("label.remove_member", "Remove from group"));
+  s_cat(m, "\",\"value\":\"rm\"}]}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+/* "#X5...|CALL": confirm before the act. */
+static void remove_ask(const char *arg) {
+  const char *bar = s_find(arg, "|");
+  if (!bar) return;
+  char gid[12] = ""; unsigned n = (unsigned)(bar - arg);
+  if (n >= sizeof(gid)) return;
+  for (unsigned i = 0; i < n; i++) gid[i] = arg[i];
+  gid[n] = 0;
+  char t[48]; room_title(gid, t, sizeof(t));
+  char m[700] = "{\"type\":\"ui.prompt\",\"id\":\"xgrm:";
+  jesc(m, sizeof(m), arg);
+  s_cat(m, "\",\"title\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.remove_title", "Remove "));
+  jesc(m, sizeof(m), bar + 1); s_cat(m, "?", sizeof(m));
+  s_cat(m, "\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.remove_body_a", "They can no longer post in "));
+  jesc(m, sizeof(m), t);
+  jesc(m, sizeof(m), wtr("prompt.remove_body_b", " or its folders, and their removal is on the group's record. What they already received stays with them."));
+  s_cat(m, "\",\"confirm\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.remove", "Remove"));
+  s_cat(m, "\"}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+static void remove_member(const char *arg) {
+  const char *bar = s_find(arg, "|");
+  if (!bar || !bar[1]) return;
+  char gid[12] = ""; unsigned n = (unsigned)(bar - arg);
+  if (n >= sizeof(gid)) return;
+  for (unsigned i = 0; i < n; i++) gid[i] = arg[i];
+  gid[n] = 0;
+  const char *call = bar + 1;
+  if (!xgroup_is(gid) || hal_xprs_group_remove(gid + 1, s_len(gid + 1), call, s_len(call)) != 0) {
+    notify("warning", wtr("msg.admin_remove", "Only the group's admin can remove a member"));
+    return;
+  }
+  /* And from the folders below it that we keep: each roster is its own
+   * (10.2), and somebody removed from the group is out of its topics too. */
+  for (int i = 0; i < g_xgroup_n; i++)
+    if (s_eq(g_xgroup[i].role, "admin") && xgroup_below(g_xgroup[i].call, gid + 1))
+      hal_xprs_group_remove(g_xgroup[i].call, s_len(g_xgroup[i].call), call, s_len(call));
+  char m[64]; s_cpy(m, wtr("msg.removed", "Removed "), sizeof(m)); s_cat(m, call, sizeof(m));
+  notify("info", m);
+  g_mp_roster_ok = 0;
+  push_members_page(0, 1, 1);
+}
+static void leave_ask(const char *gid) {
+  char t[48]; room_title(gid, t, sizeof(t));
+  char m[600] = "{\"type\":\"ui.prompt\",\"id\":\"xgleave:";
+  jesc(m, sizeof(m), gid);
+  s_cat(m, "\",\"title\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.leave_title", "Leave "));
+  jesc(m, sizeof(m), t); s_cat(m, "?", sizeof(m));
+  s_cat(m, "\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.leave_body", "You will no longer post in it or its folders, and its conversations are removed from this device. Coming back takes a new invitation."));
+  s_cat(m, "\",\"confirm\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.leave", "Leave"));
+  s_cat(m, "\"}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+static void group_leave(const char *gid) {
+  if (!xgroup_is(gid) || hal_xprs_group_leave(gid + 1, s_len(gid + 1)) != 0) {
+    notify("warning", wtr("msg.leave_failed", "Could not leave the group"));
+    return;
+  }
+  /* Its folders too, and their conversations go with the group's. */
+  for (int i = 0; i < g_xgroup_n; i++)
+    if (xgroup_below(g_xgroup[i].call, gid + 1)) {
+      if (xgroup_may_post(g_xgroup[i].call))
+        hal_xprs_group_leave(g_xgroup[i].call, s_len(g_xgroup[i].call));
+      char fid[10] = "#"; s_cat(fid, g_xgroup[i].call, sizeof(fid));
+      room_delete(fid);
+    }
+  char t[48]; room_title(gid, t, sizeof(t));
+  room_delete(gid);
+  screen_close();
+  xgroups_refresh();
+  room_rail();
+  char m[80]; s_cpy(m, wtr("msg.left", "You left "), sizeof(m)); s_cat(m, t, sizeof(m));
+  notify("info", m);
 }
 
 static void go_tap(const char *buf, const char *key) {
@@ -1961,9 +2062,14 @@ void module_handle_event(void) {
     /* A member tapped: talk to them. Blocking and the rest live on the
      * person's messages, in the menu every bubble already has. */
     if (s_pre(id, "go:") && !is_self_call(id + 3) && room_renderable(id + 3)) {
-      char title[48]; room_title(id + 3, title, sizeof(title));
-      room_start(id + 3, title);
-      screen_close();
+      /* The admin may also take the person's place away; anybody else
+       * just talks to them. */
+      if (xgroup_is(g_mp_gid) && xgroup_is_admin(g_mp_gid + 1)) member_menu(id + 3);
+      else {
+        char title[48]; room_title(id + 3, title, sizeof(title));
+        room_start(id + 3, title);
+        screen_close();
+      }
     }
   }
   else if (s_eq(cmd, "members_action") && g_mp_gid[0]) {
@@ -1983,6 +2089,7 @@ void module_handle_event(void) {
       s_cat(pm, "\",\"max\":24}}", sizeof(pm));
       hal_msg_send(pm, s_len(pm));
     }
+    else if (s_eq(id, "leave") && xgroup_is(g_mp_gid)) leave_ask(g_mp_gid);
     else if (s_eq(id, "pic") && xgroup_is(g_mp_gid)) {
       char pm[96] = "{\"type\":\"ui.pick.picture\",\"id\":\"gpic:";
       jesc(pm, sizeof(pm), g_mp_gid);
@@ -2043,6 +2150,19 @@ void module_handle_event(void) {
       if (s_eq(val, "plain")) send_room_plain(pid + 9);
     }
     else if (s_pre(pid, "xgjoin:")) group_join(pid + 7);
+    else if (s_pre(pid, "xgmem:")) {
+      if (s_eq(val, "rm")) remove_ask(pid + 6);
+      else if (s_eq(val, "msg")) {
+        const char *call = s_find(pid + 6, "|");
+        if (call && room_renderable(call + 1)) {
+          char title[48]; room_title(call + 1, title, sizeof(title));
+          room_start(call + 1, title);
+          screen_close();
+        }
+      }
+    }
+    else if (s_pre(pid, "xgrm:")) remove_member(pid + 5);
+    else if (s_pre(pid, "xgleave:")) group_leave(pid + 8);
     else if (s_eq(pid, "xgnew:")) {
       char nick[64] = ""; jstr(buf, "prompt_input", nick, sizeof(nick));
       group_create(nick);

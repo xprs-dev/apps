@@ -1912,6 +1912,19 @@ __attribute__((import_module("hal"), import_name("xprs_group_invite")))
 int32_t hal_xprs_group_invite(const char *group, uint32_t group_len,
                               const char *call, uint32_t call_len);
 
+/* Take `call`'s place in closed group `group` away (section 26.3, a revoke).
+ * Signed with the group's key, so only the admin; it needs no acceptance
+ * (26.3.1). 0 = removed, -1 = refused (not the admin). */
+__attribute__((import_module("hal"), import_name("xprs_group_remove")))
+int32_t hal_xprs_group_remove(const char *group, uint32_t group_len,
+                              const char *call, uint32_t call_len);
+
+/* Leave closed group `group` (26.3.1's `leave:group`), signed with this
+ * station's own key: the member's decision, on the record. 0 = left,
+ * -1 = refused (not a member). */
+__attribute__((import_module("hal"), import_name("xprs_group_leave")))
+int32_t hal_xprs_group_leave(const char *group, uint32_t group_len);
+
 /* Correct a message this station sent to `to` (XPRS.md 7.8.1). Exactly
  * hal_xprs_message, plus `orig`, the section 5 identifier of the ORIGINAL it
  * corrects (never an earlier edit): the core builds `edit:<orig>`, seals it as

@@ -144,5 +144,19 @@
   "room.group_unnamed": "Gruppe ",
   "room.folder_unnamed": "Ordner ",
   "prompt.not_now": "Nicht jetzt",
-  "msg.not_member_note": "Nur Mitglieder dieser Gruppe können hier schreiben. Deine Nachricht wurde NICHT gesendet. Bitte die Person, die die Gruppe verwaltet, dich einzuladen."
+  "msg.not_member_note": "Nur Mitglieder dieser Gruppe können hier schreiben. Deine Nachricht wurde NICHT gesendet. Bitte die Person, die die Gruppe verwaltet, dich einzuladen.",
+  "label.leave": "Gruppe verlassen",
+  "label.message": "Nachricht",
+  "label.remove_member": "Aus der Gruppe entfernen",
+  "prompt.remove_title": "Entfernen: ",
+  "prompt.remove_body_a": "Die Person kann nicht mehr schreiben in ",
+  "prompt.remove_body_b": " und seinen Ordnern, und die Entfernung steht im Protokoll der Gruppe. Was sie schon erhalten hat, bleibt bei ihr.",
+  "prompt.remove": "Entfernen",
+  "msg.admin_remove": "Nur die Person, die die Gruppe verwaltet, kann Mitglieder entfernen",
+  "msg.removed": "Entfernt: ",
+  "prompt.leave_title": "Verlassen: ",
+  "prompt.leave_body": "Du kannst dort und in den Ordnern nicht mehr schreiben, und die Unterhaltungen werden von diesem Gerät entfernt. Zurück geht es nur mit einer neuen Einladung.",
+  "prompt.leave": "Verlassen",
+  "msg.leave_failed": "Gruppe konnte nicht verlassen werden",
+  "msg.left": "Verlassen: "
 }

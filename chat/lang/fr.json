@@ -144,5 +144,19 @@
   "room.group_unnamed": "Groupe ",
   "room.folder_unnamed": "Dossier ",
   "prompt.not_now": "Pas maintenant",
-  "msg.not_member_note": "Seuls les membres de ce groupe peuvent écrire ici. Votre message n'a PAS été envoyé. Demandez à l'administrateur du groupe de vous inviter."
+  "msg.not_member_note": "Seuls les membres de ce groupe peuvent écrire ici. Votre message n'a PAS été envoyé. Demandez à l'administrateur du groupe de vous inviter.",
+  "label.leave": "Quitter le groupe",
+  "label.message": "Message",
+  "label.remove_member": "Retirer du groupe",
+  "prompt.remove_title": "Retirer ",
+  "prompt.remove_body_a": "Cette personne ne pourra plus écrire dans ",
+  "prompt.remove_body_b": " ni dans ses dossiers, et ce retrait figure au registre du groupe. Ce qu'elle a déjà reçu lui reste.",
+  "prompt.remove": "Retirer",
+  "msg.admin_remove": "Seul l'administrateur du groupe peut retirer un membre",
+  "msg.removed": "Retiré : ",
+  "prompt.leave_title": "Quitter ",
+  "prompt.leave_body": "Vous ne pourrez plus écrire dans ce groupe ni dans ses dossiers, et ses conversations sont retirées de cet appareil. Revenir demande une nouvelle invitation.",
+  "prompt.leave": "Quitter",
+  "msg.leave_failed": "Impossible de quitter le groupe",
+  "msg.left": "Vous avez quitté "
 }

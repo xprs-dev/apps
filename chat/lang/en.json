@@ -144,5 +144,19 @@
   "room.group_unnamed": "Group ",
   "room.folder_unnamed": "Folder ",
   "prompt.not_now": "Not now",
-  "msg.not_member_note": "Only members of this group can post here. Your message was NOT sent. Ask the group's admin to invite you."
+  "msg.not_member_note": "Only members of this group can post here. Your message was NOT sent. Ask the group's admin to invite you.",
+  "label.leave": "Leave group",
+  "label.message": "Message",
+  "label.remove_member": "Remove from group",
+  "prompt.remove_title": "Remove ",
+  "prompt.remove_body_a": "They can no longer post in ",
+  "prompt.remove_body_b": " or its folders, and their removal is on the group's record. What they already received stays with them.",
+  "prompt.remove": "Remove",
+  "msg.admin_remove": "Only the group's admin can remove a member",
+  "msg.removed": "Removed ",
+  "prompt.leave_title": "Leave ",
+  "prompt.leave_body": "You will no longer post in it or its folders, and its conversations are removed from this device. Coming back takes a new invitation.",
+  "prompt.leave": "Leave",
+  "msg.leave_failed": "Could not leave the group",
+  "msg.left": "You left "
 }
