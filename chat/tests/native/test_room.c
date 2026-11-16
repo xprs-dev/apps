@@ -1491,6 +1491,11 @@ TEST(the_admin_invites_from_the_member_panel_and_the_core_signs) {
   module_handle_event();
   CHECK(cap_contains("\"ui.screen.open\",\"name\":\"@screen.invite\""));
   { const char *m = cap_find("ui.people.set"); CHECK(m && strstr(m, "inviteuser") && strstr(m, "go:X1NEAR")); }
+  /* People only, by the name they gave themselves: a station cannot sign an
+   * acceptance, so it is not offered. */
+  { const char *m = cap_find("ui.people.set");
+    CHECK(m && strstr(m, "Near (X1NEAR)"));
+    CHECK(m && !strstr(m, "X3STAT")); }
   /* A tap asks the core to offer membership, and says so. */
   cap_clear();
   inbox_set("{\"command\":\"inviteuser_tap\",\"inviteuser_id\":\"go:X1NEAR\"}");

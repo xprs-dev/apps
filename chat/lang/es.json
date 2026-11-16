@@ -135,5 +135,13 @@
   "label.wait_key": "Esperar la clave",
   "msg.sent_plain": "Enviado sin sellar",
   "msg.notify_on": "Notificaciones activadas para ",
-  "msg.notify_off": "Notificaciones desactivadas para "
+  "msg.notify_off": "Notificaciones desactivadas para ",
+  "label.you": " - tú",
+  "label.role_admin": "Administrador",
+  "label.role_mod": "Moderador",
+  "label.role_member": "Miembro",
+  "label.role_invited": "Invitado, aún no se ha unido",
+  "room.group_unnamed": "Grupo ",
+  "room.folder_unnamed": "Carpeta ",
+  "prompt.not_now": "Ahora no"
 }

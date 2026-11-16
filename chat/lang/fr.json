@@ -135,5 +135,13 @@
   "label.wait_key": "Attendre la clé",
   "msg.sent_plain": "Envoyé non scellé",
   "msg.notify_on": "Notifications activées pour ",
-  "msg.notify_off": "Notifications désactivées pour "
+  "msg.notify_off": "Notifications désactivées pour ",
+  "label.you": " - vous",
+  "label.role_admin": "Administrateur",
+  "label.role_mod": "Modérateur",
+  "label.role_member": "Membre",
+  "label.role_invited": "Invité, n'a pas encore rejoint",
+  "room.group_unnamed": "Groupe ",
+  "room.folder_unnamed": "Dossier ",
+  "prompt.not_now": "Pas maintenant"
 }

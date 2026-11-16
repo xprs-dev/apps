@@ -135,5 +135,13 @@
   "label.wait_key": "Auf den Schlüssel warten",
   "msg.sent_plain": "Unversiegelt gesendet",
   "msg.notify_on": "Benachrichtigungen an für ",
-  "msg.notify_off": "Benachrichtigungen aus für "
+  "msg.notify_off": "Benachrichtigungen aus für ",
+  "label.you": " - du",
+  "label.role_admin": "Admin",
+  "label.role_mod": "Moderator",
+  "label.role_member": "Mitglied",
+  "label.role_invited": "Eingeladen, noch nicht beigetreten",
+  "room.group_unnamed": "Gruppe ",
+  "room.folder_unnamed": "Ordner ",
+  "prompt.not_now": "Nicht jetzt"
 }

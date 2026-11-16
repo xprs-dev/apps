@@ -165,6 +165,12 @@ static void room_title(const char *id, char *out, unsigned osz) {
       s_cat(out, " (", osz); s_cat(out, id + 1, osz); s_cat(out, ")", osz);
       return;
     }
+    /* Its name has not arrived yet: say what it is rather than show the
+     * room's internal id ("#X5..."). */
+    s_cpy(out, (i >= 0 && g_xgroup[i].parent[0]) ? wtr("room.folder_unnamed", "Folder ")
+                                                  : wtr("room.group_unnamed", "Group "), osz);
+    s_cat(out, id + 1, osz);
+    return;
   }
   s_cpy(out, id, osz);
 }
@@ -220,7 +226,6 @@ static void join_offer(const char *call, int force) {
   char id[10] = "#"; s_cat(id, call, sizeof(id));
   /* Its name may not have arrived yet; the callsign alone is still a name. */
   char t[48]; room_title(id, t, sizeof(t));
-  if (t[0] == '#') { s_cpy(t, "the group ", sizeof(t)); s_cat(t, call, sizeof(t)); }
   /* Folders below it that we were offered too: one answer joins them all,
    * and the prompt says so, because consent is to what was named. */
   int folders = 0;
@@ -245,6 +250,8 @@ static void join_offer(const char *call, int force) {
   }
   s_cat(m, "\",\"confirm\":\"", sizeof(m));
   jesc(m, sizeof(m), wtr("prompt.join", "Join"));
+  s_cat(m, "\",\"cancel\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.not_now", "Not now"));
   s_cat(m, "\"}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
@@ -1372,10 +1379,18 @@ static void push_members_page(int offset, int header, int reset) {
       if (sent) s_cat(rows, ",", sizeof(rows));
       sent++;
       s_cat(rows, "{\"id\":\"go:", sizeof(rows)); jesc(rows, sizeof(rows), call);
-      s_cat(rows, "\",\"title\":\"", sizeof(rows)); jesc(rows, sizeof(rows), call);
-      if (is_self_call(call)) s_cat(rows, " (you)", sizeof(rows));
+      /* The name the person gave themselves leads; the callsign beside it is
+       * what identifies them (3). */
+      char nick[24] = ""; jstr(obj, "nick", nick, sizeof(nick));
+      s_cat(rows, "\",\"title\":\"", sizeof(rows));
+      if (nick[0]) { jesc(rows, sizeof(rows), nick); s_cat(rows, " (", sizeof(rows)); jesc(rows, sizeof(rows), call); s_cat(rows, ")", sizeof(rows)); }
+      else jesc(rows, sizeof(rows), call);
+      if (is_self_call(call)) jesc(rows, sizeof(rows), wtr("label.you", " - you"));
       s_cat(rows, "\",\"subtitle\":\"", sizeof(rows));
-      jesc(rows, sizeof(rows), inv ? "invited" : (role[0] ? role : "member"));
+      jesc(rows, sizeof(rows), inv ? wtr("label.role_invited", "Invited, has not joined yet")
+                             : s_eq(role, "admin") ? wtr("label.role_admin", "Admin")
+                             : s_eq(role, "mod") ? wtr("label.role_mod", "Moderator")
+                             : wtr("label.role_member", "Member"));
       s_cat(rows, "\",\"icon\":\"person\"}", sizeof(rows));
     }
   }
@@ -1546,9 +1561,9 @@ static void invite_open(const char *gid) {
   if (!xgroup_is(gid)) return;
   s_cpy(g_invite_gid, gid, sizeof(g_invite_gid));
   g_invite_q[0] = 0;
-  pf_hide_groups = 1;
+  pf_hide_groups = 1; pf_people_only = 1;
   render_people("inviteuser", "", 0);
-  pf_hide_groups = 0;
+  pf_hide_groups = 0; pf_people_only = 0;
   screen_open("@screen.invite");
 }
 static void invite_pick(const char *buf) {
@@ -1964,9 +1979,9 @@ void module_handle_event(void) {
   }
   else if (s_eq(cmd, "inviteuser_search")) {
     jstr(buf, "inviteuser_query", g_invite_q, sizeof(g_invite_q));
-    pf_hide_groups = 1;
+    pf_hide_groups = 1; pf_people_only = 1;
     render_people("inviteuser", g_invite_q, 0);
-    pf_hide_groups = 0;
+    pf_hide_groups = 0; pf_people_only = 0;
   }
   else if (s_eq(cmd, "inviteuser_tap")) invite_pick(buf);
   else if (s_eq(cmd, "finduser_search")) {

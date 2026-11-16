@@ -147,12 +147,16 @@ static int pf_is_self(const char *call) {
 #ifndef PF_MAX
 #define PF_MAX 128
 #endif
-typedef struct { char call[24]; char seen[24]; char bearer[16]; char nick[24]; int local; } pf_person;
+typedef struct { char call[24]; char seen[24]; char bearer[16]; char nick[24]; int local; int foreign; } pf_person;
 static pf_person pf_people[PF_MAX];
 static int pf_people_n;
 /* Set by a caller whose picker can only take a station (an invitation to a
  * group, say): groups are left out of the candidates. Off by default. */
 static int pf_hide_groups;
+/* Set by a caller whose picker takes a PERSON only (an invitation to a closed
+ * group: only a person can sign the acceptance). Stations, devices and other
+ * networks' nodes are left out. Off by default. */
+static int pf_people_only;
 
 static void pf_collect(const char *q) {
   pf_people_n = 0;
@@ -184,11 +188,14 @@ static void pf_collect(const char *q) {
       char kind[12]; pf_jstr(row, "kind", kind, sizeof kind);
       if (!call[0] || (!kind[0] && !pf_is_station(call)) || pf_is_self(call)) continue;
       if (pf_hide_groups && call[0] == 'X' && call[1] == '5') continue;
+      if (pf_people_only && !pf_streq(kind, "user")) continue;
       if (want[0]) {
         char up[24]; unsigned k = 0;
         for (; call[k] && k < sizeof up - 1; k++) up[k] = pf_up(call[k]);
         up[k] = 0;
-        if (!pf_find(up, want)) continue;
+        char nk[24] = ""; pf_jstr(row, "nick", nk, sizeof nk);
+        for (k = 0; nk[k]; k++) nk[k] = pf_up(nk[k]);
+        if (!pf_find(up, want) && !(nk[0] && pf_find(nk, want))) continue;
       }
       int dup = 0;
       for (int i = 0; i < pf_people_n; i++) if (pf_streq(pf_people[i].call, call)) { dup = 1; break; }
@@ -198,9 +205,10 @@ static void pf_collect(const char *q) {
       e->call[k] = 0;
       pf_jarr(row, "tags", 0, e->seen, sizeof e->seen);
       pf_jarr(row, "tags", 1, e->bearer, sizeof e->bearer);
-      /* Only a node of another network carries one: the name its network
-       * gave it, relayed by a gateway (6.3.1). */
+      /* The name a person gave themselves (their verified t:identity), or a
+       * node of another network's, relayed by a gateway (6.3.1). */
       pf_jstr(row, "nick", e->nick, sizeof e->nick);
+      e->foreign = pf_streq(kind, "foreign");
       e->local = local;
     }
     section++;
@@ -209,11 +217,15 @@ static void pf_collect(const char *q) {
 static void pf_row(char *o, unsigned sz, const pf_person *e) {
   int grp = e->call[0] == 'X' && e->call[1] == '5';
   pf_cat(o, sz, "{\"id\":\"go:"); if (grp) pf_cat(o, sz, "#"); pf_esc(o, sz, e->call);
-  pf_cat(o, sz, "\",\"title\":\""); pf_esc(o, sz, e->call);
+  /* A person's own name leads, the callsign beside it: the name is what
+   * people know each other by, the callsign what identifies them (3). */
+  pf_cat(o, sz, "\",\"title\":\"");
+  if (e->nick[0] && !e->foreign) { pf_esc(o, sz, e->nick); pf_cat(o, sz, " ("); pf_esc(o, sz, e->call); pf_cat(o, sz, ")"); }
+  else pf_esc(o, sz, e->call);
   pf_cat(o, sz, "\",\"subtitle\":\"");
   if (e->seen[0]) pf_esc(o, sz, e->seen); else pf_cat(o, sz, "heard");
   if (e->bearer[0]) { pf_cat(o, sz, " - "); pf_esc(o, sz, e->bearer); }
-  if (e->nick[0]) { pf_cat(o, sz, " - "); pf_esc(o, sz, e->nick); }
+  if (e->nick[0] && e->foreign) { pf_cat(o, sz, " - "); pf_esc(o, sz, e->nick); }
   pf_cat(o, sz, "\",\"icon\":\""); pf_cat(o, sz, grp ? "tag" : "person");
   pf_cat(o, sz, "\"}");
 }
