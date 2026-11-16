@@ -509,6 +509,12 @@ int browse_command(const char *cmd, const char *full)
             say(m);
             return 1;
         }
+        if (al_eq(id, "retry")) {
+            /* Asked for again by hand: a new visit now, not the answer kept. */
+            req_call("forget");
+            al_cat(g_req, "}", sizeof g_req);
+            sread();
+        }
         if (al_eq(id, "retry") || al_eq(id, "wait")) { push_station(); return 1; }
         if (!al_starts(id, "room:")) return 1;
         /* room:<X5call>:<kind> */
@@ -549,6 +555,22 @@ int browse_command(const char *cmd, const char *full)
         g_view = V_FOLDER;
         push_folder();
         screen_open("Folder", room_what(g_room_kind));
+        return 1;
+    }
+    /* The arrow on a screen this file opened: one level up, not all the way
+     * out. The host shows one such screen at a time and says when it went. */
+    if (al_eq(cmd, "screen_closed")) {
+        if (g_view == V_FOLDER) {
+            g_view = V_ROOM;
+            push_room();
+            screen_open("Room", room_what(g_room_kind));
+        } else if (g_view == V_ROOM) {
+            g_view = V_STATION;
+            push_station();
+            screen_open("Station", g_call);
+        } else if (g_view == V_STATION) {
+            g_view = V_LIST;
+        }
         return 1;
     }
     if (al_eq(cmd, "f_more")) { g_folder_off += 60; push_folder(); return 1; }

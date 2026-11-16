@@ -229,6 +229,26 @@ int main(void) {
         check(!named, "no request names a bearer");
     }
 
+    /* ── Back goes up one level ── */
+    cap_clear();
+    inbox_set("{\"command\":\"screen_closed\"}");
+    module_handle_event();
+    check(cap_contains("\"type\":\"ui.screen.open\",\"name\":\"Room\""), "back from a folder shows its room");
+    cap_clear();
+    inbox_set("{\"command\":\"screen_closed\"}");
+    module_handle_event();
+    check(cap_contains("\"type\":\"ui.screen.open\",\"name\":\"Station\""), "back from a room shows its station");
+    cap_clear();
+    inbox_set("{\"command\":\"screen_closed\"}");
+    module_handle_event();
+    check(!cap_contains("ui.screen.open"), "back from the station is the list");
+    inbox_set("{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"X3PTZM\"}}");
+    module_handle_event();
+    inbox_set("{\"command\":\"s_offers_tap\",\"fields\":{\"s_offers_id\":\"room:X562EL:gallery\"}}");
+    module_handle_event();
+    inbox_set("{\"command\":\"r_folders_tap\",\"fields\":{\"r_folders_id\":\"f:ab12cd\"}}");
+    module_handle_event();
+
     /* ── core.station redraws the screen that is open, the room does not ── */
     cap_clear();
     event_push("core.station");
