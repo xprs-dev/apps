@@ -275,7 +275,7 @@ static void handle_command(const char *cmd, const char *full) {
      * string, and that door was deleted for exactly this reason.
      *
      * This wapp draws the network. Messaging somebody is the chat wapp's, over
-     * the core's own send door, which ranks the bearers on evidence (36.0). If
+     * the core's own send door, which ranks the bearers on evidence (12.0). If
      * the button returns, it emits the existing "mesh.message" host action with
      * a CALLSIGN -- meta.callsign is already on every graph node -- which
      * deep-links into Chat and needs no new core code. */

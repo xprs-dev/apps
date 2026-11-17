@@ -15,7 +15,7 @@
  * help. Both answer the same question -- what is this device willing to do for
  * other people -- so they are answered in one place, with the two offers still
  * granted and revoked independently: enabling storage does not volunteer the
- * directory, and neither implies the other. XPRS.md 36.0 settles the naming:
+ * directory, and neither implies the other. XPRS.md 12.0 settles the naming:
  * on the air there is ONE role and one word for it, serve:archive, covering
  * kept packets, held mail and the directory alike.
  *
@@ -356,7 +356,7 @@ static void push_dashboard(void) {
     set_field_raw("mirror", str_eq(mirror, "true") ? "true" : "false");
 }
 
-/* ── Directory: the pointer half of the archiver role (XPRS.md 36.9) ─────
+/* ── Directory: the pointer half of the archiver role (XPRS.md 12.9) ─────
  *
  * A dashboard first, because a role nobody can inspect is a role nobody
  * trusts: how often anyone actually asks (with the 48-hour shape, not just a
@@ -669,7 +669,7 @@ int32_t module_handle_event(void) {
         push_dashboard();
     } else if (str_eq(cmd, "myarch_search")) {
         /* Empty query shows the saved list; a query searches heard callsigns
-         * with the shared finder (36.3 — the list is the operator's choice). */
+         * with the shared finder (12.3 — the list is the operator's choice). */
         char q[64] = "";
         json_raw(buf, "myarch_query", q, sizeof(q));
         if (q[0]) pf_render("myarch", q, 0);

@@ -30,7 +30,7 @@
  *     hal_xprs_read(id)                                  a person read it
  *
  * and the core composes, seals (9.2), signs (9.1), splits (6.6), ranks the
- * bearers (36.0), parks a custody copy and reports back. What arrives comes
+ * bearers (12.0), parks a custody copy and reports back. What arrives comes
  * on the event bus, reassembled, unsealed, verified, with its section 5
  * identifier, and only for the packet types this wapp subscribed to.
  *
@@ -875,7 +875,7 @@ static void send_message(const char *id, const char *text_in) {
 
   /* A 1:1. The return value says what ACTUALLY happened, and the bubble is
    * labelled with that: a message that could not be sealed is never drawn
-   * as private (36.8). */
+   * as private (12.8). */
   int priv = room_is_private(id);
   char mid[8] = "";
   /* Sealed by default (XPRS.md 6.4), and asking the core to KEEP the message

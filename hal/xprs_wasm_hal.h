@@ -1191,7 +1191,7 @@ uint32_t hal_relay_resolve_recv(char *out, uint32_t out_cap);
  * transport that cannot reach a station standing in the same room.
  *
  * hal_xprs_message replaced both: the wapp gives the words and the recipient,
- * the core seals (9.2), signs, splits (6.6), ranks the bearers (36.0), parks a
+ * the core seals (9.2), signs, splits (6.6), ranks the bearers (12.0), parks a
  * custody copy and hands back the section 5 identifier. */
 
 /* Relay list + live status as JSON [{"uri","scheme","status"}]. Returns bytes
@@ -1352,7 +1352,7 @@ int32_t hal_rns_hubs(char *out, uint32_t out_cap);
  * graph. [filter] is an optional JSON object
  * {"service":str,"xprsOnly":bool,"search":str,"role":str} (pass len 0 for
  * none). "role" buckets a node by what it serves: "super" (a super-archiver,
- * XPRS.md 36.9.4), "archive" (an archiver that is not a super), or "normal"
+ * XPRS.md 12.9.4), "archive" (an archiver that is not a super), or "normal"
  * (neither). An unrecognised value filters nothing. */
 __attribute__((import_module("hal"), import_name("rns_nodes")))
 int32_t hal_rns_nodes(const char *filter, uint32_t filter_len,
@@ -1761,7 +1761,7 @@ int32_t hal_xprs_redact(const char *convo, uint32_t convo_len,
  *
  * The wapp supplies the words and the recipient's callsign. The core composes
  * the packet, seals it (9.2) when [want_private] and it holds the recipient's
- * key, signs it (9.1), splits it (6.6), ranks the bearers on 36.0 evidence,
+ * key, signs it (9.1), splits it (6.6), ranks the bearers on 12.0 evidence,
  * parks a custody copy and remembers the section 5 identifier so a receipt can
  * find it later. Not one of those is a content decision.
  *
@@ -1796,7 +1796,7 @@ int32_t hal_xprs_redact(const char *convo, uint32_t convo_len,
  *            change that,
  *          0 malformed.
  *
- * -1 IS AN ANSWER, NOT AN ERROR, AND NEVER A DOWNGRADE. Section 36.8 makes
+ * -1 IS AN ANSWER, NOT AN ERROR, AND NEVER A DOWNGRADE. Section 12.8 makes
  * plaintext a disclosure, so a request to seal that cannot be met is refused
  * out loud rather than quietly sent in the clear. Label the bubble with the
  * RETURN VALUE, never with what was asked for.
