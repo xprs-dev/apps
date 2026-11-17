@@ -90,6 +90,7 @@
   {"file":"chat/chat-0.10.0.wapp","id":"tools.xprs.chat","version":"0.10.0","size":207351,"title":"Chat","description":"Group and private chats with the stations around you."},
   {"file":"chat/chat-0.10.1.wapp","id":"tools.xprs.chat","version":"0.10.1","size":207553,"title":"Chat","description":"Group and private chats with the stations around you."},
   {"file":"chat/chat-0.10.2.wapp","id":"tools.xprs.chat","version":"0.10.2","size":207850,"title":"Chat","description":"Group and private chats with the stations around you."},
+  {"file":"chat/chat-0.10.3.wapp","id":"tools.xprs.chat","version":"0.10.3","size":212461,"title":"Chat","description":"Group and private chats with the stations around you."},
   {"file":"chat/chat-0.2.100.wapp","id":"tools.geogram.chat","version":"0.2.100","size":179109,"title":"Chat","description":"Chat - messaging, live map and beacons over the APRS network."},
   {"file":"chat/chat-0.2.101.wapp","id":"tools.geogram.chat","version":"0.2.101","size":179343,"title":"Chat","description":"Chat - messaging, live map and beacons over the APRS network."},
   {"file":"chat/chat-0.2.102.wapp","id":"tools.geogram.chat","version":"0.2.102","size":179700,"title":"Chat","description":"Chat - messaging, live map and beacons over the APRS network."},

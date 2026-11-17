@@ -210,6 +210,7 @@ int32_t hal_xprs_group_invite(const char* g,uint32_t gl,const char* c,uint32_t c
 static char g_private[32];
 const char* mock_private(void){ return g_private; }
 int32_t hal_xprs_group_private(const char* g,uint32_t gl,int32_t on){ snprintf(g_private,sizeof(g_private),"%.*s:%d",(int)gl,g,(int)on); return 0; }
+int32_t hal_xprs_group_appoint(const char* g,uint32_t gl,const char* c,uint32_t cl,int32_t on){ (void)g;(void)gl;(void)c;(void)cl;(void)on; return 0; }
 static char g_follow[64];
 const char* mock_follow(void){ return g_follow; }
 int32_t hal_xprs_follow(const char* c,uint32_t cl,int32_t on){ snprintf(g_follow,sizeof(g_follow),"%.*s:%d",(int)cl,c,(int)on); return 0; }

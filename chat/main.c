@@ -151,7 +151,7 @@ static void chan_load(void) {
 /* `parent`: the group that lists this one as a folder (10.2), "" for a root.
  * The tree is the core's answer (hal_xprs_groups), five levels and no cycles
  * already applied; this wapp only draws it. */
-static struct { char call[8]; char nick[24]; char role[8]; char parent[8]; int pub; } g_xgroup[XGROUP_MAX];
+static struct { char call[8]; char nick[24]; char role[8]; char parent[8]; int pub; int mod_offer; } g_xgroup[XGROUP_MAX];
 static int g_xgroup_n;
 
 static int xgroup_is(const char *id) {
@@ -294,6 +294,33 @@ static void join_offer(const char *call, int force) {
   s_cat(m, "\"}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
+/* The admin asked us to moderate (10.3): once per session, like an
+ * invitation; we stay a member whatever the answer. */
+static char g_mod_asked[XGROUP_MAX][8];
+static void mod_offer(const char *call) {
+  if (!hal_ui_attached()) return;
+  int slot = -1;
+  for (int i = 0; i < XGROUP_MAX; i++) {
+    if (s_eq(g_mod_asked[i], call)) return;
+    if (slot < 0 && !g_mod_asked[i][0]) slot = i;
+  }
+  if (slot >= 0) s_cpy(g_mod_asked[slot], call, sizeof(g_mod_asked[slot]));
+  char id[10] = "#"; s_cat(id, call, sizeof(id));
+  char t[48]; room_title(id, t, sizeof(t));
+  char m[700] = "{\"type\":\"ui.prompt\",\"id\":\"xgmod:";
+  jesc(m, sizeof(m), id);
+  s_cat(m, "\",\"title\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.mod_title", "Moderate "));
+  jesc(m, sizeof(m), t); s_cat(m, "?", sizeof(m));
+  s_cat(m, "\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.mod_body", "The admin asks you to moderate this group: accept people who ask to join, remove members and correct or remove posts. You stay a member either way."));
+  s_cat(m, "\",\"confirm\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.mod_accept", "Accept"));
+  s_cat(m, "\",\"cancel\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.not_now", "Not now"));
+  s_cat(m, "\"}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
 static void xgroup_room(const char *id, const char *t) {
   int r = room_ensure(id, t);
   if (r == 1) { room_bump(id); room_rail(); }
@@ -329,6 +356,7 @@ static void xgroups_refresh(void) {
     if (!jstr(obj, "parent", g_xgroup[k].parent, sizeof(g_xgroup[k].parent)))
       g_xgroup[k].parent[0] = 0;
     g_xgroup[k].pub = jbool(obj, "public");
+    { char of[8] = ""; jstr(obj, "offer", of, sizeof(of)); g_xgroup[k].mod_offer = s_eq(of, "mod"); }
     if (!g_xgroup[k].call[0]) continue;
     g_xgroup_n++;
   }
@@ -375,6 +403,8 @@ static void xgroups_refresh(void) {
   }
   if (moved) room_rail();
   if (ask) join_offer(g_xgroup[ask - 1].call, 0);
+  else for (int k = 0; k < g_xgroup_n; k++)
+    if (g_xgroup[k].mod_offer && s_eq(g_xgroup[k].role, "member")) { mod_offer(g_xgroup[k].call); break; }
 }
 
 /* ── Read receipts (13.7): the one half a wapp owns ─────────────────────
@@ -1557,8 +1587,11 @@ static void push_members_page(int offset, int header, int reset) {
       jesc(rows, sizeof(rows), inv ? wtr("label.role_invited", "Invited, has not joined yet")
                              : s_eq(role, "admin") ? wtr("label.role_admin", "Admin")
                              : s_eq(role, "mod") ? wtr("label.role_mod", "Moderator")
+                             : jstr(obj, "offer", st, sizeof(st)) ? wtr("label.role_mod_asked", "Member - asked to moderate")
                              : wtr("label.role_member", "Member"));
-      s_cat(rows, "\",\"icon\":\"person\"}", sizeof(rows));
+      s_cat(rows, "\",\"icon\":\"", sizeof(rows));
+      s_cat(rows, s_eq(role, "admin") || s_eq(role, "mod") ? "admin_panel_settings" : "person", sizeof(rows));
+      s_cat(rows, "\"}", sizeof(rows));
     }
   }
   s_cat(o, ",\"total\":", sz);
@@ -1723,6 +1756,16 @@ static void picture_set(const char *gid, const char *token) {
   notify("info", wtr("msg.picture_changed", "Picture changed"));
 }
 
+/* The answer to mod_offer: `accept:mod`, signed by us (26.3.1). */
+static void mod_accept(const char *gid) {
+  if (!xgroup_is(gid)) return;
+  if (hal_xprs_group_accept(gid + 1, s_len(gid + 1)) != 0) {
+    notify("warning", wtr("msg.mod_closed", "The offer to moderate is no longer open"));
+    return;
+  }
+  notify("info", wtr("msg.mod_now", "You are now a moderator of this group"));
+  xgroups_refresh();
+}
 /* The answer to join_offer: the core signs our acceptance, and the roster
  * that moves fires core.groups, which refreshes the rail and the panel. */
 static void group_join(const char *gid) {
@@ -1811,8 +1854,22 @@ static void mp_label(const char *call, char *out, unsigned osz) {
     return;
   }
 }
+/* The role the panel's roster gives `call` ("member", "mod", "invited"...),
+ * and whether a moderator's offer waits on them. */
+static void mp_role(const char *call, char *role, unsigned rsz, int *asked) {
+  role[0] = 0; *asked = 0;
+  const char *cur = g_mp_roster; char obj[128];
+  while (g_mp_roster_ok && next_object(&cur, obj, sizeof(obj))) {
+    char c[16] = ""; jstr(obj, "call", c, sizeof(c));
+    if (!s_eq(c, call)) continue;
+    jstr(obj, "role", role, rsz);
+    char of[8] = ""; *asked = jstr(obj, "offer", of, sizeof(of)) != 0;
+    return;
+  }
+}
 static void member_menu(const char *call) {
   char who[48]; mp_label(call, who, sizeof(who));
+  char role[12]; int asked = 0; mp_role(call, role, sizeof(role), &asked);
   char m[600] = "{\"type\":\"ui.prompt\",\"id\":\"xgmem:";
   jesc(m, sizeof(m), g_mp_gid); s_cat(m, "|", sizeof(m)); jesc(m, sizeof(m), call);
   s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), who);
@@ -1820,8 +1877,39 @@ static void member_menu(const char *call) {
   jesc(m, sizeof(m), wtr("label.message", "Message"));
   s_cat(m, "\",\"value\":\"msg\"},{\"label\":\"", sizeof(m));
   jesc(m, sizeof(m), wtr("label.remove_member", "Remove from group"));
-  s_cat(m, "\",\"value\":\"rm\"}]}", sizeof(m));
+  s_cat(m, "\",\"value\":\"rm\"}", sizeof(m));
+  /* 10.3: only the admin appoints, and only a member can be asked. */
+  if (xgroup_is_admin(g_mp_gid + 1) && s_eq(role, "mod")) {
+    s_cat(m, ",{\"label\":\"", sizeof(m));
+    jesc(m, sizeof(m), wtr("label.unmake_mod", "Stop being moderator"));
+    s_cat(m, "\",\"value\":\"unmod\"}", sizeof(m));
+  } else if (xgroup_is_admin(g_mp_gid + 1) && s_eq(role, "member") && !asked) {
+    s_cat(m, ",{\"label\":\"", sizeof(m));
+    jesc(m, sizeof(m), wtr("label.make_mod", "Make moderator"));
+    s_cat(m, "\",\"value\":\"mod\"}", sizeof(m));
+  }
+  s_cat(m, "]}", sizeof(m));
   hal_msg_send(m, s_len(m));
+}
+/* "#X5...|CALL", on=1 appoint, 0 take the role back. */
+static void appoint(const char *arg, int on) {
+  const char *bar = s_find(arg, "|");
+  if (!bar || !bar[1]) return;
+  char gid[12] = ""; unsigned n = (unsigned)(bar - arg);
+  if (n >= sizeof(gid)) return;
+  for (unsigned i = 0; i < n; i++) gid[i] = arg[i];
+  gid[n] = 0;
+  if (!xgroup_is(gid) || hal_xprs_group_appoint(gid + 1, s_len(gid + 1), bar + 1, s_len(bar + 1), on) != 0) {
+    notify("warning", wtr("msg.admin_appoint", "Only the group's admin appoints moderators"));
+    return;
+  }
+  char who[48]; mp_label(bar + 1, who, sizeof(who));
+  char m[160];
+  s_cpy(m, on ? wtr("msg.mod_asked", "Asked to moderate: ") : wtr("msg.mod_stopped", "No longer a moderator: "), sizeof(m));
+  s_cat(m, who, sizeof(m));
+  notify("info", m);
+  g_mp_roster_ok = 0;
+  push_members_page(0, 1, 1);
 }
 /* "#X5...|CALL": confirm before the act. */
 static void remove_ask(const char *arg) {
@@ -2385,8 +2473,11 @@ void module_handle_event(void) {
       if (s_eq(val, "plain")) send_room_plain(pid + 9);
     }
     else if (s_pre(pid, "xgjoin:")) group_join(pid + 7);
+    else if (s_pre(pid, "xgmod:")) mod_accept(pid + 6);
     else if (s_pre(pid, "xgmem:")) {
       if (s_eq(val, "rm")) remove_ask(pid + 6);
+      else if (s_eq(val, "mod")) appoint(pid + 6, 1);
+      else if (s_eq(val, "unmod")) appoint(pid + 6, 0);
       else if (s_eq(val, "msg")) {
         const char *call = s_find(pid + 6, "|");
         if (call && room_renderable(call + 1)) {

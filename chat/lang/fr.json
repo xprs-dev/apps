@@ -183,5 +183,16 @@
   "msg.now_private": "Le groupe est privé : seuls les membres le lisent",
   "msg.now_public": "Le groupe est public : tout le monde peut le lire",
   "prompt.private_toggle": "Privé : seuls les membres lisent (scellé)",
-  "prompt.invite_plain_public": ". Rejoignez-le pour écrire ; vous pouvez déjà le lire."
+  "prompt.invite_plain_public": ". Rejoignez-le pour écrire ; vous pouvez déjà le lire.",
+  "label.role_mod_asked": "Membre - invité à modérer",
+  "label.make_mod": "Nommer modérateur",
+  "label.unmake_mod": "Retirer la modération",
+  "msg.admin_appoint": "Seul l'admin du groupe nomme des modérateurs",
+  "msg.mod_asked": "Invité à modérer : ",
+  "msg.mod_stopped": "N'est plus modérateur : ",
+  "prompt.mod_title": "Modérer ",
+  "prompt.mod_body": "L'admin vous demande de modérer ce groupe : accepter les demandes d'adhésion, retirer des membres et corriger ou supprimer des messages. Vous restez membre dans tous les cas.",
+  "prompt.mod_accept": "Accepter",
+  "msg.mod_closed": "L'offre de modération n'est plus ouverte",
+  "msg.mod_now": "Vous modérez maintenant ce groupe"
 }

@@ -1932,6 +1932,16 @@ int32_t hal_xprs_group_remove(const char *group, uint32_t group_len,
 __attribute__((import_module("hal"), import_name("xprs_group_leave")))
 int32_t hal_xprs_group_leave(const char *group, uint32_t group_len);
 
+/* The admin makes member `call` of closed group `group` a moderator (on=1: an
+ * offer, `grant role:mod`, which they take up with hal_xprs_group_accept and
+ * stay a member meanwhile) or takes the role back (on=0: at once, no consent
+ * needed), XPRS.md 10.3. hal_xprs_groups reports `"offer":"mod"` to the one
+ * asked, and hal_xprs_group_roster on their row. 0 = done, -1 = refused (not
+ * the admin). */
+__attribute__((import_module("hal"), import_name("xprs_group_appoint")))
+int32_t hal_xprs_group_appoint(const char *group, uint32_t group_len,
+                               const char *call, uint32_t call_len, int32_t on);
+
 /* Make closed group `group` private (on=1: sealed with a reading key, only
  * members read) or public (on=0: anyone reads, only members post), XPRS.md
  * 10.7.1. A group is public until its admin says otherwise. 0 = done, -1 =
