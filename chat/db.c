@@ -279,6 +279,9 @@ void db_init_index(int h) {
    * shown to its admin and moderators until accepted or declined. */
   db_exec(h, "CREATE TABLE IF NOT EXISTS joinreq(gid TEXT NOT NULL, call TEXT NOT NULL, "
              "body TEXT, ts INTEGER, PRIMARY KEY(gid, call))", 0);
+  /* Requests already answered, so a late copy of one is not asked again. */
+  db_exec(h, "CREATE TABLE IF NOT EXISTS joinreq_done(gid TEXT NOT NULL, call TEXT NOT NULL, "
+             "body TEXT NOT NULL, ts INTEGER, PRIMARY KEY(gid, call, body))", 0);
   /* Which room a 1:1 we sent lives in, keyed by the receipt id the core
    * reports on xprs.status.tx -- so a tick can find its bubble after a
    * restart. */

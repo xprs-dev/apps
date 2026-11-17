@@ -1492,12 +1492,26 @@ int room_joinreq_add(const char *gid, const char *call, const char *body) {
   { pj_t q; pj_init(&q); pj_str(&q, gid); pj_str(&q, call); pj_str(&q, body ? body : "");
     if (db_int(g_idx, "SELECT 1 AS n FROM joinreq WHERE gid=? AND call=? AND body=? LIMIT 1",
                pj_done(&q), 0) == 1) return 0; }
+  /* ...and one already answered stays answered: a copy that arrives after
+   * the accept or the decline (another bearer, a history page) is not a new
+   * request. Different words are. */
+  { pj_t q; pj_init(&q); pj_str(&q, gid); pj_str(&q, call); pj_str(&q, body ? body : "");
+    if (db_int(g_idx, "SELECT 1 AS n FROM joinreq_done WHERE gid=? AND call=? AND body=? LIMIT 1",
+               pj_done(&q), 0) == 1) return 0; }
   pj_t p; pj_init(&p); pj_str(&p, gid); pj_str(&p, call); pj_str(&p, body ? body : "");
   pj_int(&p, (long long)hal_time_epoch());
   db_exec(g_idx, "INSERT OR REPLACE INTO joinreq(gid, call, body, ts) VALUES(?,?,?,?)", pj_done(&p));
   return 1;
 }
 void room_joinreq_del(const char *gid, const char *call) {
+  long long now = (long long)hal_time_epoch();
+  /* A month of answers is plenty to absorb late copies; older ones go. */
+  { pj_t q; pj_init(&q); pj_int(&q, now - 30LL * 86400);
+    db_exec(g_idx, "DELETE FROM joinreq_done WHERE ts < ?", pj_done(&q)); }
+  { pj_t q; pj_init(&q); pj_int(&q, now); pj_str(&q, gid); pj_str(&q, call);
+    db_exec(g_idx, "INSERT OR REPLACE INTO joinreq_done(gid, call, body, ts) "
+                   "SELECT gid, call, COALESCE(body, ''), ? FROM joinreq WHERE gid=? AND call=?",
+            pj_done(&q)); }
   pj_t p; pj_init(&p); pj_str(&p, gid); pj_str(&p, call);
   db_exec(g_idx, "DELETE FROM joinreq WHERE gid=? AND call=?", pj_done(&p));
 }

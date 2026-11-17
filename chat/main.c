@@ -472,6 +472,10 @@ static void group_ask(const char *gid) {
 /* A request heard by this station, which may accept it. */
 static void join_request_note(const char *gid, const char *from, const char *text) {
   if (!from[0] || is_blocked(from)) return;
+  /* Already let in (invited, member or more): a late copy of what they once
+   * asked is not a request any more. */
+  if (xgroup_is(gid) && hal_xprs_group_role_at(gid + 1, s_len(gid + 1), from, s_len(from),
+                                               (uint32_t)hal_time_epoch()) >= 1) return;
   if (!room_joinreq_add(gid, from, text)) return;
   if (!room_known(gid)) return;
   char line[700]; s_cpy(line, from, sizeof(line));

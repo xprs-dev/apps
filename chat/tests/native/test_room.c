@@ -2091,6 +2091,12 @@ TEST(a_request_to_join_reaches_the_moderator_who_accepts_it) {
   module_handle_event();
   CHECK(strcmp(mock_invited(), "X5ROOM:X1NEW") == 0);
   { const char *m = cap_find("ui.members.set"); CHECK(m && !strstr(m, "req:X1NEW")); }
+  /* Answered, then a late copy of the same words: still answered. */
+  cap_clear();
+  event_push("xprs.message",
+    "{\"id\":\"rq0002\",\"type\":\"message\",\"from\":\"X1NEW\",\"to\":\"X5ROOM\",\"request\":true,\"fields\":[[\"t\",\"message\"],[\"f\",\"X1NEW\"],[\"d\",\"X5ROOM\"],[\"m\",\"may I join?\"]],\"scope\":\"global\",\"bearer\":\"lan\",\"sig\":\"verified\"}");
+  module_handle_event();
+  CHECK(!cap_contains("asks to join"));
 }
 
 TEST(a_new_group_is_public_unless_the_toggle_says_private) {
