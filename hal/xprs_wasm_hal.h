@@ -1510,6 +1510,19 @@ int32_t hal_xprs_station(const char *call, uint32_t call_len, char *out, uint32_
 __attribute__((import_module("hal"), import_name("xprs_position")))
 int32_t hal_xprs_position(char *out, uint32_t out_cap);
 
+/* Who is there by name (XPRS.md 12.9.4): people, stations and groups known
+ * by a verified t:identity, heard here or replayed by the archivers the core
+ * asks. [query] is JSON {"q":"text","kind":"group|user|station|","limit":n,
+ * "ask":true}; `q` matches any part of the callsign or the name, any case
+ * (`_` and `-` read as spaces); `ask` lets the core ask its archivers for
+ * names now, which it bounds. Subscribe to `core.names` to read again when
+ * names arrive. Reply, newest first: [{call,nick,kind,ts}], `kind` group,
+ * user or station, `ts` epoch seconds of its last announcement. Bytes
+ * written, negated size if `out` is small. */
+__attribute__((import_module("hal"), import_name("xprs_names")))
+int32_t hal_xprs_names(const char *query, uint32_t query_len,
+                       char *out, uint32_t out_cap);
+
 /* What an ADDRESS names, by the core's one rule: "user" (X1), "station" (X2,
  * X3 or a licence), "device" (X4), "foreign" (a node of another network,
  * MT/MC and eight hex, XPRS.md 3.2), "closed" (an X5 closed group) or "open"

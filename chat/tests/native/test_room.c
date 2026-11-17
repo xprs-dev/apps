@@ -24,7 +24,7 @@ const char* mock_bcast_scope(void); void mock_bcast_scope_clear(void);
 const char* mock_reads(void); int mock_reads_count(void); void mock_reads_clear(void);
 void mock_set_groups(const char*);
 void mock_set_roster(const char*);
-const char* mock_created_nick(void); void mock_set_create_fail(int); const char* mock_created_as(void);
+const char* mock_created_nick(void); void mock_set_create_fail(int); const char* mock_created_as(void); const char* mock_names_query(void);
 const char* mock_invited(void); void mock_set_invite_rc(int32_t);
 const char* mock_removed(void); const char* mock_left(void); const char* mock_follow(void); const char* mock_private(void);
 const char* mock_accepted(void); void mock_set_accept_rc(int32_t);
@@ -1044,9 +1044,9 @@ TEST(search_finds_our_own_chats_first) {
   CHECK(cap_contains("X1MEZA"));
 }
 
-/* Search also reads the messages themselves, and tags every section with the
- * filter tab the host shows it under: People, Messages or Groups. */
-TEST(search_finds_messages_and_tags_sections_for_the_tabs) {
+/* Search returns people, stations and groups, and tags every section with
+ * the filter tab the host shows it under. Messages are not searched here. */
+TEST(search_tags_people_stations_and_groups_and_reads_no_messages) {
   fresh();
   CHECK(room_ensure("X1MEZA", "X1MEZA") >= 0);
   CHECK(room_ensure("#NEWS", "#NEWS") >= 0);
@@ -1055,15 +1055,8 @@ TEST(search_finds_messages_and_tags_sections_for_the_tabs) {
   inbox_set("{\"command\":\"searchall_search\",\"searchall_query\":\"antenna\"}");
   module_handle_event();
   { const char *p = cap_find("\"field\":\"searchall\"");
-    CHECK(p && strstr(p, "{\"title\":\"Messages\",\"tab\":\"Messages\""));
-    CHECK(p && strstr(p, "the antenna mast is up"));
-    CHECK(p && strstr(p, "X1PEER in ")); }
-  /* Two letters match everything, so they search no messages. */
-  cap_clear();
-  inbox_set("{\"command\":\"searchall_search\",\"searchall_query\":\"an\"}");
-  module_handle_event();
-  { const char *p = cap_find("\"field\":\"searchall\"");
-    CHECK(p && !strstr(p, "\"title\":\"Messages\"")); }
+    CHECK(p && !strstr(p, "\"title\":\"Messages\""));
+    CHECK(p && !strstr(p, "the antenna mast is up")); }
   cap_clear();
   inbox_set("{\"command\":\"searchall_search\",\"searchall_query\":\"news\"}");
   module_handle_event();
@@ -1074,7 +1067,58 @@ TEST(search_finds_messages_and_tags_sections_for_the_tabs) {
   inbox_set("{\"command\":\"searchall_search\",\"searchall_query\":\"x1me\"}");
   module_handle_event();
   { const char *p = cap_find("\"field\":\"searchall\"");
-    CHECK(p && strstr(p, "{\"title\":\"Chats\",\"tab\":\"People\"")); }
+    CHECK(p && strstr(p, "{\"title\":\"Chats\",\"tab\":\"People\""));
+    /* Our own chat with X1MEZA is not offered again by name. */
+    CHECK(p && !strstr(p, "Found by name")); }
+  /* The heard stations go under Stations, the people under People. */
+  cap_clear();
+  inbox_set("{\"command\":\"searchall_search\",\"searchall_query\":\"\"}");
+  module_handle_event();
+  { const char *p = cap_find("\"field\":\"searchall\"");
+    const char *st = p ? strstr(p, "\"tab\":\"Stations\"") : 0;
+    CHECK(st && strstr(st, "go:X3STAT"));
+    CHECK(p && strstr(p, "{\"title\":\"Nearby\",\"tab\":\"People\"")); }
+}
+
+/* Somebody, or a group, this device never heard is found by name: the core's
+ * names (fed by its archivers) fill a "Found by name" section in each tab,
+ * and the search asks the core to ask its archivers. */
+TEST(search_finds_by_name_what_this_device_never_heard) {
+  fresh();
+  cap_clear();
+  inbox_set("{\"type\":\"action\",\"action\":\"rooms_search\"}");
+  module_handle_event();
+  { const char *p = cap_find("\"field\":\"searchall\"");
+    const char *g = p ? strstr(p, "{\"title\":\"Found by name\",\"tab\":\"Groups\"") : 0;
+    CHECK(g && strstr(g, "\"id\":\"go:#X5BOOK\"") && strstr(g, "Book club (X5BOOK)"));
+    CHECK(g && strstr(g, "Group - 2h"));
+    const char *u = p ? strstr(p, "{\"title\":\"Found by name\",\"tab\":\"People\"") : 0;
+    CHECK(u && strstr(u, "go:X1ANA") && strstr(u, "Ana (X1ANA)"));
+    const char *s = p ? strstr(p, "{\"title\":\"Found by name\",\"tab\":\"Stations\"") : 0;
+    CHECK(s && strstr(s, "go:X3MAST"));
+    /* Heard already: listed once, under Nearby. */
+    const char *first = p ? strstr(p, "go:X1NEAR") : 0;
+    CHECK(first && !strstr(first + 1, "go:X1NEAR")); }
+  CHECK(strstr(mock_names_query(), "\"ask\":true"));
+  /* Typing narrows it by name, any case. */
+  cap_clear();
+  inbox_set("{\"command\":\"searchall_search\",\"searchall_query\":\"book\"}");
+  module_handle_event();
+  { const char *p = cap_find("\"field\":\"searchall\"");
+    CHECK(p && strstr(p, "go:#X5BOOK") && !strstr(p, "go:X1ANA")); }
+  /* Names arriving while Search is open redraw it. */
+  cap_clear();
+  event_push("core.names", "{}");
+  module_handle_event();
+  CHECK(cap_contains("\"field\":\"searchall\""));
+  /* A tap opens the group, and Search stops redrawing. */
+  inbox_set("{\"command\":\"searchall_tap\",\"searchall_id\":\"go:#X5BOOK\"}");
+  module_handle_event();
+  CHECK(room_known("#X5BOOK"));
+  cap_clear();
+  event_push("core.names", "{}");
+  module_handle_event();
+  CHECK(!cap_contains("\"field\":\"searchall\""));
 }
 
 TEST(archive_takes_a_room_off_the_list_and_keeps_it_quiet) {
@@ -2273,7 +2317,8 @@ int main(void) {
   run_a_reply_buffer_too_small_halves_the_tail();
   run_a_room_file_name_is_safe_and_stable();
   run_search_finds_our_own_chats_first();
-  run_search_finds_messages_and_tags_sections_for_the_tabs();
+  run_search_tags_people_stations_and_groups_and_reads_no_messages();
+  run_search_finds_by_name_what_this_device_never_heard();
   run_archive_takes_a_room_off_the_list_and_keeps_it_quiet();
   run_delete_empties_a_room_and_a_refill_does_not_bring_it_back();
   run_statuses_of_people_we_talk_with_head_the_list();

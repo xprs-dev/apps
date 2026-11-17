@@ -70,7 +70,7 @@
     "hidden": true,
     "toolbar": true,
     "search": true,
-    "tabs": "People,Messages,Groups",
+    "tabs": "People,Stations,Groups",
     "tip": "@screen.search_tip",
     "children": [
       {

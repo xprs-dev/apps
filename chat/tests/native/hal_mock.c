@@ -1,3 +1,4 @@
+#include <ctype.h>
 #define _GNU_SOURCE
 /*
  * A native HAL for the chat wapp's tests: hal_db_* on zx, the host's own
@@ -292,6 +293,37 @@ int32_t hal_xprs_group_moderate(const char* g,uint32_t gl,const char* tg,uint32_
   if(g_hk_moderate) return g_hk_moderate(g,gl,tg,tgl,t,l,kind);
   snprintf(g_moderate_ask,sizeof(g_moderate_ask),"%.*s|%.*s|%.*s|%u",(int)gl,g,(int)tgl,tg,(int)l,t,kind);
   return 0;
+}
+/* hal_xprs_names: who is known by name (the core's archive names, filled by
+ * its archivers). A fixed set filtered by `q` as the core does: any part of
+ * the callsign or the name, any case. The last query is kept for the tests. */
+static char g_names_q[256];
+const char* mock_names_query(void){ return g_names_q; }
+static int mock_icontains(const char* hay, const char* needle){
+  if(!needle[0]) return 1;
+  for(const char* h=hay; *h; h++){
+    const char* a=h; const char* b=needle;
+    while(*a && *b && tolower((unsigned char)*a)==tolower((unsigned char)*b)){ a++; b++; }
+    if(!*b) return 1;
+  }
+  return 0;
+}
+int32_t hal_xprs_names(const char* q,uint32_t ql,char* o,uint32_t cap){
+  uint32_t k=ql<sizeof(g_names_q)-1?ql:sizeof(g_names_q)-1; memcpy(g_names_q,q,k); g_names_q[k]=0;
+  char want[64]=""; const char* p=strstr(g_names_q,"\"q\":\"");
+  if(p){ p+=5; int j=0; while(*p && *p!='"' && j<63) want[j++]=*p++; want[j]=0; }
+  static const struct { const char* call; const char* nick; const char* kind; } rows[] = {
+    {"X5BOOK","Book club","group"}, {"X1ANA","Ana","user"}, {"X3MAST","Hill mast","station"},
+    {"X1NEAR","Near","user"}, {"X1MEZA","Meza","user"} };
+  char out[2048]="["; int first=1;
+  for(unsigned i=0;i<sizeof(rows)/sizeof(rows[0]);i++){
+    if(!mock_icontains(rows[i].call,want) && !mock_icontains(rows[i].nick,want)) continue;
+    char r[200]; snprintf(r,sizeof(r),"%s{\"call\":\"%s\",\"nick\":\"%s\",\"kind\":\"%s\",\"ts\":%llu}",
+      first?"":",",rows[i].call,rows[i].nick,rows[i].kind,(unsigned long long)(hal_time_epoch()-7200));
+    strncat(out,r,sizeof(out)-strlen(out)-2); first=0;
+  }
+  strcat(out,"]");
+  uint32_t n=strlen(out); if(n>cap) return -(int32_t)n; memcpy(o,out,n); return n;
 }
 int32_t hal_xprs_stations(char* o,uint32_t cap){ const char* s="[{\"title\":\"Heard over the air (2)\",\"items\":[{\"id\":\"X1NEAR\",\"title\":\"X1NEAR\",\"subtitle\":\"BLE - -40 dBm - 3 packets\",\"tags\":[\"seen 20s ago\",\"BLE\",\"peers 2\"],\"kind\":\"user\",\"nick\":\"Near\"},{\"id\":\"X3STAT\",\"title\":\"X3STAT\",\"subtitle\":\"LAN\",\"tags\":[\"seen 9s ago\",\"LAN\"],\"kind\":\"station\"},{\"id\":\"X1TEST\",\"title\":\"X1TEST\",\"subtitle\":\"BLE\",\"tags\":[\"seen 5s ago\",\"BLE\"],\"kind\":\"user\"}]},{\"title\":\"Heard this hour (1)\",\"items\":[{\"id\":\"X1EARLIER\",\"title\":\"X1EARLIER\",\"subtitle\":\"LAN\",\"tags\":[\"seen 40m ago\",\"LAN\"],\"kind\":\"user\"}]},{\"title\":\"On Reticulum (1)\",\"items\":[{\"id\":\"X1FAR\",\"title\":\"X1FAR\",\"subtitle\":\"RNS\",\"tags\":[\"seen 3m ago\",\"RNS\"],\"kind\":\"user\"}]}]"; uint32_t n=strlen(s); if(n>cap) return -(int32_t)n; memcpy(o,s,n); return n; }
 int32_t hal_mesh_devices(char* o,uint32_t cap){ const char* s="[{\"title\":\"Nearby\",\"items\":[{\"id\":\"X1NEAR\",\"title\":\"X1NEAR\",\"subtitle\":\"phone\"}]},{\"title\":\"Multi-hop\",\"items\":[{\"id\":\"X1FAR\",\"title\":\"X1FAR\"}]}]"; uint32_t n=strlen(s); if(n>cap) return -(int32_t)n; memcpy(o,s,n); return n; }

@@ -1424,6 +1424,10 @@ static void status_backfill(void) {
   }
 }
 
+/* Search, below: redrawn when names arrive while it is the screen in use. */
+static int g_search_live;
+static void search_render(void);
+
 static void drain_core_events(void) {
   static char row[3200];
   char topic[64];
@@ -1443,6 +1447,7 @@ static void drain_core_events(void) {
       }
       continue;
     }
+    if (s_eq(topic, "core.names")) { if (g_search_live) search_render(); continue; }
     if (s_eq(topic, "xprs.unlock")) { on_xr_unlock(row); continue; }
     if (s_eq(topic, "xprs.status")) { on_status_packet(row); continue; }
     if (s_eq(topic, "xprs.redacted")) { on_xr_redacted(row); continue; }
@@ -1479,8 +1484,31 @@ static const char *s_find(const char *hay, const char *needle) {
 /* New-chat / Search: the generic callsign finder, now shared with other wapps
  * (../hal/people_finder.h). Same ui.people.set panel and the same `go:` ids as
  * before -- only the implementation moved out so any wapp can reuse it. */
+/* wtr answers in a buffer it reuses, so each word is copied out. */
+static void pf_words(void) {
+  static char w[5][48];
+  s_cpy(w[0], wtr("label.nearby", "Nearby"), sizeof(w[0]));
+  s_cpy(w[1], wtr("label.on_reticulum", "On Reticulum"), sizeof(w[1]));
+  s_cpy(w[2], wtr("label.found_by_name", "Found by name"), sizeof(w[2]));
+  s_cpy(w[3], wtr("label.group", "Group"), sizeof(w[3]));
+  s_cpy(w[4], wtr("label.callsign", "Callsign"), sizeof(w[4]));
+  pf_t_nearby = w[0]; pf_t_rns = w[1]; pf_t_known = w[2];
+  pf_t_group = w[3]; pf_t_typed = w[4];
+}
 static void render_people(const char *field, const char *q, int allow_group) {
+  pf_words();
   pf_render(field, q, allow_group);
+}
+
+/* Search: people, stations and groups -- the person's own chats and groups
+ * first, then who is heard, then who is known by name, which the core also
+ * asks its archivers for (hal_xprs_names). `core.names` redraws it while it
+ * is the screen in use. */
+static void search_render(void) {
+  static char chats[8192];
+  room_search_section(g_sa_q, chats, sizeof(chats));
+  pf_words();
+  pf_render_ex("searchall", g_sa_q, 1, chats);
 }
 /* THE MEMBERS PANEL (the host's reusable `members` field, screen "Group").
  * A group can have hundreds of members, so nothing here is pushed whole: the
@@ -2129,7 +2157,7 @@ static int g_catchup_pending;
 void module_init(void) {
   static const char *topics[] = { "xprs.message", "xprs.reaction", "xprs.status.tx",
                                   "core.groups", "xprs.unlock", "xprs.redacted",
-                                  "xprs.status" };
+                                  "xprs.status", "core.names" };
   for (unsigned i = 0; i < sizeof(topics) / sizeof(topics[0]); i++)
     hal_event_subscribe(topics[i], s_len(topics[i]));
   char id[16];
@@ -2231,7 +2259,7 @@ void module_handle_event(void) {
     cmd_field(buf, "mid", mid, sizeof(mid));
     if (id[0] && mid[0]) room_history(id, mid);
   }
-  else if (s_eq(cmd, "rooms_open") || s_eq(cmd, "conversations_open")) do_open(buf);
+  else if (s_eq(cmd, "rooms_open") || s_eq(cmd, "conversations_open")) { g_search_live = 0; do_open(buf); }
   /* The host names a thread it just deep-linked into: "open X1WATT, and by the
    * way that is what to call it". It has been sending this since the graph
    * grew a Message button and nothing here read it, so the name fell on the
@@ -2243,7 +2271,7 @@ void module_handle_event(void) {
     jstr(buf, "convo_name", title, sizeof(title));
     if (id[0] && title[0]) { room_set_title(id, title); room_rail(); }
   }
-  else if (s_eq(cmd, "nav_back")) room_left();
+  else if (s_eq(cmd, "nav_back")) { g_search_live = 0; room_left(); }
   else if (s_eq(cmd, "rooms_close") || s_eq(cmd, "conversations_close")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
     if (id[0]) room_close(id);
@@ -2473,21 +2501,16 @@ void module_handle_event(void) {
   else if (s_eq(cmd, "finduser_tap")) go_tap(buf, "finduser_id");
   else if (s_eq(cmd, "rooms_search")) {
     g_sa_q[0] = 0;
-    render_people("searchall", "", 1);
+    g_search_live = 1;
+    search_render();
     screen_open("@screen.search");
   }
   else if (s_eq(cmd, "searchall_search")) {
     jstr(buf, "searchall_query", g_sa_q, sizeof(g_sa_q));
-    static char chats[8192], msgs[6144];
-    room_search_section(g_sa_q, chats, sizeof(chats));
-    room_search_messages(g_sa_q, msgs, sizeof(msgs));
-    if (msgs[0]) {
-      if (chats[0]) s_cat(chats, ",", sizeof(chats));
-      s_cat(chats, msgs, sizeof(chats));
-    }
-    pf_render_ex("searchall", g_sa_q, 1, chats);
+    g_search_live = 1;
+    search_render();
   }
-  else if (s_eq(cmd, "searchall_tap")) go_tap(buf, "searchall_id");
+  else if (s_eq(cmd, "searchall_tap")) { g_search_live = 0; go_tap(buf, "searchall_id"); }
   else if (s_eq(cmd, "rooms_settings")) screen_open("@screen.settings");
   else if (s_eq(cmd, "profile_block")) {
     char c[16] = ""; jstr(buf, "profile_target", c, sizeof(c));
