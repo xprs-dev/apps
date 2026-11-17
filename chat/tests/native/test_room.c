@@ -24,7 +24,7 @@ const char* mock_bcast_scope(void); void mock_bcast_scope_clear(void);
 const char* mock_reads(void); int mock_reads_count(void); void mock_reads_clear(void);
 void mock_set_groups(const char*);
 void mock_set_roster(const char*);
-const char* mock_created_nick(void); void mock_set_create_fail(int);
+const char* mock_created_nick(void); void mock_set_create_fail(int); const char* mock_created_as(void);
 const char* mock_invited(void); void mock_set_invite_rc(int32_t);
 const char* mock_removed(void); const char* mock_left(void); const char* mock_follow(void); const char* mock_private(void);
 const char* mock_accepted(void); void mock_set_accept_rc(int32_t);
@@ -1488,6 +1488,26 @@ TEST(new_group_asks_for_a_name_and_opens_the_room_the_core_minted) {
   mock_set_groups("[]");
 }
 
+TEST(new_group_turns_through_offered_callsigns_and_creates_the_pick) {
+  fresh();
+  /* The prompt carries the callsigns the core offered, for the dialog to
+   * turn through (next, and back to the one before). */
+  inbox_set("{\"type\":\"action\",\"action\":\"rooms_newgroup\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"cycle\":{"));
+  CHECK(cap_contains("\"values\":[\"X5AAA1\",\"X5BBB2\",\"X5CCC3\"]"));
+  /* The callsign shown when Create was tapped is the group's. */
+  cap_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgnew:\",\"prompt_input\":\"Relay\",\"prompt_cycle\":\"X5BBB2\"}");
+  module_handle_event();
+  CHECK(strcmp(mock_created_as(), "X5BBB2") == 0);
+  CHECK(strcmp(mock_created_nick(), "Relay") == 0);
+  CHECK(room_known("#X5BBB2"));
+  CHECK(strcmp(room_open_id(), "#X5BBB2") == 0);
+  CHECK(cap_contains("Group created"));
+  mock_set_groups("[]");
+}
+
 TEST(the_admin_invites_from_the_member_panel_and_the_core_signs) {
   fresh();
   mock_set_invite_rc(0);
@@ -2238,6 +2258,7 @@ int main(void) {
   run_a_big_group_is_paged_and_searched_by_the_wapp();
   run_a_group_we_belong_to_gets_a_room_the_moment_it_exists();
   run_new_group_asks_for_a_name_and_opens_the_room_the_core_minted();
+  run_new_group_turns_through_offered_callsigns_and_creates_the_pick();
   run_the_admin_invites_from_the_member_panel_and_the_core_signs();
   run_a_group_that_becomes_ours_goes_to_the_top_of_the_rail();
   run_an_invitation_gets_a_room_and_a_join_prompt_and_the_core_signs();

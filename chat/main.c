@@ -1684,9 +1684,11 @@ static void members_open(const char *gid) {
  * that callsign at once, as the admin's own; core.groups follows and finds
  * it already there. Inviting people is the member panel's business
  * (invite_open). */
-static void group_create(const char *nick, int private_) {
+static void group_create(const char *nick, const char *pick, int private_) {
   char call[16] = "";
-  int n = hal_xprs_group_create(nick, s_len(nick), call, sizeof(call) - 1);
+  int n = pick && pick[0]
+    ? hal_xprs_group_create_as(nick, s_len(nick), pick, s_len(pick), call, sizeof(call) - 1)
+    : hal_xprs_group_create(nick, s_len(nick), call, sizeof(call) - 1);
   if (n <= 0 || n >= (int)sizeof(call)) {
     notify("warning", wtr("msg.group_failed", "Could not create the group"));
     return;
@@ -2334,15 +2336,48 @@ void module_handle_event(void) {
     screen_open("@screen.newchat");
   }
   else if (s_eq(cmd, "rooms_newgroup")) {
-    char pm[560] = "{\"type\":\"ui.prompt\",\"id\":\"xgnew:\",\"title\":\"";
+    static char pm[1400];
+    s_cpy(pm, "{\"type\":\"ui.prompt\",\"id\":\"xgnew:\",\"title\":\"", sizeof(pm));
     jesc(pm, sizeof(pm), wtr("prompt.newgroup_title", "New group"));
     s_cat(pm, "\",\"body\":\"", sizeof(pm));
-    jesc(pm, sizeof(pm), wtr("prompt.newgroup_body", "Public: anyone can read it; only members post, and people ask to join. Private: only members read it, sealed. The name is a label; the group's callsign comes from its own key."));
+    jesc(pm, sizeof(pm), wtr("prompt.newgroup_body", "Public: anyone can read it; only members post, and people ask to join. Private: only members read it, sealed. The name is a label; turn the arrows for another callsign."));
     s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
     jesc(pm, sizeof(pm), wtr("prompt.create", "Create"));
     s_cat(pm, "\",\"toggle\":{\"label\":\"", sizeof(pm));
     jesc(pm, sizeof(pm), wtr("prompt.private_toggle", "Private: only members read (sealed)"));
     s_cat(pm, "\",\"value\":false}", sizeof(pm));
+    /* The callsign it will wear, picked before it exists: the core offers a
+     * handful (each from its own key, 26.1) and the dialog turns through
+     * them, with a way back to the one shown before. */
+    char offer[512];
+    int on = hal_xprs_group_candidates(12, offer, sizeof(offer) - 1);
+    if (on > 0 && on < (int)sizeof(offer)) {
+      offer[on] = 0;
+      s_cat(pm, ",\"cycle\":{\"label\":\"", sizeof(pm));
+      jesc(pm, sizeof(pm), wtr("prompt.group_call", "Callsign"));
+      s_cat(pm, "\",\"next\":\"", sizeof(pm));
+      jesc(pm, sizeof(pm), wtr("prompt.group_call_next", "Another callsign"));
+      s_cat(pm, "\",\"back\":\"", sizeof(pm));
+      jesc(pm, sizeof(pm), wtr("prompt.group_call_back", "The previous one"));
+      s_cat(pm, "\",\"values\":[", sizeof(pm));
+      const char *c = offer;
+      int first = 1;
+      while (*c) {
+        const char *e = c;
+        while (*e && *e != ',') e++;
+        char one[16]; int k = (int)(e - c);
+        if (k > 0 && k < (int)sizeof(one)) {
+          for (int i = 0; i < k; i++) one[i] = c[i];
+          one[k] = 0;
+          s_cat(pm, first ? "\"" : ",\"", sizeof(pm));
+          jesc(pm, sizeof(pm), one);
+          s_cat(pm, "\"", sizeof(pm));
+          first = 0;
+        }
+        c = *e ? e + 1 : e;
+      }
+      s_cat(pm, "]}", sizeof(pm));
+    }
     s_cat(pm, ",\"input\":{\"hint\":\"", sizeof(pm));
     jesc(pm, sizeof(pm), wtr("prompt.group_name_hint", "group name"));
     s_cat(pm, "\",\"max\":24}}", sizeof(pm));
@@ -2520,7 +2555,8 @@ void module_handle_event(void) {
     else if (s_pre(pid, "xgleave:")) group_leave(pid + 8);
     else if (s_eq(pid, "xgnew:")) {
       char nick[64] = ""; jstr(buf, "prompt_input", nick, sizeof(nick));
-      group_create(nick, jbool(buf, "prompt_toggle"));
+      char pick[16] = ""; jstr(buf, "prompt_cycle", pick, sizeof(pick));
+      group_create(nick, pick, jbool(buf, "prompt_toggle"));
     }
     else if (s_pre(pid, "xgfold:")) {
       char nick[64] = ""; jstr(buf, "prompt_input", nick, sizeof(nick));

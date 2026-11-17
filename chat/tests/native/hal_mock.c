@@ -201,6 +201,11 @@ static char g_created_nick[64]; static int g_create_fail=0;
 const char* mock_created_nick(void){ return g_created_nick; }
 void mock_set_create_fail(int f){ g_create_fail=f; }
 int32_t hal_xprs_group_create(const char* n,uint32_t nl,char* o,uint32_t cap){ if(g_create_fail) return -1; uint32_t k=nl<sizeof(g_created_nick)-1?nl:sizeof(g_created_nick)-1; memcpy(g_created_nick,n,k); g_created_nick[k]=0; snprintf(g_groups,sizeof(g_groups),"[{\"call\":\"X5NEWG\",\"nick\":\"%s\",\"role\":\"admin\",\"admin\":true}]",g_created_nick); const char* c="X5NEWG"; uint32_t m=strlen(c); if(m>cap) return -1; memcpy(o,c,m); if(m<cap) o[m]=0; return m; }
+/* The core offers callsigns for a new group; create_as records the pick. */
+static char g_created_as[16];
+const char* mock_created_as(void){ return g_created_as; }
+int32_t hal_xprs_group_candidates(int32_t n,char* o,uint32_t cap){ (void)n; const char* c="X5AAA1,X5BBB2,X5CCC3"; uint32_t m=strlen(c); if(m>cap) return -(int32_t)m; memcpy(o,c,m); if(m<cap) o[m]=0; return m; }
+int32_t hal_xprs_group_create_as(const char* n,uint32_t nl,const char* c,uint32_t cl,char* o,uint32_t cap){ if(g_create_fail) return -1; uint32_t k=nl<sizeof(g_created_nick)-1?nl:sizeof(g_created_nick)-1; memcpy(g_created_nick,n,k); g_created_nick[k]=0; k=cl<sizeof(g_created_as)-1?cl:sizeof(g_created_as)-1; memcpy(g_created_as,c,k); g_created_as[k]=0; snprintf(g_groups,sizeof(g_groups),"[{\"call\":\"%s\",\"nick\":\"%s\",\"role\":\"admin\",\"admin\":true}]",g_created_as,g_created_nick); if(k>cap) return -1; memcpy(o,c,k); if(k<cap) o[k]=0; return k; }
 /* The core signs the offer; the mock records "<group>:<call>" and answers
  * what the test set (-1 = not the admin). */
 static char g_invited[64]; static int32_t g_invite_rc=0;

@@ -1909,6 +1909,23 @@ __attribute__((import_module("hal"), import_name("xprs_group_create")))
 int32_t hal_xprs_group_create(const char *nick, uint32_t nick_len,
                               char *out, uint32_t out_cap);
 
+/* Callsigns a new group could have (section 26.1), comma separated, `count`
+ * of them (1..64). The callsign derives from the group's key, so the core
+ * mints a key for each and holds it in memory until hal_xprs_group_create_as
+ * picks one; the wapp never sees the keys. Bytes written, negated size if
+ * `out` is small, -1 with no profile open. */
+__attribute__((import_module("hal"), import_name("xprs_group_candidates")))
+int32_t hal_xprs_group_candidates(int32_t count, char *out, uint32_t out_cap);
+
+/* hal_xprs_group_create with the callsign `call` the person picked among
+ * hal_xprs_group_candidates. One not offered (or empty) mints a fresh key,
+ * so `out` holds the group's callsign either way. Bytes written, -1 when no
+ * group could be minted. */
+__attribute__((import_module("hal"), import_name("xprs_group_create_as")))
+int32_t hal_xprs_group_create_as(const char *nick, uint32_t nick_len,
+                                 const char *call, uint32_t call_len,
+                                 char *out, uint32_t out_cap);
+
 /* Offer membership of closed group `group` ("X5..." or "#X5...") to station
  * `call` (section 26.3, a grant with role member), or to several stations
  * separated by commas, which the core grants in as few packets as fit. The
