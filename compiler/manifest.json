@@ -1,0 +1,13 @@
+{
+  "id": "tools.xprs.compiler",
+  "version": "0.1.0",
+  "kind": "addon",
+  "title": "Compiler",
+  "description": "Build wapps on this device and edit them with AI.",
+  "icon": "🛠️",
+  "tick_interval_ms": 1000,
+  "requires": {
+    "hal": ["log", "kv", "http", "file", "msg", "time"]
+  },
+  "tags": ["system", "developer"]
+}

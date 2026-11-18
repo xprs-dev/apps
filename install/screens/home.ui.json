@@ -18,6 +18,7 @@
               { "$": "action", "name": "refresh", "label": "Refresh", "icon": "refresh" },
               { "$": "action", "name": "view-list", "label": "List view", "icon": "view_list" },
               { "$": "action", "name": "view-grid", "label": "Grid view", "icon": "grid_view" },
+              { "$": "action", "name": "install-file", "label": "Install a file…", "icon": "file_open" },
               { "$": "action", "name": "open-sources", "label": "Repositories…", "icon": "tune" }
             ]
           }

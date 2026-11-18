@@ -997,6 +997,48 @@ void module_tick(void) {
      * with messages, and the cards are pushed when they arrive. */
 }
 
+/* Install a .wapp the person picked (file.open from the host's picker):
+ * the same wapp.install a catalog entry sends, from the file's own folder.
+ * The name is the file's, without ".wapp" and a trailing "-<version>". */
+static void install_picked_file(const char *buf, uint32_t n) {
+    char path[512] = "";
+    json_find_str(buf, buf + n, "path", path, sizeof(path));
+    unsigned len = str_len(path);
+    unsigned slash = len;
+    while (slash > 0 && path[slash - 1] != '/' && path[slash - 1] != '\\')
+        slash--;
+    if (len == 0 || slash == 0 || slash == len) {
+        send_output("Could not read that file.", "err");
+        return;
+    }
+    char dir[512];
+    char file[160];
+    str_copy(dir, path, slash);
+    str_copy(file, path + slash, sizeof(file));
+    char name[64];
+    str_copy(name, file, sizeof(name));
+    unsigned nl = str_len(name);
+    if (nl > 5 && str_eq(name + nl - 5, ".wapp")) name[nl -= 5] = '\0';
+    for (unsigned i = nl; i > 1; i--) {
+        if (name[i - 1] == '-' && name[i] >= '0' && name[i] <= '9') {
+            name[i - 1] = '\0';
+            break;
+        }
+    }
+    char msg[1024] = "{\"type\":\"wapp.install\",\"source\":\"";
+    str_cat(msg, dir, sizeof(msg));
+    str_cat(msg, "\",\"file\":\"", sizeof(msg));
+    str_cat(msg, file, sizeof(msg));
+    str_cat(msg, "\",\"name\":\"", sizeof(msg));
+    str_cat(msg, name, sizeof(msg));
+    str_cat(msg, "\",\"version\":\"\"}", sizeof(msg));
+    hal_msg_send(msg, str_len(msg));
+    char out[200] = "Installing ";
+    str_cat(out, file, sizeof(out));
+    str_cat(out, "...", sizeof(out));
+    send_output(out, "info");
+}
+
 static int json_has_key(const char *buf, const char *key) {
     unsigned kl = str_len(key);
     for (const char *p = buf; *p; p++) {
@@ -1019,6 +1061,10 @@ void module_handle_event(void) {
     buf[n] = '\0';
 
     /* JSON messages: {"command":"..."} or {"type":"action","action":"save","fields":{...}} */
+    if (buf[0] == '{' && json_has_key(buf, "\"file.open\"")) {
+        install_picked_file(buf, n);
+        return;
+    }
     if (buf[0] == '{') {
         /* Check for action (settings save) */
         const char *action_key = "\"action\":\"";
@@ -1047,6 +1093,15 @@ void module_handle_event(void) {
                 }
                 if (str_eq(action, "refresh")) {
                     begin_fetch_all();
+                    return;
+                }
+                if (str_eq(action, "install-file")) {
+                    /* A .wapp someone passed on: the host shows its file
+                     * picker and answers with file.open. */
+                    const char *m =
+                        "{\"type\":\"file.pick\",\"extensions\":[\"wapp\"],"
+                        "\"mode\":\"install\"}";
+                    hal_msg_send(m, str_len(m));
                     return;
                 }
                 if (str_eq(action, "open-sources")) {
