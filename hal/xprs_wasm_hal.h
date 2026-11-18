@@ -1939,8 +1939,11 @@ int32_t hal_xprs_group_create(const char *nick, uint32_t nick_len,
 /* Callsigns a new group could have (section 26.1), comma separated, `count`
  * of them (1..64). The callsign derives from the group's key, so the core
  * mints a key for each and holds it in memory until hal_xprs_group_create_as
- * picks one; the wapp never sees the keys. Bytes written, negated size if
- * `out` is small, -1 with no profile open. */
+ * picks one; the wapp never sees the keys. A negative `count` asks for that
+ * many MORE, keeping the ones already offered (so a dialog can turn through
+ * callsigns without end and still create any shown before); only the new ones
+ * are written. Bytes written, negated size if `out` is small, -1 with no
+ * profile open. */
 __attribute__((import_module("hal"), import_name("xprs_group_candidates")))
 int32_t hal_xprs_group_candidates(int32_t count, char *out, uint32_t out_cap);
 

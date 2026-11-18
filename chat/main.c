@@ -1712,6 +1712,34 @@ static void members_open(const char *gid) {
  * that callsign at once, as the admin's own; core.groups follows and finds
  * it already there. Inviting people is the member panel's business
  * (invite_open). */
+/* `count` callsigns a new group could wear, as JSON strings ("X5..","X5..")
+ * into `out`; with `more`, added to the ones the core already offered
+ * (hal_xprs_group_candidates: a negative count). 0 when the core had none. */
+static int group_call_values(int count, int more, char *out, unsigned cap) {
+  char offer[400];
+  int on = hal_xprs_group_candidates(more ? -count : count, offer, sizeof(offer) - 1);
+  if (on <= 0 || on >= (int)sizeof(offer)) return 0;
+  offer[on] = 0;
+  out[0] = 0;
+  const char *c = offer;
+  int first = 1;
+  while (*c) {
+    const char *e = c;
+    while (*e && *e != ',') e++;
+    char one[16]; int k = (int)(e - c);
+    if (k > 0 && k < (int)sizeof(one)) {
+      for (int i = 0; i < k; i++) one[i] = c[i];
+      one[k] = 0;
+      s_cat(out, first ? "\"" : ",\"", cap);
+      jesc(out, cap, one);
+      s_cat(out, "\"", cap);
+      first = 0;
+    }
+    c = *e ? e + 1 : e;
+  }
+  return !first;
+}
+
 static void group_create(const char *nick, const char *pick, int private_) {
   char call[16] = "";
   int n = pick && pick[0]
@@ -2374,36 +2402,20 @@ void module_handle_event(void) {
     s_cat(pm, "\",\"toggle\":{\"label\":\"", sizeof(pm));
     jesc(pm, sizeof(pm), wtr("prompt.private_toggle", "Private: only members read (sealed)"));
     s_cat(pm, "\",\"value\":false}", sizeof(pm));
-    /* The callsign it will wear, picked before it exists: the core offers a
-     * handful (each from its own key, 26.1) and the dialog turns through
-     * them, with a way back to the one shown before. */
-    char offer[512];
-    int on = hal_xprs_group_candidates(12, offer, sizeof(offer) - 1);
-    if (on > 0 && on < (int)sizeof(offer)) {
-      offer[on] = 0;
+    /* The callsign it will wear, picked before it exists: the core offers
+     * some (each from its own key, 26.1) and the dialog turns through them,
+     * with a way back to the one shown before. `more`: the list has no end;
+     * near its end the host asks for more (prompt_more, below). */
+    char vals[400] = "";
+    if (group_call_values(8, 0, vals, sizeof(vals))) {
       s_cat(pm, ",\"cycle\":{\"label\":\"", sizeof(pm));
       jesc(pm, sizeof(pm), wtr("prompt.group_call", "Callsign"));
       s_cat(pm, "\",\"next\":\"", sizeof(pm));
       jesc(pm, sizeof(pm), wtr("prompt.group_call_next", "Another callsign"));
       s_cat(pm, "\",\"back\":\"", sizeof(pm));
       jesc(pm, sizeof(pm), wtr("prompt.group_call_back", "The previous one"));
-      s_cat(pm, "\",\"values\":[", sizeof(pm));
-      const char *c = offer;
-      int first = 1;
-      while (*c) {
-        const char *e = c;
-        while (*e && *e != ',') e++;
-        char one[16]; int k = (int)(e - c);
-        if (k > 0 && k < (int)sizeof(one)) {
-          for (int i = 0; i < k; i++) one[i] = c[i];
-          one[k] = 0;
-          s_cat(pm, first ? "\"" : ",\"", sizeof(pm));
-          jesc(pm, sizeof(pm), one);
-          s_cat(pm, "\"", sizeof(pm));
-          first = 0;
-        }
-        c = *e ? e + 1 : e;
-      }
+      s_cat(pm, "\",\"more\":true,\"values\":[", sizeof(pm));
+      s_cat(pm, vals, sizeof(pm));
       s_cat(pm, "]}", sizeof(pm));
     }
     s_cat(pm, ",\"input\":{\"hint\":\"", sizeof(pm));
@@ -2526,6 +2538,19 @@ void module_handle_event(void) {
      * answer arrives on xprs.unlock -- reveal, or a prompt for a passphrase. */
     char mid[24] = ""; jstr(buf, "reveal_mid", mid, sizeof(mid));
     if (mid[0]) hal_xprs_unlock(mid, s_len(mid), "", 0);
+  }
+  else if (s_eq(cmd, "prompt_more")) {
+    /* The new-group dialog reached the end of its callsigns: more, added to
+     * the ones offered (any shown before can still be created). */
+    char pid[56] = ""; jstr(buf, "prompt_id", pid, sizeof(pid));
+    char vals[400] = "";
+    if (s_eq(pid, "xgnew:") && group_call_values(8, 1, vals, sizeof(vals))) {
+      static char m[520];
+      s_cpy(m, "{\"type\":\"ui.prompt.cycle\",\"id\":\"xgnew:\",\"values\":[", sizeof(m));
+      s_cat(m, vals, sizeof(m));
+      s_cat(m, "]}", sizeof(m));
+      hal_msg_send(m, s_len(m));
+    }
   }
   else if (s_eq(cmd, "prompt")) {
     char pid[56] = "", val[24] = "";
