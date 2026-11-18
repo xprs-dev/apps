@@ -1018,7 +1018,14 @@ static void install_picked_file(const char *buf, uint32_t n) {
     char name[64];
     str_copy(name, file, sizeof(name));
     unsigned nl = str_len(name);
-    if (nl > 5 && str_eq(name + nl - 5, ".wapp")) name[nl -= 5] = '\0';
+    /* Drop the extension: ".wapp", or whatever the system picker named its
+     * copy (Android hands over "compiler-0.1.0.bin"). */
+    for (unsigned i = nl; i > 0; i--) {
+        if (name[i - 1] == '.') {
+            name[nl = i - 1] = '\0';
+            break;
+        }
+    }
     for (unsigned i = nl; i > 1; i--) {
         if (name[i - 1] == '-' && name[i] >= '0' && name[i] <= '9') {
             name[i - 1] = '\0';
