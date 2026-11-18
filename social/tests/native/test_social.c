@@ -686,6 +686,37 @@ int main(void) {
     set_now(0);
 #undef PART
 
+    /* ── our long post, rebuilt from its parts, can be withdrawn ── */
+    reset();
+    history_set("[{\"id\":\"sp0002\",\"type\":\"status\",\"from\":\"X1SELF\","
+                "\"ts\":1789034500,\"sig\":\"unverified\",\"bearer\":\"lan\","
+                "\"own\":true,\"wire\":\"t:status f:X1SELF ts:2026-09-10_10:01:40 n:2/2 m:post\"},"
+                "{\"id\":\"sp0001\",\"type\":\"status\",\"from\":\"X1SELF\","
+                "\"ts\":1789034500,\"sig\":\"unsigned\",\"bearer\":\"lan\","
+                "\"own\":true,\"wire\":\"t:status f:X1SELF ts:2026-09-10_10:01:40 n:1/2 m:a long\"}]");
+    event_push("core.archive", "{\"topic\":\"core.archive\",\"rev\":11}");
+    module_handle_event();
+    {
+        const char *row = cap_find("a long post");
+        check(row[0] != '\0', "the rebuilt post is drawn");
+        char mid[16] = "";
+        const char *m = strstr(row, "\"mid\":\"");
+        if (m) { m += 7; int i = 0; while (*m && *m != '"' && i < 15) mid[i++] = *m++; }
+        cap_clear();
+        char cmd[160];
+        snprintf(cmd, sizeof(cmd),
+                 "{\"command\":\"activity_unsend\",\"activity_mid\":\"%s\"}", mid);
+        inbox_set(cmd);
+        module_handle_event();
+        check(send_calls() >= 1 && strstr(last_wire(), "remove:status") != NULL,
+              "deleting it sends a withdrawal");
+        char want[40];
+        snprintf(want, sizeof(want), "r:%s", mid);
+        check(strstr(last_wire(), want) != NULL,
+              "naming the copy that was shown (the core takes the whole set)");
+        check(cap_contains("\"deleted\":true"), "and it shows as deleted at once");
+    }
+
     printf("\n%d checks, %d failed\n", g_pass + g_fail, g_fail);
     return g_fail ? 1 : 0;
 }
