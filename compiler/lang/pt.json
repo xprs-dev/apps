@@ -40,5 +40,6 @@
   "msg.undone": "Desfeito.",
   "msg.you": "Você",
   "msg.saved": "Guardado.",
-  "msg.key_forgotten": "Chave removida deste dispositivo."
+  "msg.key_forgotten": "Chave removida deste dispositivo.",
+  "field.ai": "Conversa"
 }

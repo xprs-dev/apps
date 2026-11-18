@@ -40,5 +40,6 @@
   "msg.undone": "Undone.",
   "msg.you": "You",
   "msg.saved": "Saved.",
-  "msg.key_forgotten": "Key removed from this device."
+  "msg.key_forgotten": "Key removed from this device.",
+  "field.ai": "Conversation"
 }

@@ -40,5 +40,6 @@
   "msg.undone": "Annulé.",
   "msg.you": "Vous",
   "msg.saved": "Enregistré.",
-  "msg.key_forgotten": "Clé retirée de cet appareil."
+  "msg.key_forgotten": "Clé retirée de cet appareil.",
+  "field.ai": "Conversation"
 }

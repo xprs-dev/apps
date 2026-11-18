@@ -8,7 +8,7 @@
         "name": "@group.chat",
         "children": [
           {"$": "field", "name": "editing", "$type": "string", "label": "@field.editing", "readonly": true},
-          {"$": "field", "name": "ai", "$type": "chat", "hint": "@field.ai_hint"}
+          {"$": "field", "name": "ai", "$type": "chat", "label": "@field.ai", "hint": "@field.ai_hint"}
         ]
       },
       {

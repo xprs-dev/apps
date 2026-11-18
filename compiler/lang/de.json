@@ -40,5 +40,6 @@
   "msg.undone": "Rückgängig gemacht.",
   "msg.you": "Du",
   "msg.saved": "Gespeichert.",
-  "msg.key_forgotten": "Schlüssel von diesem Gerät entfernt."
+  "msg.key_forgotten": "Schlüssel von diesem Gerät entfernt.",
+  "field.ai": "Unterhaltung"
 }
