@@ -194,7 +194,7 @@ static int status_text(const char *wire, char *out, unsigned cap) {
 static char g_hist[60000];              /* one hal_xprs_history reply        */
 static char g_row[2048];                /* one row out of it                 */
 static char g_msg[16384];               /* outbound UI message               */
-static char g_seen[SEEN_MAX][20];       /* packet ids already shown (ring)   */
+static char g_seen[SEEN_MAX][40];       /* ids and post keys shown (ring)    */
 static int  g_nseen = 0;
 static char g_follow[FOLLOW_MAX][CALL_MAX];
 static int  g_nfollow = 0;
@@ -336,8 +336,31 @@ static int seen(const char *id) {
     return 0;
 }
 static void mark_seen(const char *id) {
-    str_copy(g_seen[g_nseen % SEEN_MAX], id, 20);
+    str_copy(g_seen[g_nseen % SEEN_MAX], id, sizeof(g_seen[0]));
     g_nseen++;
+}
+
+/* One status is one (author, ts) (XPRS.md 7.6 keys a set on `(f, ts)`): the
+ * packet as sent, the same packet rebuilt from its parts, and a copy heard
+ * again all carry it, while their packet ids differ. The key goes in the seen
+ * ring beside the ids ("X1ABC@2026-11-18_17:24:59" never looks like an id),
+ * so whichever copy arrives first is the one drawn. */
+static void post_key(const char *person, const char *wire, char *key, unsigned cap) {
+    char t[24] = "";
+    wire_key(wire, "ts", t, sizeof(t));
+    str_copy(key, person, cap);
+    str_cat(key, "@", cap);
+    str_cat(key, t, cap);
+}
+
+/* The parts of a set joined as 7.6 says: in order, ONE space between them
+ * (a sender splits only at a space, and no part begins or ends with one). */
+static void join_parts(const group_t *g, char *out, unsigned cap) {
+    out[0] = '\0';
+    for (int i = 0; i < g->total; i++) {
+        if (i > 0) str_cat(out, " ", cap);
+        str_cat(out, g->part[i], cap);
+    }
 }
 
 /* ── Our own threads ─────────────────────────────────────────────────── */
@@ -843,6 +866,27 @@ static void feed_from_spool(const char *field, const char *query,
     g_hist[n] = '\0';
     collect_versions(field);
 
+    /* The statuses the spool holds whole (our own as sent, or one a station
+     * kept joined): a set of parts with the same (author, ts) is that status
+     * again, so it is never drawn a second time from its pieces. */
+    static char whole_keys[64][40];
+    int nwhole = 0;
+    {
+        unsigned q = 0;
+        while (nwhole < 64 && next_obj(g_hist, &q, g_row, sizeof(g_row))) {
+            char t[24] = "", f[CALL_MAX] = "", w[1100] = "", x[12] = "";
+            json_raw(g_row, "type", t, sizeof(t));
+            if (!str_eq(t, "status")) continue;
+            json_raw(g_row, "from", f, sizeof(f));
+            json_raw(g_row, "wire", w, sizeof(w));
+            if (!w[0] || wire_key(w, "n", x, sizeof(x))) continue;
+            char who[CALL_MAX]; unsigned o = 0;
+            for (const char *c = f; *c && *c != '-' && o < sizeof(who) - 1; c++) who[o++] = uc(*c);
+            who[o] = '\0';
+            post_key(who, w, whole_keys[nwhole++], sizeof(whole_keys[0]));
+        }
+    }
+
     /* The spool is newest first; walk it backwards is not possible in one
      * pass over a flat string, so collect ids first and emit oldest-last —
      * the host feed sorts by "t" anyway, so order here only affects which
@@ -920,8 +964,16 @@ static void feed_from_spool(const char *field, const char *query,
                 if (!g->part[idx - 1][0]) { str_copy(g->part[idx - 1], words, sizeof(g->part[0])); g->have++; }
                 if (g->have < g->total) continue;    /* still incomplete */
                 if (seen(id)) continue;
+                char key[40];
+                post_key(person, wire, key, sizeof(key));
+                if (seen(key)) continue;
+                int held_whole = 0;
+                for (int i = 0; i < nwhole && !held_whole; i++)
+                    held_whole = str_eq(whole_keys[i], key);
+                if (held_whole) continue;   /* drawn from the whole packet */
+                mark_seen(key);
                 char whole[2200] = "";
-                for (int i = 0; i < g->total; i++) str_cat(whole, g->part[i], sizeof(whole));
+                join_parts(g, whole, sizeof(whole));
                 add_file_ref(wire, whole, sizeof(whole));
                 int wed = 0, wdel = 0;
                 ed_apply(id, person, ts, whole, sizeof(whole), &wed, &wdel);
@@ -934,6 +986,12 @@ static void feed_from_spool(const char *field, const char *query,
         }
 
         if (seen(id)) continue;
+        {
+            char key[40];
+            post_key(person, wire, key, sizeof(key));
+            if (seen(key)) continue;
+            mark_seen(key);
+        }
         mark_seen(id);
         if (str_eq(own, "true")) { mark_mine(id); mark_mine(parent); }
         feed_append(field, person, body, id, parent, ts, sig, bearer, str_eq(own, "true"), source, edited, deleted);
@@ -1000,12 +1058,36 @@ static void row_from_event(const char *row, int live, int draw) {
     }
     if (seen(id)) return;
 
-    char wts[24] = "", ts[24] = "", sig[16] = "", bearer[12] = "", body[1100] = "";
+    char wts[24] = "", ts[24] = "", sig[16] = "", bearer[12] = "", body[2200] = "";
     json_raw(row, "ts", wts, sizeof(wts));
     epoch_from_ts(wts, ts, sizeof(ts));
     json_raw(row, "sig", sig, sizeof(sig));
     json_raw(row, "bearer", bearer, sizeof(bearer));
-    if (!status_text(wire, body, sizeof(body))) return;
+
+    /* 7.6: a part is never a post. It joins its set; the set is drawn once,
+     * complete, joined with single spaces -- as the spool walk does. */
+    char nfield[12] = "";
+    if (wire_key(wire, "n", nfield, sizeof(nfield)) && nfield[0]) {
+        int idx = 0, tot = 0; const char *p = nfield;
+        while (*p >= '0' && *p <= '9') idx = idx * 10 + (*p++ - '0');
+        if (*p == '/') { p++; while (*p >= '0' && *p <= '9') tot = tot * 10 + (*p++ - '0'); }
+        if (idx < 1 || idx > 9 || tot < 1 || tot > 9 || idx > tot) return;
+        char pts[24] = ""; wire_key(wire, "ts", pts, sizeof(pts));
+        group_t *g = group_for(person, pts, tot);
+        char words[1100] = ""; wire_body(wire, words, sizeof(words));
+        if (!g->part[idx - 1][0]) { str_copy(g->part[idx - 1], words, sizeof(g->part[0])); g->have++; }
+        if (g->have < g->total) return;     /* still incomplete: held */
+        join_parts(g, body, sizeof(body));
+        add_file_ref(wire, body, sizeof(body));
+    } else if (!status_text(wire, body, sizeof(body))) {
+        return;
+    }
+    {
+        char key[40];
+        post_key(person, wire, key, sizeof(key));
+        if (seen(key)) return;               /* this status is already drawn */
+        mark_seen(key);
+    }
 
     char parent[20] = "";
     wire_key(wire, "r", parent, sizeof(parent));
@@ -1359,11 +1441,26 @@ int32_t module_handle_event(void) {
             str_copy(body, text, sizeof(body));
             unescape(body);
             char mid[24] = "";
+            unsigned long long t0 = (unsigned long long)hal_time_epoch();
             if (hal_xprs_status(body, str_len(body), 0, 0, 0, 0,
                                 mid, sizeof(mid) - 1) == 0 && mid[0]) {
                 char ts[24]; epoch_now(ts, sizeof(ts));
                 mark_seen(mid);
                 mark_mine(mid);
+                /* A long post goes out in parts (7.6), and those parts come
+                 * back with ids of their own. The core stamped the packet
+                 * while it was composing it, between t0 and now: mark this
+                 * post's (author, ts) for each of those seconds (one or two),
+                 * so its parts never draw it a second time. */
+                unsigned long long t1 = (unsigned long long)hal_time_epoch();
+                for (unsigned long long t = t0; t0 && t <= t1 && t <= t0 + 2; t++) {
+                    char st[24], key[40];
+                    stamp_of(t, st, sizeof(st));
+                    str_copy(key, my_call(), sizeof(key));
+                    str_cat(key, "@", sizeof(key));
+                    str_cat(key, st, sizeof(key));
+                    mark_seen(key);
+                }
                 /* `text` is still the escaped form the host sent us, which is
                  * what feed_append wants. */
                 feed_append("activity", my_call(), text, mid, "", ts,

@@ -57,6 +57,13 @@ static void check(int ok, const char *what) {
 static void reset(void) {
     cap_clear(); events_clear(); publish_clear(); kv_clear();
     status_fails(0); ui_attached(1); history_set("[]");
+    /* Each scenario is a page opened afresh: `ready` empties the seen ring.
+     * The fixtures reuse one author and second for different posts, and one
+     * (author, ts) is one status (7.6), so a ring carried over between
+     * scenarios would rightly take the next one for a copy of the last. */
+    inbox_set("{\"command\":\"ready\"}");
+    module_handle_event();
+    cap_clear(); events_clear(); publish_clear();
 }
 
 /* A delivered packet, shaped exactly as wapp_delivery.dart builds one —
@@ -607,6 +614,77 @@ int main(void) {
               cap_contains("\"role\":\"author\"},{\"text\":\"two\"") &&
               cap_contains("\"role\":\"author\"},{\"text\":\"three\""),
           "the original first, then each edit in order, each with its date and time");
+
+    /* ── a long status is ONE post: parts joined with a space (7.6) ── */
+#define PART(id, n, words) \
+    "{\"id\":\"" id "\",\"type\":\"status\",\"from\":\"X1LONG\"," \
+    "\"ts\":1789034400,\"sig\":\"unsigned\",\"bearer\":\"lan\"," \
+    "\"own\":false,\"wire\":\"t:status f:X1LONG ts:2026-09-10_10:00:00 n:" n " m:" words "\"}"
+    reset();
+    history_set("[" PART("p00004", "3/3", "1.11.0") ","
+                    PART("p00003", "2/3", "the Archiver link from version") ","
+                    PART("p00002", "1/3", "you should see") "]");
+    event_push("core.archive", "{\"topic\":\"core.archive\",\"rev\":8}");
+    module_handle_event();
+    check(cap_contains("you should see the Archiver link from version 1.11.0"),
+          "the parts of a long status are joined with ONE space between them");
+    check(!cap_contains("seethe") && !cap_contains("version1.11.0"),
+          "never glued together");
+    check(cap_count_of("\"author\":\"X1LONG\"") == 1, "and drawn once");
+
+    /* ── the packet held whole and its own parts are the same status ── */
+    reset();
+    history_set("[" PART("p00004", "3/3", "1.11.0") ","
+                    PART("p00003", "2/3", "the Archiver link from version") ","
+                    PART("p00002", "1/3", "you should see") ","
+                    "{\"id\":\"whole1\",\"type\":\"status\",\"from\":\"X1LONG\","
+                    "\"ts\":1789034400,\"sig\":\"verified\",\"bearer\":\"lan\","
+                    "\"own\":false,\"wire\":\"t:status f:X1LONG ts:2026-09-10_10:00:00 "
+                    "m:you should see the Archiver link from version 1.11.0\"}]");
+    event_push("core.archive", "{\"topic\":\"core.archive\",\"rev\":9}");
+    module_handle_event();
+    check(cap_count_of("\"author\":\"X1LONG\"") == 1,
+          "a status held whole and as its parts is drawn once (one author, one ts)");
+    check(cap_contains("\"mid\":\"whole1\""),
+          "from the whole packet, whose id is the status's own (section 5)");
+
+    /* ── parts heard live are held, then drawn once ── */
+    reset();
+    deliver("xprs.status", "lv0001", "X1LONG",
+            "t:status f:X1LONG ts:2026-09-10_10:00:00 n:1/2 m:first half");
+    module_handle_event();
+    check(!cap_contains("\"author\":\"X1LONG\""), "a part heard live is not a post");
+    deliver("xprs.status", "lv0002", "X1LONG",
+            "t:status f:X1LONG ts:2026-09-10_10:00:00 n:2/2 m:second half");
+    module_handle_event();
+    check(cap_count_of("\"author\":\"X1LONG\"") == 1 &&
+              cap_contains("first half second half"),
+          "the set is drawn once it is complete, joined with a space");
+    deliver("xprs.status", "lv0009", "X1LONG",
+            "t:status f:X1LONG ts:2026-09-10_10:00:00 m:first half second half");
+    module_handle_event();
+    check(cap_count_of("\"author\":\"X1LONG\"") == 1,
+          "and the whole packet heard after it is not a second post");
+
+    /* ── our own long post: its parts coming back are not a second post ── */
+    reset();
+    set_now(1789034400LL);            /* 2026-09-10_10:00:00 UTC */
+    inbox_set("{\"command\":\"activity_send\",\"activity_input\":\"a long post\"}");
+    module_handle_event();
+    check(cap_count_of("a long post") == 1, "our post is drawn now");
+    cap_clear();
+    history_set("[{\"id\":\"op0002\",\"type\":\"status\",\"from\":\"X1SELF\","
+                "\"ts\":1789034400,\"sig\":\"unsigned\",\"bearer\":\"lan\","
+                "\"own\":true,\"wire\":\"t:status f:X1SELF ts:2026-09-10_10:00:00 n:2/2 m:post\"},"
+                "{\"id\":\"op0001\",\"type\":\"status\",\"from\":\"X1SELF\","
+                "\"ts\":1789034400,\"sig\":\"unsigned\",\"bearer\":\"lan\","
+                "\"own\":true,\"wire\":\"t:status f:X1SELF ts:2026-09-10_10:00:00 n:1/2 m:a long\"}]");
+    event_push("core.archive", "{\"topic\":\"core.archive\",\"rev\":10}");
+    module_handle_event();
+    check(!cap_contains("\"mid\":\"op000"),
+          "the parts of the post we just made do not draw it again");
+    set_now(0);
+#undef PART
 
     printf("\n%d checks, %d failed\n", g_pass + g_fail, g_fail);
     return g_fail ? 1 : 0;
