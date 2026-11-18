@@ -459,7 +459,10 @@ void    hal_http_free         (request_id);
 `method`: 0=GET 1=POST 2=PUT 3=DELETE. `hal_http_request2` adds headers as
 `Name: value` lines separated by `\n` (an API key in `Authorization`, a
 `Content-Type`), a byte body, and a timeout of 1–600 s (0 = 30 s), for
-services that take a key in a header and answer slowly.
+services that take a key in a header and answer slowly. It is answered, not
+polled: when the response is in, the host delivers
+`{"type":"http.done","id":<request_id>}` to `module_handle_event`, so the
+wapp needs no `module_tick` to wait for it (performance.md 8.4).
 
 ### 7.1a Host subprocess (`hal.process`)
 

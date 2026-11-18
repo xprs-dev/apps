@@ -567,7 +567,9 @@ int32_t hal_http_request(int32_t method,
  * -1. method as above. headers: "Name: value" lines separated by '\n'
  * (e.g. "Authorization: Bearer ...\nContent-Type: application/json"), or
  * NULL/0. body: raw bytes, ignored for GET. timeout_ms: 1000..600000,
- * 0 = 30 s. Poll, read and free exactly as for hal_http_request. */
+ * 0 = 30 s. Read and free exactly as for hal_http_request. No need to poll:
+ * when the answer is in, the host delivers {"type":"http.done","id":<id>}
+ * to module_handle_event, so a wapp waiting on one declares no clock. */
 __attribute__((import_module("hal"), import_name("http_request2")))
 int32_t hal_http_request2(int32_t method,
                           const char *url, uint32_t url_len,

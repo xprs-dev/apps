@@ -24,6 +24,7 @@
  *   {"type":"host.edit_target","dir":...}
  *   {"command":"ai_send"|"apply"|"discard"|"undo"|"new_chat"|
  *              "save_settings"|"forget_key", "fields":{...}}
+ *   {"type":"http.done","id":N}   (the answer to hal_http_request2 is in)
  * wapp -> host: ui.field.set, ui.chat.append, ui.chat.clear, ui.toast.
  */
 
@@ -797,10 +798,11 @@ void module_init(void) {
     set_field("changes", "");
 }
 
-/* A clock only matters while an answer is on its way. */
-void module_tick(void) { poll_request(); }
+/* No clock: the host hands over {"type":"http.done","id":N} when the
+ * answer is in (hal_http_request2), so nothing asks whether it came. */
+void module_tick(void) {}
 
-uint32_t module_tick_interval_ms(void) { return 1000; }
+uint32_t module_tick_interval_ms(void) { return 0; }
 
 void module_destroy(void) {
     if (g_req >= 0) hal_http_free(g_req);
@@ -827,7 +829,13 @@ void module_handle_event(void) {
         sb_t v = {0};
 
         const char *ty = j_get(buf, e, "type");
-        if (ty && j_str(ty, e, &v) && is(&v, "host.edit_target")) {
+        if (ty) j_str(ty, e, &v);
+        if (is(&v, "http.done")) {
+            poll_request();
+            sb_free(&v);
+            continue;
+        }
+        if (is(&v, "host.edit_target")) {
             const char *d = j_get(buf, e, "dir");
             sb_clear(&g_dir);
             if (d) j_str(d, e, &g_dir);
