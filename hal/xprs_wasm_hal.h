@@ -563,6 +563,18 @@ int32_t hal_http_request(int32_t method,
                          const char *url, uint32_t url_len,
                          const char *body, uint32_t body_len);
 
+/* Start an HTTP request with headers and a timeout. Returns request_id or
+ * -1. method as above. headers: "Name: value" lines separated by '\n'
+ * (e.g. "Authorization: Bearer ...\nContent-Type: application/json"), or
+ * NULL/0. body: raw bytes, ignored for GET. timeout_ms: 1000..600000,
+ * 0 = 30 s. Poll, read and free exactly as for hal_http_request. */
+__attribute__((import_module("hal"), import_name("http_request2")))
+int32_t hal_http_request2(int32_t method,
+                          const char *url, uint32_t url_len,
+                          const char *headers, uint32_t headers_len,
+                          const char *body, uint32_t body_len,
+                          int32_t timeout_ms);
+
 /* Poll request status. Returns: 0=pending, 1=complete, -1=error */
 __attribute__((import_module("hal"), import_name("http_poll")))
 int32_t hal_http_poll(int32_t request_id);

@@ -448,11 +448,18 @@ results.
 
 ```c
 int32_t hal_http_request      (method, url, url_len, body, body_len);
+int32_t hal_http_request2     (method, url, url_len, headers, headers_len,
+                               body, body_len, timeout_ms);
 int32_t hal_http_poll         (request_id);   // 0=pending 1=done -1=err
 int32_t hal_http_read_response(request_id, buf, buf_len);
 int32_t hal_http_status       (request_id);
 void    hal_http_free         (request_id);
 ```
+
+`method`: 0=GET 1=POST 2=PUT 3=DELETE. `hal_http_request2` adds headers as
+`Name: value` lines separated by `\n` (an API key in `Authorization`, a
+`Content-Type`), a byte body, and a timeout of 1–600 s (0 = 30 s), for
+services that take a key in a header and answer slowly.
 
 ### 7.1a Host subprocess (`hal.process`)
 
