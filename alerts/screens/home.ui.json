@@ -69,14 +69,14 @@
     "name": "Message",
     "icon": "description",
     "hidden": true,
-    "tip": "A few words people need to know. What, how bad and how long are already on the alert.",
+    "tip": "Optional. The alert already says what it is, how bad and for how long, so you can leave this empty and tap Next. Add a few words only if they help.",
     "children": [
       {
         "$": "field",
         "name": "a_text",
         "$type": "string",
-        "label": "Message",
-        "hint": "the lower car park floods at high tide",
+        "label": "Message (optional)",
+        "hint": "leave empty, or: the lower car park floods at high tide",
         "max": 70
       },
       {

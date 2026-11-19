@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.alerts",
-  "version":         "0.2.7",
+  "version":         "0.2.8",
   "kind":            "app",
   "title":           "Alerts",
   "description":     "Warnings and notices about the place you are in.",

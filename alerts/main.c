@@ -196,7 +196,7 @@ static const kind_t k_warning[] = {
     { "road",      "Road",        "A dangerous road or crossing", "Travel" },
     { "crowd",     "Crowd",       "A dangerous crush of people",  "People" },
     { "animal",    "Animal",      "A dangerous animal about",     "Wildlife" },
-    { "other",     "Other",       "Say what it is in the message", "Anything else" },
+    { "other",     "Other",       "You can say what in the message", "Anything else" },
 };
 static const kind_t k_info[] = {
     { "closure",   "Closure",     "A gate, path or road is shut", "Travel" },
@@ -213,7 +213,7 @@ static const kind_t k_info[] = {
     { "animal",    "Animals",     "Animals on the path or road",  "Wildlife" },
     { "crowd",     "Crowd",       "Busy, expect to wait",         "People" },
     { "event",     "Event",       "Something is on here",         "People" },
-    { "other",     "Other",       "Say what it is in the message", "Anything else" },
+    { "other",     "Other",       "You can say what in the message", "Anything else" },
 };
 #define N_WARNING (int)(sizeof k_warning / sizeof k_warning[0])
 #define N_INFO    (int)(sizeof k_info / sizeof k_info[0])
@@ -852,7 +852,7 @@ static void open_step(const char *step)
         al_jesc(m, g_draft.text, sizeof m);
         al_cat(m, "\"}", sizeof m);
         say(m);
-        screen_open("Message", "The message");
+        screen_open("Message", "Add a message (optional)");
     } else if (al_eq(step, "Duration")) {
         const unsigned long long now = now_s();
         tiles_begin("p_for");
