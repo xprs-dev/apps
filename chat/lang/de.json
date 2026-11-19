@@ -210,5 +210,11 @@
   "prompt.rename_body": "Alle, die ihr folgen, sehen den neuen Namen.",
   "prompt.save": "Speichern",
   "msg.rename_failed": "Umbenennen fehlgeschlagen",
-  "msg.renamed": "Umbenannt"
+  "msg.renamed": "Umbenannt",
+  "msg.group_closed": "Geschlossen: Hier schreiben nur Admins und Moderatoren",
+  "msg.mods_only": "Das kann nur der Admin oder ein Moderator",
+  "msg.now_closed": "Geschlossen: Jetzt schreiben hier nur Admins und Moderatoren",
+  "msg.now_open": "Wieder offen: Mitglieder können schreiben",
+  "label.open_posts": "Für Beiträge öffnen",
+  "label.close_posts": "Für Beiträge schließen"
 }

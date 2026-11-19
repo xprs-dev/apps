@@ -210,5 +210,11 @@
   "prompt.rename_body": "Tous ceux qui le suivent voient le nouveau nom.",
   "prompt.save": "Enregistrer",
   "msg.rename_failed": "Impossible de renommer",
-  "msg.renamed": "Renommé"
+  "msg.renamed": "Renommé",
+  "msg.group_closed": "C'est fermé : seuls les admins et modérateurs publient ici",
+  "msg.mods_only": "Seul son admin ou un modérateur peut le faire",
+  "msg.now_closed": "Fermé : seuls les admins et modérateurs publient ici désormais",
+  "msg.now_open": "Rouvert : les membres peuvent publier",
+  "label.open_posts": "Ouvrir aux messages",
+  "label.close_posts": "Fermer aux messages"
 }

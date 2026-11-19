@@ -143,6 +143,11 @@ int  room_set_private(const char *id, int on);
 int  room_is_private(const char *id);
 void room_hide(const char *id, const char *mid);
 void room_set_title(const char *id, const char *title);
+/* Whether this station cannot write in [id] now (a member of a group closed
+ * to new posts, XPRS.md 10.4.2). The wapp's groups know; main.c answers. */
+int room_no_post(const char *id);
+/* State [id]'s row to the host again, after something on it changed. */
+void room_restate(const char *id);
 void room_bump(const char *id);
 void room_bump_idle(const char *id);
 unsigned long long room_max_ts(const char *id);

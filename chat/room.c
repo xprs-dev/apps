@@ -230,6 +230,9 @@ static void emit_upsert(const char *id, int bump, int select) {
   /* The host offers moderation on other people's messages only where we have
    * the authority (10.4.1). Whether an act binds is judged per message. */
   if (g_open_mod && s_eq(id, g_open) && is_xgroup(id)) s_cat(m, ",\"mod\":true", sizeof(m));
+  /* A group closed to new posts takes none from a member (10.4.2): the host
+   * shows a note where the message box was. */
+  if (room_no_post(id)) s_cat(m, ",\"nopost\":true", sizeof(m));
   if (bump) s_cat(m, ",\"bump\":true", sizeof(m));
   if (select) s_cat(m, ",\"select\":true", sizeof(m));
   s_cat(m, "}", sizeof(m));
@@ -1479,6 +1482,10 @@ void room_archive(const char *id, int on) {
 
 /* Turn a room's notifications on or off. Returns the new state, -1 for an
  * unknown room. Off also takes the room out of the launcher badge. */
+void room_restate(const char *id) {
+  if (room_known(id)) emit_upsert(id, 0, 0);
+}
+
 int room_set_notify(const char *id, int on) {
   if (!room_known(id)) return -1;
   pj_t p; pj_init(&p); pj_int(&p, on ? 1 : 0); pj_str(&p, id);

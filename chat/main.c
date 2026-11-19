@@ -151,7 +151,8 @@ static void chan_load(void) {
 /* `parent`: the group that lists this one as a folder (10.2), "" for a root.
  * The tree is the core's answer (hal_xprs_groups), five levels and no cycles
  * already applied; this wapp only draws it. */
-static struct { char call[8]; char nick[24]; char role[8]; char parent[8]; int pub; int mod_offer; } g_xgroup[XGROUP_MAX];
+static struct { char call[8]; char nick[24]; char role[8]; char parent[8]; int pub; int mod_offer; int closed; } g_xgroup[XGROUP_MAX];
+static void members_state_action(char *o, unsigned sz);
 static int g_xgroup_n;
 
 static int xgroup_is(const char *id) {
@@ -162,6 +163,15 @@ static int xgroup_find(const char *call) {
   return -1;
 }
 /* 26.3.1: a grant confers nothing until the person accepts it. */
+/* A member cannot write in a group that is closed to new posts (10.4.2);
+ * its admin and its moderators still can. room.c states it on the room's
+ * row, and the host shows a note where the message box was. */
+int room_no_post(const char *id) {
+  if (!id || id[0] != '#') return 0;
+  int i = xgroup_find(id + 1);
+  return i >= 0 && g_xgroup[i].closed && s_eq(g_xgroup[i].role, "member");
+}
+
 static int xgroup_may_post(const char *call) {
   int i = xgroup_find(call);
   if (i < 0) return 0;
@@ -352,6 +362,10 @@ static void xgroups_refresh(void) {
   static char was_in[XGROUP_MAX][8]; int was_n = 0;
   for (int i = 0; i < g_xgroup_n && was_n < XGROUP_MAX; i++)
     if (xgroup_may_post(g_xgroup[i].call)) s_cpy(was_in[was_n++], g_xgroup[i].call, 8);
+  /* Which groups were closed to posts, to restate a room when that moves. */
+  static char was_closed[XGROUP_MAX][8]; int wc_n = 0;
+  for (int i = 0; i < g_xgroup_n && wc_n < XGROUP_MAX; i++)
+    if (g_xgroup[i].closed) s_cpy(was_closed[wc_n++], g_xgroup[i].call, 8);
   g_xgroup_n = 0;
   const char *cur = gb; char obj[600];
   while (g_xgroup_n < XGROUP_MAX && next_object(&cur, obj, sizeof(obj))) {
@@ -362,6 +376,7 @@ static void xgroups_refresh(void) {
     if (!jstr(obj, "parent", g_xgroup[k].parent, sizeof(g_xgroup[k].parent)))
       g_xgroup[k].parent[0] = 0;
     g_xgroup[k].pub = jbool(obj, "public");
+    g_xgroup[k].closed = jbool(obj, "closed");
     { char of[8] = ""; jstr(obj, "offer", of, sizeof(of)); g_xgroup[k].mod_offer = s_eq(of, "mod"); }
     if (!g_xgroup[k].call[0]) continue;
     g_xgroup_n++;
@@ -372,6 +387,14 @@ static void xgroups_refresh(void) {
     s_cat(now, g_xgroup[i].parent, sizeof(now)); s_cat(now, ";", sizeof(now));
   }
   int moved = !s_eq(was, now);
+  for (int k = 0; k < g_xgroup_n; k++) {
+    int before = 0;
+    for (int i = 0; i < wc_n; i++) if (s_eq(was_closed[i], g_xgroup[k].call)) before = 1;
+    if (before != (g_xgroup[k].closed ? 1 : 0)) {
+      char id[10] = "#"; s_cat(id, g_xgroup[k].call, sizeof(id));
+      room_restate(id);
+    }
+  }
   for (int k = 0; k < g_xgroup_n; k++) {
     /* A group we BELONG to gets a room, so it appears the moment it exists --
      * an admin who just created a group, or a member who just accepted, sees
@@ -444,6 +467,11 @@ static void sysnote(const char *room, const char *text) {
 static char g_ask_text[600];
 static void group_refused(const char *gid, const char *text) {
   int i = xgroup_find(gid + 1);
+  /* A member of a group that is closed to new posts (10.4.2). */
+  if (room_no_post(gid)) {
+    notify("warning", wtr("msg.group_closed", "This is closed: only admins and moderators post here"));
+    return;
+  }
   if (i >= 0 && s_eq(g_xgroup[i].role, "invited")) {
     notify("warning", wtr("msg.accept_first", "You can post here once you accept the invitation"));
     join_offer(gid + 1, 1);
@@ -1651,6 +1679,7 @@ static void push_members_page(int offset, int header, int reset) {
     if (!xgroup_is_admin(g_mp_gid + 1) && xgroup_can_moderate(g_mp_gid + 1)) {
       /* A moderator lets people in and takes places away (10.3). */
       s_cat(o, "{\"id\":\"inv\",\"label\":\"", sz); jesc(o, sz, wtr("label.invite", "Invite")); s_cat(o, "\",\"icon\":\"person_add\",\"primary\":true},", sz);
+      members_state_action(o, sz); s_cat(o, ",", sz);
       s_cat(o, "{\"id\":\"leave\",\"label\":\"", sz);
       jesc(o, sz, wtr("label.leave", "Leave group"));
       s_cat(o, "\",\"icon\":\"logout\"}", sz);
@@ -1665,6 +1694,7 @@ static void push_members_page(int offset, int header, int reset) {
       /* Its name and its picture are the group's own words (6.3.2, 10.1). */
       s_cat(o, ",{\"id\":\"ren\",\"label\":\"", sz); jesc(o, sz, wtr("label.rename", "Rename")); s_cat(o, "\",\"icon\":\"edit\"}", sz);
       s_cat(o, ",{\"id\":\"pic\",\"label\":\"", sz); jesc(o, sz, wtr("label.picture", "Picture")); s_cat(o, "\",\"icon\":\"image\"}", sz);
+      s_cat(o, ",", sz); members_state_action(o, sz);
       /* Public (anyone reads) or private (sealed, members read), 10.7.1. */
       s_cat(o, ",{\"id\":\"vis\",\"label\":\"", sz);
       jesc(o, sz, xgroup_public(g_mp_gid + 1) ? wtr("label.make_private", "Make private")
@@ -1695,6 +1725,18 @@ static void push_members_page(int offset, int header, int reset) {
   }
   s_cat(o, ",\"rows\":[", sz); s_cat(o, rows, sz); s_cat(o, "]}", sz);
   hal_msg_send(o, s_len(o));
+}
+
+/* "Close to posts" / "Open to posts" on the group's page, for its admin and
+ * its moderators (10.4.2). */
+static void members_state_action(char *o, unsigned sz) {
+  int k = xgroup_find(g_mp_gid + 1);
+  int closed = k >= 0 && g_xgroup[k].closed;
+  s_cat(o, "{\"id\":\"state\",\"label\":\"", sz);
+  jesc(o, sz, closed ? wtr("label.open_posts", "Open to posts") : wtr("label.close_posts", "Close to posts"));
+  s_cat(o, "\",\"icon\":\"", sz);
+  s_cat(o, closed ? "lock_open" : "lock", sz);
+  s_cat(o, "\"}", sz);
 }
 
 /* The core said the roster moved: if the panel is open for this group, it
@@ -2559,6 +2601,20 @@ void module_handle_event(void) {
       }
     }
     else if (s_eq(id, "ren") && xgroup_is(g_mp_gid)) rename_ask(g_mp_gid);
+    else if (s_eq(id, "state") && xgroup_is(g_mp_gid)) {
+      int k = xgroup_find(g_mp_gid + 1);
+      int to_closed = k >= 0 && !g_xgroup[k].closed;
+      if (hal_xprs_group_closed(g_mp_gid + 1, s_len(g_mp_gid + 1), to_closed) != 0) {
+        notify("warning", wtr("msg.mods_only", "Only its admin or a moderator can do that"));
+      } else {
+        notify("info", to_closed ? wtr("msg.now_closed", "Closed: only admins and moderators post here now")
+                                 : wtr("msg.now_open", "Open again: members can post"));
+        xgroups_refresh();
+        room_restate(g_mp_gid);
+        g_mp_roster_ok = 0;
+        push_members_page(0, 1, 1);
+      }
+    }
     else if (s_eq(id, "pic") && xgroup_is(g_mp_gid)) {
       char pm[96] = "{\"type\":\"ui.pick.picture\",\"id\":\"gpic:";
       jesc(pm, sizeof(pm), g_mp_gid);

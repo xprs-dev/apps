@@ -2075,6 +2075,14 @@ __attribute__((import_module("hal"), import_name("xprs_group_picture")))
 int32_t hal_xprs_group_picture(const char *group, uint32_t group_len,
                                const char *token, uint32_t token_len);
 
+/* Close closed group `group` to new posts (`on` = 1), or open it again (0):
+ * `state:closed` / `state:open` under t:moderate (XPRS.md 10.4.2). Its admin
+ * and its moderators can, and they still post while it is closed; nobody is
+ * removed. hal_xprs_groups reports `"closed":true`. 0 = announced,
+ * -1 = refused. */
+__attribute__((import_module("hal"), import_name("xprs_group_closed")))
+int32_t hal_xprs_group_closed(const char *group, uint32_t group_len, int32_t on);
+
 /* Rename closed group `group` (a folder is one, XPRS.md 10.2): the nick: of
  * its own t:identity (6.3.2, 10.1), signed with the group's key, so only its
  * admin can. hal_xprs_groups reports the new name. 0 = announced,
