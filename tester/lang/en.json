@@ -61,5 +61,7 @@
   "action.widget_call_shout": "Call text.shout",
   "action.widget_call_shout_tip": "Sends a widget.request for text.shout. Expects {loud: ...}.",
   "action.widget_call_missing": "Call nonexistent widget",
-  "action.widget_call_missing_tip": "Calls widget id \"does.not.exist\". Should surface an error notification."
+  "action.widget_call_missing_tip": "Calls widget id \"does.not.exist\". Should surface an error notification.",
+  "action.ai_ask": "Ask the AI",
+  "action.ai_ask_tip": "Sends one question to whichever wapp provides ai.chat. The reply arrives as a notification when the AI has answered."
 }

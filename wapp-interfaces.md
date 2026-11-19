@@ -182,26 +182,100 @@ Engine duties:
 
 ## 5. Functionalities (provider/consumer)
 
-Wapps may declare functionalities they provide (in
-`provides.functionalities` in `manifest.json`) and call
-functionalities provided by other wapps via `widget.request`.
+A wapp may provide functionalities to other wapps (declared in
+`provides.functionalities` in `manifest.json`) and ask for functionalities
+other wapps provide. The two never load each other and need not know each
+other's name: the host's broker carries the request and the answer.
 
-Lookup is by exact ID (e.g. `text.greet`, `tile_provider.osm`).
-When multiple wapps provide the same ID, the user picks one default
-through a host-managed preference.
+Lookup is by exact ID (e.g. `text.greet`, `ai.chat`). When several wapps
+provide the same ID, the person picks the default through a host-managed
+preference.
 
-The engine's broker must:
-- Maintain a registry: `functionalityId → [providerWapp]`
-- Resolve the request to one provider (preference > first
-  registered)
-- Spin up a **headless** instance of the provider (its own engine
-  with no UI) when needed
-- Inject the request as `widget.request` into the provider, run
-  `module_handle_event`
-- Scrape the outbox for a matching `widget.response` and deliver
-  it back to the caller's inbox
-- Surface errors (no provider, response timeout, exception) as
-  `widget.response` with an `error` field
+### 5.1 The exchange
+
+The caller sends, with `hal_msg_send`:
+
+```json
+{"type":"widget.request","widget":"<id>","req_id":"<its own>","args":{...}}
+```
+
+(the wire names stay `widget.*` from when functionalities were widgets). A
+wapp on screen and a wapp running in the background may both ask.
+
+The provider receives, in `module_handle_event`:
+
+```json
+{"type":"widget.request","widget":"<id>","req_id":"<broker's>",
+ "caller":"<the asking wapp's folder name>","args":{...}}
+```
+
+`caller` is written by the host, never by the asking wapp. The provider
+answers **when it can**: at once, or later, after its own network request
+has come back (`http.done`, 7.1). It sends:
+
+```json
+{"type":"widget.response","req_id":"<broker's>","result":{...}}
+{"type":"widget.response","req_id":"<broker's>","error":"<words>"}
+```
+
+The caller receives the same message with its own `req_id` (and
+`widget_provider`, the provider's id), and its `module_handle_event` runs.
+Nothing polls on either side.
+
+Every failure reaches the caller the same way, as a `widget.response` with
+an `error`: no provider installed, the provider did not start, the provider
+did not answer in time.
+
+### 5.2 What the broker does
+
+- Keeps the registry `functionalityId → [provider wapps]`, and resolves a
+  request to one provider (the person's preference, else the first).
+- Opens a **headless** instance of the provider, with the provider's own
+  storage, id and declared permissions, so it has its settings and may use
+  what its manifest allows.
+- One instance serves every request in flight for that provider, and is
+  closed when the last is answered: a provider always starts from its saved
+  settings and keeps nothing between unrelated requests.
+- Gives each request a time limit: the functionality's `timeout_ms` in the
+  provider's manifest (at most 10 minutes), 30 seconds when it names none.
+  A provider that asks the network before answering should name its own.
+- Is told of an answer by the engine's outbox hook, so a provider woken by
+  an event answers from that event.
+
+A rich declaration (endpoints are documentation for other providers of the
+same ID; `timeout_ms` is read by the broker):
+
+```json
+"provides": {"functionalities": [
+  "wapp.edit",
+  {"id": "ai.chat", "description": "...", "timeout_ms": 300000,
+   "endpoints": [{"name": "chat", "params": [...], "returns": {...}}]}
+]}
+```
+
+### 5.3 `ai.chat`: the person's AI, for any wapp
+
+Provided by the AI wapp (`apps/ai`, `tools.xprs.ai`) and by any other wapp
+that declares it. The key, the service and the model are the provider's;
+a caller sends a conversation and gets text back.
+
+```json
+"args": {"messages": [{"role":"user"|"assistant","content":"..."}, ...],
+         "system": "optional instructions",
+         "max_tokens": 4096}
+"result": {"text":"...","stop":"end"|"max_tokens"|"refusal",
+           "input_tokens": 31, "output_tokens": 4}
+```
+
+The caller keeps the conversation and sends all of it each time; the
+provider keeps none of it. Errors are `"<code>: <words>"` with code
+`not_configured` (the person has not set the AI up), `bad_request`, `busy`,
+`unreachable`, `refused` (the service's own message follows), `empty`,
+`unsupported`.
+
+`sdk/wapp_ai.h` does both halves in C: `wapp_ai_ask(id, system, prompt)`
+and, per incoming message, `wapp_ai_reply(msg, n, id, ..., text, ...)`.
+The Tester wapp's "Ask the AI" is the smallest caller.
 
 ---
 

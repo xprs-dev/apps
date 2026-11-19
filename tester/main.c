@@ -20,6 +20,7 @@
  */
 
 #include "../hal/xprs_wasm_hal.h"
+#include "../sdk/wapp_ai.h"
 
 /* ── Minimal string helpers (no libc) ─────────────────────────────── */
 
@@ -261,6 +262,17 @@ void module_handle_event(void) {
          * them as notifications and move on — they don't have a
          * "command" field so the normal parser below would drop
          * them anyway. */
+        {
+            /* The answer to "Ask the AI" (sdk/wapp_ai.h), whenever the AI
+             * wapp's service has replied. */
+            char id[16], text[512];
+            int r = wapp_ai_reply(buf, n, id, sizeof(id), text, sizeof(text));
+            if (r != 0) {
+                send_notify(r > 0 ? "success" : "error",
+                            r > 0 ? "AI reply" : "AI error", text, 0);
+                continue;
+            }
+        }
         if (find_substr(buf, n, "\"type\":\"widget.response\"") >= 0) {
             handle_widget_response(buf, n);
             continue;
@@ -357,6 +369,9 @@ void module_handle_event(void) {
             send_widget_request("text.shout");
         } else if (str_eq_literal(cmd, clen, "widget-call-missing")) {
             send_widget_request("does.not.exist");
+        } else if (str_eq_literal(cmd, clen, "ai-ask")) {
+            wapp_ai_ask("t1", "Answer in ten words or fewer.",
+                        "Say hello to the XPRS Tester wapp.");
         }
     }
 

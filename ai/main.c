@@ -15,8 +15,12 @@
  * stays in this add-on's own storage on the device and goes only to the
  * chosen service.
  *
+ * It also answers other wapps: ai.chat, through the host's functionality
+ * broker (see "ai.chat" below).
+ *
  * Wire protocol, host -> wapp:
  *   {"type":"host.edit_target","dir":...}
+ *   {"type":"widget.request","widget":"ai.chat",...}
  *   {"command":"ai_send"|"apply"|"discard"|"undo"|"new_chat"|
  *              "save_settings"|"forget_key", "fields":{...}}
  *   {"type":"http.done","id":N}   (the answer to hal_http_request2 is in)
@@ -690,21 +694,30 @@ static void take_reply(const sb_t *reply) {
     sb_free(&words);
 }
 
-static void poll_request(void) {
-    if (g_req < 0) return;
-    int32_t st = hal_http_poll(g_req);
-    if (st == 0) return;
-    sb_t body = {0}, text = {0};
-    int status = hal_http_status(g_req);
+/* A finished request's status and body, and the handle freed. Returns
+ * hal_http_poll's answer: 0 while still running (nothing taken). */
+static int32_t http_take(int32_t req, sb_t *body, int *status) {
+    int32_t st = hal_http_poll(req);
+    if (st == 0) return 0;
+    *status = hal_http_status(req);
     if (st > 0) {
         char buf[8192];
         for (;;) {
-            int32_t n = hal_http_read_response(g_req, buf, sizeof(buf));
+            int32_t n = hal_http_read_response(req, buf, sizeof(buf));
             if (n <= 0) break;
-            sb_putn(&body, buf, (size_t)n);
+            sb_putn(body, buf, (size_t)n);
         }
     }
-    hal_http_free(g_req);
+    hal_http_free(req);
+    return st;
+}
+
+static void poll_request(void) {
+    if (g_req < 0) return;
+    sb_t body = {0}, text = {0};
+    int status = 0;
+    int32_t st = http_take(g_req, &body, &status);
+    if (st == 0) return;
     g_req = -1;
     const char *p = sb_str(&body), *e = p + body.n;
     if (st < 0) {
@@ -738,6 +751,268 @@ static void poll_request(void) {
     }
     sb_free(&body);
     sb_free(&text);
+}
+
+/* ── ai.chat: the configured AI, for other wapps ─────────────────────────
+ *
+ * Another wapp asks through the host's functionality broker
+ * (wapp-interfaces.md 5):
+ *   {"type":"widget.request","widget":"ai.chat","req_id":R,"caller":W,
+ *    "args":{"messages":[{"role":"user"|"assistant","content":S},...],
+ *            "system":S (optional),"max_tokens":N (optional)}}
+ * and is answered when the service has replied:
+ *   {"type":"widget.response","req_id":R,
+ *    "result":{"text":S,"stop":"end"|"max_tokens"|"refusal",
+ *              "input_tokens":N,"output_tokens":N}}
+ * or {"type":"widget.response","req_id":R,"error":"<code>: <words>"} with
+ * code one of not_configured, bad_request, busy, unreachable, refused,
+ * empty, unsupported.
+ *
+ * The caller sends the whole conversation each time and gets text back:
+ * nothing of it is kept here, and the key, the service and the model stay
+ * in this wapp. Several requests may be in flight. */
+
+#define SVC_MAX 8
+#define SVC_DEFAULT_TOKENS 4096
+#define SVC_MAX_TOKENS 16000
+/* Under the functionality's timeout_ms in manifest.json, so the service's
+ * own failure is what the caller hears, not the broker's time limit. */
+#define SVC_HTTP_TIMEOUT_MS 280000
+
+typedef struct {
+    int32_t req; /* hal http handle, -1 when free */
+    sb_t id;     /* the broker's req_id */
+} svc_t;
+static svc_t g_svc[SVC_MAX];
+static int g_svc_ready;
+
+static void svc_setup(void) {
+    if (g_svc_ready) return;
+    for (int i = 0; i < SVC_MAX; i++) g_svc[i].req = -1;
+    g_svc_ready = 1;
+}
+
+static void svc_error(const char *id, const char *code, const char *words) {
+    sb_t b = {0}, m = {0};
+    sb_puts(&m, code);
+    sb_puts(&m, ": ");
+    sb_puts(&m, words);
+    sb_puts(&b, "{\"type\":\"widget.response\",\"req_id\":");
+    sb_jsonz(&b, id);
+    sb_puts(&b, ",\"error\":");
+    sb_jsonz(&b, sb_str(&m));
+    sb_putc(&b, '}');
+    send_sb(&b);
+    sb_free(&b);
+    sb_free(&m);
+}
+
+static void sb_putl(sb_t *b, long v) {
+    char tmp[24];
+    int n = 0;
+    if (v <= 0) tmp[n++] = '0';
+    while (v > 0 && n < (int)sizeof(tmp)) {
+        tmp[n++] = (char)('0' + v % 10);
+        v /= 10;
+    }
+    while (n > 0) sb_putc(b, tmp[--n]);
+}
+
+static long j_num(const char *p, const char *e) {
+    long v = 0;
+    if (!p) return 0;
+    p = j_ws(p, e);
+    while (p < e && *p >= '0' && *p <= '9') v = v * 10 + (*p++ - '0');
+    return v;
+}
+
+/* Copy the caller's messages into [out] as a JSON array body (no brackets):
+ * only user/assistant turns with string content. Returns how many. */
+static int svc_messages(const char *arr, const char *e, sb_t *out) {
+    int count = 0;
+    if (!arr || *(arr = j_ws(arr, e)) != '[') return 0;
+    const char *q = j_ws(arr + 1, e);
+    while (q && q < e && *q == '{') {
+        const char *end = j_skip(q, e);
+        sb_t role = {0}, text = {0};
+        const char *r = j_get(q, e, "role");
+        const char *c = j_get(q, e, "content");
+        if (r && c && j_str(r, e, &role) && j_str(c, e, &text) &&
+            (is(&role, "user") || is(&role, "assistant"))) {
+            if (count++) sb_putc(out, ',');
+            sb_puts(out, "{\"role\":");
+            sb_jsonz(out, sb_str(&role));
+            sb_puts(out, ",\"content\":");
+            sb_json(out, sb_str(&text), text.n);
+            sb_putc(out, '}');
+        }
+        sb_free(&role);
+        sb_free(&text);
+        if (!end) break;
+        q = j_ws(end, e);
+        if (q < e && *q == ',') q = j_ws(q + 1, e);
+    }
+    return count;
+}
+
+static void svc_chat(const char *id, const char *args, const char *e) {
+    svc_setup();
+    if (!provider_is_claude() &&
+        (provider_model()[0] == 0 || provider_base()[0] == 0)) {
+        svc_error(id, "not_configured", "set the model and address in AI");
+        return;
+    }
+    if (s_key.n == 0 && !is(&s_provider, "compatible")) {
+        svc_error(id, "not_configured", "add the service's key in AI");
+        return;
+    }
+    svc_t *slot = 0;
+    for (int i = 0; i < SVC_MAX && !slot; i++)
+        if (g_svc[i].req < 0) slot = &g_svc[i];
+    if (!slot) {
+        svc_error(id, "busy", "too many requests at once");
+        return;
+    }
+    sb_t msgs = {0}, system = {0};
+    int count = args ? svc_messages(j_get(args, e, "messages"), e, &msgs) : 0;
+    if (count == 0) {
+        svc_error(id, "bad_request", "args.messages has no user message");
+        sb_free(&msgs);
+        return;
+    }
+    const char *sy = j_get(args, e, "system");
+    if (sy) j_str(sy, e, &system);
+    long max = j_num(j_get(args, e, "max_tokens"), e);
+    if (max <= 0) max = SVC_DEFAULT_TOKENS;
+    if (max > SVC_MAX_TOKENS) max = SVC_MAX_TOKENS;
+
+    int claude = provider_is_claude();
+    sb_t url = {0}, body = {0}, hdr = {0};
+    sb_puts(&url, provider_base());
+    sb_puts(&url, claude ? "/messages" : "/chat/completions");
+    sb_puts(&body, "{\"model\":");
+    sb_jsonz(&body, provider_model());
+    if (claude) {
+        sb_puts(&body, ",\"max_tokens\":");
+        sb_putl(&body, max);
+        sb_puts(&body, ",\"fallbacks\":\"default\"");
+        if (system.n) {
+            sb_puts(&body, ",\"system\":");
+            sb_json(&body, sb_str(&system), system.n);
+        }
+        sb_puts(&body, ",\"messages\":[");
+    } else {
+        /* OpenAI's own service names the limit max_completion_tokens;
+         * the servers that copy its API still take max_tokens. */
+        sb_puts(&body, is(&s_provider, "openai")
+                           ? ",\"max_completion_tokens\":"
+                           : ",\"max_tokens\":");
+        sb_putl(&body, max);
+        sb_puts(&body, ",\"messages\":[");
+        if (system.n) {
+            sb_puts(&body, "{\"role\":\"system\",\"content\":");
+            sb_json(&body, sb_str(&system), system.n);
+            sb_puts(&body, "},");
+        }
+    }
+    sb_putn(&body, sb_str(&msgs), msgs.n);
+    sb_puts(&body, "]}");
+    build_headers(&hdr);
+    int32_t req = hal_http_request2(1, sb_str(&url), (uint32_t)url.n,
+                                    sb_str(&hdr), (uint32_t)hdr.n,
+                                    sb_str(&body), (uint32_t)body.n,
+                                    SVC_HTTP_TIMEOUT_MS);
+    if (req < 0) {
+        svc_error(id, "unreachable", "the request could not be sent");
+    } else {
+        slot->req = req;
+        sb_clear(&slot->id);
+        sb_puts(&slot->id, id);
+    }
+    sb_free(&url);
+    sb_free(&body);
+    sb_free(&hdr);
+    sb_free(&msgs);
+    sb_free(&system);
+}
+
+/* Answer every ai.chat request whose service reply is in. */
+static void svc_poll(void) {
+    svc_setup();
+    for (int i = 0; i < SVC_MAX; i++) {
+        svc_t *s = &g_svc[i];
+        if (s->req < 0) continue;
+        sb_t body = {0}, text = {0};
+        int status = 0;
+        int32_t st = http_take(s->req, &body, &status);
+        if (st == 0) continue;
+        s->req = -1;
+        const char *id = sb_str(&s->id);
+        const char *p = sb_str(&body), *e = p + body.n;
+        if (st < 0) {
+            svc_error(id, "unreachable", "the service could not be reached");
+        } else if (status < 200 || status >= 300) {
+            error_text(p, e, &text);
+            svc_error(id, "refused", text.n ? sb_str(&text) : "HTTP error");
+        } else {
+            sb_t stop = {0};
+            const char *sr = j_get(p, e, "stop_reason");
+            if (sr) j_str(sr, e, &stop);
+            if (!provider_is_claude()) {
+                const char *ch = j_get(p, e, "choices");
+                const char *fr = ch && *(ch = j_ws(ch, e)) == '['
+                                     ? j_get(j_ws(ch + 1, e), e, "finish_reason")
+                                     : 0;
+                if (fr) j_str(fr, e, &stop);
+            }
+            int refusal = is(&stop, "refusal") || is(&stop, "content_filter");
+            int cut = is(&stop, "max_tokens") || is(&stop, "length");
+            reply_text(p, e, &text);
+            if (!refusal && text.n == 0) {
+                svc_error(id, "empty", "the AI sent nothing back");
+            } else {
+                const char *u = j_get(p, e, "usage");
+                long in = 0, out = 0;
+                if (u) {
+                    const char *a = j_get(u, e, "input_tokens");
+                    const char *b = j_get(u, e, "output_tokens");
+                    if (!a) a = j_get(u, e, "prompt_tokens");
+                    if (!b) b = j_get(u, e, "completion_tokens");
+                    in = j_num(a, e);
+                    out = j_num(b, e);
+                }
+                sb_t r = {0};
+                sb_puts(&r, "{\"type\":\"widget.response\",\"req_id\":");
+                sb_jsonz(&r, id);
+                sb_puts(&r, ",\"result\":{\"text\":");
+                sb_json(&r, sb_str(&text), text.n);
+                sb_puts(&r, ",\"stop\":");
+                sb_jsonz(&r, refusal ? "refusal" : cut ? "max_tokens" : "end");
+                sb_puts(&r, ",\"input_tokens\":");
+                sb_putl(&r, in);
+                sb_puts(&r, ",\"output_tokens\":");
+                sb_putl(&r, out);
+                sb_puts(&r, "}}");
+                send_sb(&r);
+                sb_free(&r);
+            }
+            sb_free(&stop);
+        }
+        sb_free(&body);
+        sb_free(&text);
+    }
+}
+
+static void svc_request(const char *msg, const char *e) {
+    sb_t id = {0}, what = {0};
+    const char *r = j_get(msg, e, "req_id");
+    const char *w = j_get(msg, e, "widget");
+    if (r) j_str(r, e, &id);
+    if (w) j_str(w, e, &what);
+    if (is(&what, "ai.chat")) svc_chat(sb_str(&id), j_get(msg, e, "args"), e);
+    else svc_error(sb_str(&id), "unsupported", sb_str(&what));
+    sb_free(&id);
+    sb_free(&what);
 }
 
 /* ── Apply, discard, undo ────────────────────────────────────────────── */
@@ -802,6 +1077,10 @@ uint32_t module_tick_interval_ms(void) { return 0; }
 void module_destroy(void) {
     if (g_req >= 0) hal_http_free(g_req);
     g_req = -1;
+    for (int i = 0; i < SVC_MAX; i++) {
+        if (g_svc_ready && g_svc[i].req >= 0) hal_http_free(g_svc[i].req);
+        g_svc[i].req = -1;
+    }
 }
 
 static int cmd_is(const sb_t *cmd, const char *s) { return is(cmd, s); }
@@ -827,6 +1106,12 @@ void module_handle_event(void) {
         if (ty) j_str(ty, e, &v);
         if (is(&v, "http.done")) {
             poll_request();
+            svc_poll();
+            sb_free(&v);
+            continue;
+        }
+        if (is(&v, "widget.request")) {
+            svc_request(buf, e);
             sb_free(&v);
             continue;
         }

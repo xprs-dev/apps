@@ -1,5 +1,6 @@
 [
   {"file":"ai/ai-0.4.0.wapp","id":"tools.xprs.ai","version":"0.4.0","size":35370,"title":"AI","description":"An AI assistant; it can also edit your wapps."},
+  {"file":"ai/ai-0.5.0.wapp","id":"tools.xprs.ai","version":"0.5.0","size":41967,"title":"AI","description":"An AI assistant for you and for your wapps."},
   {"file":"alerts/alerts-0.1.0.wapp","id":"tools.xprs.alerts","version":"0.1.0","size":29408,"title":"Alerts","description":"Warnings and notices about the place you are in."},
   {"file":"alerts/alerts-0.2.5.wapp","id":"tools.xprs.alerts","version":"0.2.5","size":44648,"title":"Alerts","description":"Warnings and notices about the place you are in."},
   {"file":"alerts/alerts-0.2.6.wapp","id":"tools.xprs.alerts","version":"0.2.6","size":52812,"title":"Alerts","description":"Warnings and notices about the place you are in."},
@@ -515,6 +516,7 @@
   {"file":"tester/tester-1.0.1.wapp","id":"tools.xprs.tester","version":"1.0.1","size":16531,"title":"Tester","description":"Notification test harness for the host services."},
   {"file":"tester/tester-1.0.2.wapp","id":"tools.xprs.tester","version":"1.0.2","size":16532,"title":"Tester","description":"Notification test harness for the host services."},
   {"file":"tester/tester-1.0.3.wapp","id":"tools.xprs.tester","version":"1.0.3","size":16513,"title":"Tester","description":"Fire test notifications to check how they look."},
+  {"file":"tester/tester-1.0.4.wapp","id":"tools.xprs.tester","version":"1.0.4","size":18709,"title":"Tester","description":"Fire test notifications to check how they look."},
   {"file":"things/things-0.1.0.wapp","id":"tools.xprs.things","version":"0.1.0","size":36873,"title":"Things","description":"Things - the devices around you: pumps, generators, sensors and plugs (X4 callsigns), what they report, and the ones you pin."},
   {"file":"things/things-0.1.1.wapp","id":"tools.xprs.things","version":"0.1.1","size":38696,"title":"Things","description":"Things - the devices around you: pumps, generators, sensors and plugs (X4 callsigns), what they report, and the ones you pin."},
   {"file":"things/things-0.2.0.wapp","id":"tools.xprs.things","version":"0.2.0","size":57372,"title":"Things","description":"Things - the devices around you: doorbells, cameras, sensors, meters, switches and locks (X4 callsigns), what each one can do, and the ones you ask to be told about."},

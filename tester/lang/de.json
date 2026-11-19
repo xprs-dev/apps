@@ -61,5 +61,7 @@
   "action.widget_call_shout": "text.shout aufrufen",
   "action.widget_call_shout_tip": "Sendet einen widget.request für text.shout. Erwartet {loud: ...}.",
   "action.widget_call_missing": "Nicht vorhandenes Widget aufrufen",
-  "action.widget_call_missing_tip": "Ruft widget id \"does.not.exist\" auf. Sollte eine Fehler-Benachrichtigung zeigen."
+  "action.widget_call_missing_tip": "Ruft widget id \"does.not.exist\" auf. Sollte eine Fehler-Benachrichtigung zeigen.",
+  "action.ai_ask": "Die KI fragen",
+  "action.ai_ask_tip": "Schickt eine Frage an die Wapp, die ai.chat anbietet. Die Antwort kommt als Benachrichtigung, sobald die KI geantwortet hat."
 }

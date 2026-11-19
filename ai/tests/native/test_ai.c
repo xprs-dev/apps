@@ -179,6 +179,80 @@ static void key_can_be_forgotten(void) {
     CHECK(sent("ui.chat.append", "key"), "asks for a key, sends nothing");
 }
 
+/* ── ai.chat, asked by another wapp through the broker ─────────────────── */
+
+#define ASK(id, args)                                                         \
+    "{\"type\":\"widget.request\",\"widget\":\"ai.chat\",\"req_id\":\"" id    \
+    "\",\"caller\":\"notes\",\"args\":" args "}"
+
+static void service_needs_settings(void) {
+    /* key_can_be_forgotten left an OpenAI setup with no key. */
+    mock_out_clear();
+    deliver(ASK("b1", "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+    CHECK(sent("widget.response", "\"req_id\":\"b1\""), "answered at once");
+    CHECK(sent("widget.response", "not_configured"), "and says why");
+}
+
+static void service_answers_another_wapp(void) {
+    deliver("{\"command\":\"save_settings\",\"fields\":{\"ai_provider\":"
+            "\"claude\",\"ai_model\":\"\",\"ai_base_url\":\"\",\"ai_key\":"
+            "\"sk-svc\"}}");
+    mock_out_clear();
+    deliver(ASK("b2",
+                "{\"system\":\"Be brief.\",\"max_tokens\":500,\"messages\":["
+                "{\"role\":\"user\",\"content\":\"Say \\\"hi\\\"\"},"
+                "{\"role\":\"tool\",\"content\":\"x\"},"
+                "{\"role\":\"assistant\",\"content\":\"hi\"},"
+                "{\"role\":\"user\",\"content\":\"again\"}]}"));
+    CHECK(!sent("widget.response", 0), "nothing until the service replies");
+    CHECK(strcmp(mock_url, "https://api.anthropic.com/v1/messages") == 0,
+          "the configured service");
+    CHECK(strstr(mock_headers, "x-api-key: sk-svc\n") != 0, "this wapp's key");
+    CHECK(strstr(mock_body, "\"max_tokens\":500") != 0, "the caller's limit");
+    CHECK(strstr(mock_body, "\"system\":\"Be brief.\"") != 0,
+          "the caller's instructions");
+    CHECK(strstr(mock_body,
+                 "\"messages\":[{\"role\":\"user\",\"content\":\"Say "
+                 "\\\"hi\\\"\"},{\"role\":\"assistant\",\"content\":\"hi\"},"
+                 "{\"role\":\"user\",\"content\":\"again\"}]") != 0,
+          "its conversation, other roles dropped");
+    CHECK(strstr(mock_body, "You edit a wapp") == 0,
+          "none of the editor's own prompt");
+    CHECK(strstr(mock_body, "int x = ") == 0, "none of the edited wapp's files");
+
+    mock_reply = "{\"content\":[{\"type\":\"text\",\"text\":\"hi \\\"again\\\"\"}],"
+                 "\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":31,"
+                 "\"output_tokens\":4}}";
+    mock_status = 200;
+    mock_out_clear();
+    deliver("{\"type\":\"http.done\",\"id\":7}");
+    CHECK(sent("\"type\":\"widget.response\",\"req_id\":\"b2\"",
+               "\"result\":{\"text\":\"hi \\\"again\\\"\",\"stop\":\"end\","
+               "\"input_tokens\":31,\"output_tokens\":4}}"),
+          "the reply, how it ended and what it cost");
+    CHECK(!sent("ui.chat.append", 0), "and nothing in this wapp's own chat");
+}
+
+static void service_reports_errors(void) {
+    deliver(ASK("b3", "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+    mock_reply = "{\"error\":{\"type\":\"rate_limit_error\",\"message\":"
+                 "\"slow down\"}}";
+    mock_status = 429;
+    mock_out_clear();
+    deliver("{\"type\":\"http.done\",\"id\":7}");
+    CHECK(sent("\"req_id\":\"b3\"", "\"error\":\"refused: slow down\""),
+          "the service's own words");
+    mock_status = 200;
+
+    mock_out_clear();
+    deliver(ASK("b4", "{\"messages\":[]}"));
+    CHECK(sent("\"req_id\":\"b4\"", "bad_request"), "no message, no request");
+    mock_out_clear();
+    deliver("{\"type\":\"widget.request\",\"widget\":\"ai.paint\",\"req_id\":"
+            "\"b5\",\"args\":{}}");
+    CHECK(sent("\"req_id\":\"b5\"", "unsupported"), "an unknown request");
+}
+
 int main(void) {
     make_wapp();
     module_init();
@@ -190,6 +264,9 @@ int main(void) {
     service_errors_are_shown();
     openai_compatible();
     key_can_be_forgotten();
+    service_needs_settings();
+    service_answers_another_wapp();
+    service_reports_errors();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

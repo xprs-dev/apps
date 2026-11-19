@@ -198,6 +198,13 @@
         "label": "@action.widget_call_missing",
         "style": "secondary",
         "tip": "@action.widget_call_missing_tip"
+      },
+      {
+        "$": "action",
+        "name": "ai-ask",
+        "label": "@action.ai_ask",
+        "style": "secondary",
+        "tip": "@action.ai_ask_tip"
       }
     ]
   }

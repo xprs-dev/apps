@@ -1,9 +1,9 @@
 {
   "id": "tools.xprs.ai",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "kind": "addon",
   "title": "AI",
-  "description": "An AI assistant; it can also edit your wapps.",
+  "description": "An AI assistant for you and for your wapps.",
   "icon": "✨",
   "tick_interval_ms": 0,
   "requires": {
@@ -22,7 +22,45 @@
   ],
   "provides": {
     "functionalities": [
-      "wapp.edit"
+      "wapp.edit",
+      {
+        "id": "ai.chat",
+        "description": "Ask the configured AI: a conversation in, its reply out.",
+        "timeout_ms": 300000,
+        "endpoints": [
+          {
+            "name": "chat",
+            "description": "Continue a conversation",
+            "params": [
+              {
+                "name": "messages",
+                "type": "array",
+                "description": "[{role: user|assistant, content: string}], the whole conversation"
+              },
+              {
+                "name": "system",
+                "type": "string",
+                "description": "Optional instructions for the AI"
+              },
+              {
+                "name": "max_tokens",
+                "type": "number",
+                "description": "Optional reply limit, default 4096"
+              }
+            ],
+            "returns": {
+              "type": "object",
+              "description": "The reply",
+              "fields": {
+                "text": "string",
+                "stop": "end|max_tokens|refusal",
+                "input_tokens": "number",
+                "output_tokens": "number"
+              }
+            }
+          }
+        ]
+      }
     ]
   }
 }

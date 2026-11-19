@@ -61,5 +61,7 @@
   "action.widget_call_shout": "Chamar text.shout",
   "action.widget_call_shout_tip": "Envia um widget.request para text.shout. Espera {loud: ...}.",
   "action.widget_call_missing": "Chamar widget inexistente",
-  "action.widget_call_missing_tip": "Chama o widget id \"does.not.exist\". Deve mostrar uma notificação de erro."
+  "action.widget_call_missing_tip": "Chama o widget id \"does.not.exist\". Deve mostrar uma notificação de erro.",
+  "action.ai_ask": "Perguntar à IA",
+  "action.ai_ask_tip": "Envia uma pergunta à wapp que fornece ai.chat. A resposta chega como notificação quando a IA responder."
 }
