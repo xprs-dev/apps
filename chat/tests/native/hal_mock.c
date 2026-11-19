@@ -238,6 +238,9 @@ const char* mock_folder_ask(void){ return g_folder_ask; }
 const char* mock_picture_ask(void){ return g_picture_ask; }
 int32_t hal_xprs_group_folder(const char* p,uint32_t pl,const char* n,uint32_t nl,char* o,uint32_t cap){ if(g_hk_folder) return g_hk_folder(p,pl,n,nl,o,cap); snprintf(g_folder_ask,sizeof(g_folder_ask),"%.*s:%.*s",(int)pl,p,(int)nl,n); const char* c="X5FOLD"; uint32_t m=strlen(c); if(m>cap) return -1; memcpy(o,c,m); if(m<cap) o[m]=0; return m; }
 int32_t hal_xprs_group_picture(const char* g,uint32_t gl,const char* t,uint32_t tl){ if(g_hk_picture) return g_hk_picture(g,gl,t,tl); snprintf(g_picture_ask,sizeof(g_picture_ask),"%.*s:%.*s",(int)gl,g,(int)tl,t); return 0; }
+/* The groups ranking: what the test hands back (12.9.7). */
+const char *g_rank_json = "{\"sources\":0,\"rows\":[]}";
+int32_t hal_xprs_group_rank(const char* b,uint32_t bl,char* o,uint32_t cap){ (void)b;(void)bl; uint32_t n=(uint32_t)strlen(g_rank_json); if(n>cap) return -(int32_t)n; memcpy(o,g_rank_json,n); return (int32_t)n; }
 /* Closing a group to posts, read back as "<group>:<0|1>". */
 char g_closed_ask[32];
 int32_t hal_xprs_group_closed(const char* g,uint32_t gl,int32_t on){ snprintf(g_closed_ask,sizeof(g_closed_ask),"%.*s:%d",(int)gl,g,(int)on); return 0; }

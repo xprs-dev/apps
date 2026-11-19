@@ -216,5 +216,22 @@
   "msg.now_closed": "Closed: only admins and moderators post here now",
   "msg.now_open": "Open again: members can post",
   "label.open_posts": "Open to posts",
-  "label.close_posts": "Close to posts"
+  "label.close_posts": "Close to posts",
+  "screen.rankbtn": "Groups ranking",
+  "screen.rankbtn_tip": "Public groups ranked by activity, members and growth",
+  "action.rank": "Groups ranking",
+  "action.rank_tip": "Public groups ranked by activity, members and growth",
+  "screen.ranking": "Public groups",
+  "screen.ranking_tip": "Ranked from what your archivers count",
+  "field.ranking_empty": "No public groups counted yet. The numbers come from your archivers; they arrive in a minute or two.",
+  "field.ranking_tip": "Tap a group to read it",
+  "rank.active": "Most active",
+  "rank.most_members": "Most members",
+  "rank.growing": "Growing",
+  "rank.posts": " posts",
+  "rank.people": " people",
+  "rank.members": " members",
+  "rank.joined": " joined this month",
+  "rank.open": "open",
+  "rank.public": "public"
 }

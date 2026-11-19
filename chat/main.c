@@ -153,6 +153,8 @@ static void chan_load(void) {
  * already applied; this wapp only draws it. */
 static struct { char call[8]; char nick[24]; char role[8]; char parent[8]; int pub; int mod_offer; int closed; } g_xgroup[XGROUP_MAX];
 static void members_state_action(char *o, unsigned sz);
+static int g_rank_open;
+static void rank_publish(void);
 static int g_xgroup_n;
 
 static int xgroup_is(const char *id) {
@@ -1472,6 +1474,8 @@ static void drain_core_events(void) {
     row[n] = 0;
     if (s_eq(topic, "core.groups")) {
       xgroups_refresh();
+      /* A groups index arrived while the ranking is on screen (12.9.7). */
+      if (g_rank_open) rank_publish();
       /* A roster that changed while its room is open updates the panel now. */
       const char *open = room_open_id();
       if (xgroup_is(open)) {
@@ -2171,6 +2175,84 @@ static void group_leave(const char *gid) {
   notify("info", m);
 }
 
+/* ── Public groups, ranked (XPRS.md 12.9.7) ───────────────────────────
+ * The bar's chart icon opens a page with three tabs: the most active public
+ * groups, the ones with most members, and the ones growing fastest. The
+ * numbers are the archivers' (hal_xprs_group_rank), so the page is redrawn
+ * when core.groups says an index arrived. A tap opens the group to read. */
+static void rank_section(char *o, unsigned sz, const char *by, const char *title, int first) {
+  static char rb[16384];
+  int n = hal_xprs_group_rank(by, s_len(by), rb, sizeof(rb) - 1);
+  if (n < 0 || n >= (int)sizeof(rb)) n = 0;
+  rb[n] = 0;
+  if (!first) s_cat(o, ",", sz);
+  s_cat(o, "{\"title\":\"", sz); jesc(o, sz, title); s_cat(o, "\",\"items\":[", sz);
+  /* The rows array: after "rows": in the answer. */
+  const char *rows = 0;
+  for (int i = 0; rb[i]; i++)
+    if (rb[i] == '"' && s_pre(rb + i, "\"rows\":[")) { rows = rb + i; break; }
+  int k = 0;
+  if (rows) {
+    const char *cur = rows + 8; char row[400];
+    while (next_object(&cur, row, sizeof(row))) {
+      char g[24] = "", name[64] = "";
+      jstr(row, "g", g, sizeof(g));
+      jstr(row, "name", name, sizeof(name));
+      if (!g[0]) continue;
+      int open = jbool(row, "open");
+      long long posts = jint(row, "posts"), posters = jint(row, "posters");
+      long long members = jint(row, "members"), joins = jint(row, "joins");
+      if (k++) s_cat(o, ",", sz);
+      /* The id go_tap opens: an X5 callsign, or an open group's #NAME. */
+      s_cat(o, "{\"id\":\"go:", sz);
+      if (open) s_cat(o, "#", sz);
+      jesc(o, sz, g);
+      char t[96]; char nb[24]; u_lltoa((unsigned long long)k, nb);
+      s_cpy(t, nb, sizeof(t)); s_cat(t, ". ", sizeof(t)); s_cat(t, name, sizeof(t));
+      s_cat(o, "\",\"title\":\"", sz); jesc(o, sz, t);
+      /* What the tab ranks by leads; the rest follows. Approximate: the
+       * archivers count with sketches (12.9.7). */
+      char sub[160] = "";
+      if (s_eq(by, "growing")) {
+        s_cat(sub, "+", sizeof(sub)); u_lltoa((unsigned long long)joins, nb); s_cat(sub, nb, sizeof(sub));
+        s_cat(sub, wtr("rank.joined", " joined this month"), sizeof(sub));
+      } else if (s_eq(by, "members")) {
+        u_lltoa((unsigned long long)members, nb); s_cat(sub, nb, sizeof(sub));
+        s_cat(sub, wtr("rank.members", " members"), sizeof(sub));
+      } else {
+        s_cat(sub, "~", sizeof(sub)); u_lltoa((unsigned long long)posts, nb); s_cat(sub, nb, sizeof(sub));
+        s_cat(sub, wtr("rank.posts", " posts"), sizeof(sub));
+        s_cat(sub, " \xc2\xb7 ", sizeof(sub));
+        u_lltoa((unsigned long long)posters, nb); s_cat(sub, nb, sizeof(sub));
+        s_cat(sub, wtr("rank.people", " people"), sizeof(sub));
+        if (!open && members > 0) {
+          s_cat(sub, " \xc2\xb7 ", sizeof(sub));
+          u_lltoa((unsigned long long)members, nb); s_cat(sub, nb, sizeof(sub));
+          s_cat(sub, wtr("rank.members", " members"), sizeof(sub));
+        }
+      }
+      s_cat(o, "\",\"subtitle\":\"", sz); jesc(o, sz, sub);
+      s_cat(o, "\",\"tags\":[\"", sz);
+      jesc(o, sz, open ? wtr("rank.open", "open") : wtr("rank.public", "public"));
+      s_cat(o, "\"]", sz);
+      if (!open) { s_cat(o, ",\"call\":\"", sz); jesc(o, sz, g); s_cat(o, "\"", sz); }
+      else s_cat(o, ",\"icon\":\"tag\"", sz);
+      s_cat(o, "}", sz);
+    }
+  }
+  s_cat(o, "]}", sz);
+}
+
+static void rank_publish(void) {
+  static char o[20000];
+  s_cpy(o, "{\"type\":\"ui.people.set\",\"field\":\"ranking\",\"sections\":[", sizeof(o));
+  rank_section(o, sizeof(o), "active", wtr("rank.active", "Most active"), 1);
+  rank_section(o, sizeof(o), "members", wtr("rank.most_members", "Most members"), 0);
+  rank_section(o, sizeof(o), "growing", wtr("rank.growing", "Growing"), 0);
+  s_cat(o, "]}", sizeof(o));
+  hal_msg_send(o, s_len(o));
+}
+
 static void go_tap(const char *buf, const char *key) {
   char id[64] = "";
   jstr(buf, key, id, sizeof(id));
@@ -2469,6 +2551,12 @@ void module_handle_event(void) {
   }
   /* The "Archived" row at the top of the list, and a tap on one of them:
    * it comes back to the list and opens. */
+  else if (s_eq(cmd, "rooms_rank")) {
+    g_rank_open = 1;
+    rank_publish();
+    screen_open("@screen.ranking");
+  }
+  else if (s_eq(cmd, "ranking_tap")) { g_rank_open = 0; go_tap(buf, "ranking_id"); }
   else if (s_eq(cmd, "rooms_archived")) {
     room_archived_publish();
     screen_open("@screen.archived");

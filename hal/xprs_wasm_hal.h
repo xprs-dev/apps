@@ -2075,6 +2075,18 @@ __attribute__((import_module("hal"), import_name("xprs_group_picture")))
 int32_t hal_xprs_group_picture(const char *group, uint32_t group_len,
                                const char *token, uint32_t token_len);
 
+/* Public groups ranked across the groups indexes of this station's
+ * archivers (XPRS.md 12.9.7). `by`: "active" (posts this week and the last,
+ * posters breaking a tie), "members" or "growing" (joins in the last four
+ * weeks); an open group ranks under "active" only. Asking also reads any
+ * index an archiver named since; that answer arrives later as core.groups.
+ * Writes {"sources":N,"rows":[{"g","name","open","members","posts",
+ * "posters","joins"}]}, fifty rows at most. Bytes written; negative: the
+ * size needed. */
+__attribute__((import_module("hal"), import_name("xprs_group_rank")))
+int32_t hal_xprs_group_rank(const char *by, uint32_t by_len, char *out,
+                            uint32_t out_cap);
+
 /* Close closed group `group` to new posts (`on` = 1), or open it again (0):
  * `state:closed` / `state:open` under t:moderate (XPRS.md 10.4.2). Its admin
  * and its moderators can, and they still post while it is closed; nobody is

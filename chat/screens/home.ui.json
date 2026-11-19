@@ -47,6 +47,25 @@
   },
   {
     "$": "screen",
+    "name": "@screen.rankbtn",
+    "menu": true,
+    "popup": true,
+    "appbar": true,
+    "appbar_only": true,
+    "icon": "bar_chart",
+    "tip": "@screen.rankbtn_tip",
+    "children": [
+      {
+        "$": "action",
+        "name": "rooms_rank",
+        "label": "@action.rank",
+        "icon": "bar_chart",
+        "tip": "@action.rank_tip"
+      }
+    ]
+  },
+  {
+    "$": "screen",
     "name": "@screen.find",
     "menu": true,
     "popup": true,
@@ -104,7 +123,11 @@
     "name": "@screen.group",
     "hidden": true,
     "children": [
-      { "$": "field", "name": "members", "$type": "members" }
+      {
+        "$": "field",
+        "name": "members",
+        "$type": "members"
+      }
     ]
   },
   {
@@ -137,6 +160,22 @@
         "$type": "people",
         "empty": "@field.archived_empty",
         "tip": "@field.archived_tip"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "@screen.ranking",
+    "hidden": true,
+    "toolbar": true,
+    "tip": "@screen.ranking_tip",
+    "children": [
+      {
+        "$": "field",
+        "name": "ranking",
+        "$type": "people",
+        "empty": "@field.ranking_empty",
+        "tip": "@field.ranking_tip"
       }
     ]
   },

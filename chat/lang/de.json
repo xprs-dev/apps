@@ -216,5 +216,22 @@
   "msg.now_closed": "Geschlossen: Jetzt schreiben hier nur Admins und Moderatoren",
   "msg.now_open": "Wieder offen: Mitglieder können schreiben",
   "label.open_posts": "Für Beiträge öffnen",
-  "label.close_posts": "Für Beiträge schließen"
+  "label.close_posts": "Für Beiträge schließen",
+  "screen.rankbtn": "Gruppen-Ranking",
+  "screen.rankbtn_tip": "Öffentliche Gruppen nach Aktivität, Mitgliedern und Wachstum",
+  "action.rank": "Gruppen-Ranking",
+  "action.rank_tip": "Öffentliche Gruppen nach Aktivität, Mitgliedern und Wachstum",
+  "screen.ranking": "Öffentliche Gruppen",
+  "screen.ranking_tip": "Gerankt nach dem, was deine Archivare zählen",
+  "field.ranking_empty": "Noch keine öffentlichen Gruppen gezählt. Die Zahlen kommen von deinen Archivaren, in ein, zwei Minuten.",
+  "field.ranking_tip": "Tippe auf eine Gruppe, um sie zu lesen",
+  "rank.active": "Am aktivsten",
+  "rank.most_members": "Meiste Mitglieder",
+  "rank.growing": "Wachsend",
+  "rank.posts": " Beiträge",
+  "rank.people": " Personen",
+  "rank.members": " Mitglieder",
+  "rank.joined": " diesen Monat beigetreten",
+  "rank.open": "offen",
+  "rank.public": "öffentlich"
 }

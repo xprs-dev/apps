@@ -1673,6 +1673,47 @@ TEST(an_invitation_gets_a_room_and_a_join_prompt_and_the_core_signs) {
  * the member panel. The rail now says where one may be added (`nest`), the
  * host offers "New folder" there, and rooms_new asks for its name. A member
  * is told it is the admin's to do. */
+extern const char *g_rank_json;
+/* XPRS.md 12.9.7: the chart icon opens public groups ranked three ways; a row
+ * leads by what its tab ranks by, and opens the group (an open one as #NAME). */
+TEST(public_groups_are_ranked_three_ways_and_a_row_opens_the_group) {
+  fresh();
+  g_rank_json = "{\"sources\":2,\"rows\":["
+                "{\"g\":\"LISBOA\",\"name\":\"LISBOA\",\"open\":true,\"posts\":310,\"posters\":18},"
+                "{\"g\":\"X5BOOK\",\"name\":\"Book club\",\"open\":false,\"members\":42,"
+                "\"posts\":95,\"posters\":11,\"joins\":7}]}";
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_rank\"}");
+  module_handle_event();
+  { const char *m = cap_find("\"field\":\"ranking\"");
+    CHECK(m != 0);
+    CHECK(m && strstr(m, "Most active") && strstr(m, "Most members") && strstr(m, "Growing"));
+    CHECK(m && strstr(m, "\"title\":\"1. LISBOA\""));
+    CHECK(m && strstr(m, "\"id\":\"go:#LISBOA\""));     /* an open group's room */
+    CHECK(m && strstr(m, "\"id\":\"go:X5BOOK\""));
+    CHECK(m && strstr(m, "~310 posts"));
+    CHECK(m && strstr(m, "42 members"));
+    CHECK(m && strstr(m, "+7 joined this month"));
+    CHECK(m && strstr(m, "\"call\":\"X5BOOK\""));        /* its picture */
+  }
+  CHECK(cap_contains("\"name\":\"@screen.ranking\""));
+  /* An index arriving while the page is open redraws it. */
+  cap_clear();
+  event_push("core.groups", "{}");
+  module_handle_event();
+  CHECK(cap_find("\"field\":\"ranking\"") != 0);
+  /* A tap opens the group to read, and the page is no longer redrawn. */
+  cap_clear();
+  inbox_set("{\"command\":\"ranking_tap\",\"ranking_id\":\"go:#LISBOA\"}");
+  module_handle_event();
+  CHECK(cap_contains("#LISBOA"));
+  cap_clear();
+  event_push("core.groups", "{}");
+  module_handle_event();
+  CHECK(cap_find("\"field\":\"ranking\"") == 0);
+  g_rank_json = "{\"sources\":0,\"rows\":[]}";
+}
+
 TEST(a_group_admin_is_offered_a_new_folder_from_the_group_itself) {
   fresh();
   mock_set_groups("[{\"call\":\"X5MEMB\",\"nick\":\"club\",\"role\":\"member\",\"public\":true}]");
@@ -2291,6 +2332,7 @@ TEST(any_room_can_be_silenced_with_the_same_switch) {
 
 int main(void) {
   run_a_group_admin_is_offered_a_new_folder_from_the_group_itself();
+  run_public_groups_are_ranked_three_ways_and_a_row_opens_the_group();
   run_the_global_room_is_quiet_until_a_person_asks();
   run_any_room_can_be_silenced_with_the_same_switch();
   run_a_bridged_meshtastic_message_carries_its_network_and_relay_path();

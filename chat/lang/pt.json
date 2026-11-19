@@ -216,5 +216,22 @@
   "msg.now_closed": "Fechado: agora só administradores e moderadores publicam aqui",
   "msg.now_open": "Aberto de novo: os membros podem publicar",
   "label.open_posts": "Abrir a publicações",
-  "label.close_posts": "Fechar a publicações"
+  "label.close_posts": "Fechar a publicações",
+  "screen.rankbtn": "Ranking de grupos",
+  "screen.rankbtn_tip": "Grupos públicos por atividade, membros e crescimento",
+  "action.rank": "Ranking de grupos",
+  "action.rank_tip": "Grupos públicos por atividade, membros e crescimento",
+  "screen.ranking": "Grupos públicos",
+  "screen.ranking_tip": "Ordenados pelo que os seus arquivadores contam",
+  "field.ranking_empty": "Ainda não há grupos públicos contados. Os números vêm dos seus arquivadores; chegam num minuto ou dois.",
+  "field.ranking_tip": "Toque num grupo para o ler",
+  "rank.active": "Mais ativos",
+  "rank.most_members": "Mais membros",
+  "rank.growing": "A crescer",
+  "rank.posts": " mensagens",
+  "rank.people": " pessoas",
+  "rank.members": " membros",
+  "rank.joined": " entraram este mês",
+  "rank.open": "aberto",
+  "rank.public": "público"
 }
