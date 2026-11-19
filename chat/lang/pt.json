@@ -109,6 +109,8 @@
   "msg.folder_failed": "Não foi possível criar a pasta",
   "msg.folder_created": "Pasta criada",
   "msg.admin_picture": "Só o administrador do grupo pode mudar a imagem",
+  "msg.admin_folder": "Só o administrador do grupo pode adicionar pastas",
+  "msg.folder_deep": "As pastas vão até cinco níveis no máximo",
   "msg.picture_changed": "Imagem alterada",
   "msg.invite_closed": "Não foi possível entrar: o convite já não está aberto",
   "msg.admin_invite": "Só o administrador ou um moderador do grupo pode convidar",

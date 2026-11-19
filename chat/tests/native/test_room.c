@@ -1669,6 +1669,40 @@ TEST(an_invitation_gets_a_room_and_a_join_prompt_and_the_core_signs) {
   mock_set_groups("[]");
 }
 
+/* A public group's admin found no way to add a topic folder: it lived only in
+ * the member panel. The rail now says where one may be added (`nest`), the
+ * host offers "New folder" there, and rooms_new asks for its name. A member
+ * is told it is the admin's to do. */
+TEST(a_group_admin_is_offered_a_new_folder_from_the_group_itself) {
+  fresh();
+  mock_set_groups("[{\"call\":\"X5MEMB\",\"nick\":\"club\",\"role\":\"member\",\"public\":true}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  cap_clear();
+  mock_set_groups("[{\"call\":\"X5PUBA\",\"nick\":\"town\",\"role\":\"admin\",\"public\":true},"
+                  "{\"call\":\"X5MEMB\",\"nick\":\"club\",\"role\":\"member\",\"public\":true}]");
+  event_push("core.groups", "{}");
+  module_handle_event();
+  { const char *m = cap_find("ui.rooms.set");
+    const char *a = m ? strstr(m, "\"id\":\"#X5PUBA\"") : 0;
+    const char *b = m ? strstr(m, "\"id\":\"#X5MEMB\"") : 0;
+    CHECK(a && b);
+    const char *ae = a ? strchr(a, '}') : 0, *be = b ? strchr(b, '}') : 0;
+    const char *an = a ? strstr(a, "\"nest\":true") : 0, *bn = b ? strstr(b, "\"nest\":true") : 0;
+    CHECK(an && an < ae);           /* the admin's public group: yes */
+    CHECK(!(bn && bn < be)); }      /* a member's: no */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_new\",\"rooms_convo\":\"#X5PUBA\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"id\":\"xgfold:#X5PUBA\"") && cap_contains("New folder"));
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_new\",\"rooms_convo\":\"#X5MEMB\"}");
+  module_handle_event();
+  CHECK(!cap_contains("xgfold:"));
+  CHECK(cap_contains("Only the group's admin can add folders"));
+  mock_set_groups("[]");
+}
+
 TEST(a_group_room_learns_its_name_when_it_arrives_after_the_room) {
   fresh();
   mock_set_groups("[{\"call\":\"X5LATE\",\"nick\":\"\",\"role\":\"member\"}]");
@@ -2256,6 +2290,7 @@ TEST(any_room_can_be_silenced_with_the_same_switch) {
 }
 
 int main(void) {
+  run_a_group_admin_is_offered_a_new_folder_from_the_group_itself();
   run_the_global_room_is_quiet_until_a_person_asks();
   run_any_room_can_be_silenced_with_the_same_switch();
   run_a_bridged_meshtastic_message_carries_its_network_and_relay_path();

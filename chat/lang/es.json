@@ -109,6 +109,8 @@
   "msg.folder_failed": "No se pudo crear la carpeta",
   "msg.folder_created": "Carpeta creada",
   "msg.admin_picture": "Solo el administrador del grupo puede cambiar su imagen",
+  "msg.admin_folder": "Solo el administrador del grupo puede añadir carpetas",
+  "msg.folder_deep": "Las carpetas llegan a cinco niveles como máximo",
   "msg.picture_changed": "Imagen cambiada",
   "msg.invite_closed": "No se pudo entrar: la invitación ya no está abierta",
   "msg.admin_invite": "Solo el administrador o un moderador del grupo puede invitar",

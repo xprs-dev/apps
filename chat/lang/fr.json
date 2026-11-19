@@ -109,6 +109,8 @@
   "msg.folder_failed": "Impossible de créer le dossier",
   "msg.folder_created": "Dossier créé",
   "msg.admin_picture": "Seul l'administrateur du groupe peut changer son image",
+  "msg.admin_folder": "Seul l'administrateur du groupe peut ajouter des dossiers",
+  "msg.folder_deep": "Les dossiers vont jusqu'à cinq niveaux au plus",
   "msg.picture_changed": "Image modifiée",
   "msg.invite_closed": "Impossible de rejoindre : l'invitation n'est plus ouverte",
   "msg.admin_invite": "Seuls l'administrateur ou un modérateur du groupe peuvent inviter",

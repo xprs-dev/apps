@@ -235,6 +235,12 @@ static int xgroup_is_admin(const char *call) {
   int i = xgroup_find(call);
   return i >= 0 && s_eq(g_xgroup[i].role, "admin");
 }
+/* room.h: may this station add a folder below room [id]? A folder is listed
+ * with the group key (10.2), so only the admin can, public or private, and
+ * the tree stops at the fifth level because every client ignores deeper. */
+int room_may_nest(const char *id) {
+  return xgroup_is(id) && xgroup_is_admin(id + 1) && xgroup_depth(id + 1) < 5;
+}
 /* May we let somebody in, or take their place away (10.3)? The admin, and a
  * moderator: a small group with no moderators is run by its admin alone. */
 static int xgroup_can_moderate(const char *call) {
@@ -1698,6 +1704,33 @@ static void push_group_members(const char *gid) {
   push_members_page(0, 1, 0);
 }
 
+/* Ask for a new folder's name in [gid] (10.2). From the group's menu, its
+ * header and its member panel alike. Anybody but the admin is told why not,
+ * rather than offered a door that refuses. */
+static void folder_ask(const char *gid) {
+  if (!xgroup_is(gid)) return;
+  if (!xgroup_is_admin(gid + 1)) {
+    notify("warning", wtr("msg.admin_folder", "Only the group's admin can add folders"));
+    return;
+  }
+  if (xgroup_depth(gid + 1) >= 5) {
+    notify("warning", wtr("msg.folder_deep", "Folders go five levels deep at most"));
+    return;
+  }
+  char pm[560] = "{\"type\":\"ui.prompt\",\"id\":\"xgfold:";
+  jesc(pm, sizeof(pm), gid);
+  s_cat(pm, "\",\"title\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.newfolder_title", "New folder"));
+  s_cat(pm, "\",\"body\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.newfolder_body", "A folder for one topic inside this group. Its members are invited to it."));
+  s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.create", "Create"));
+  s_cat(pm, "\",\"input\":{\"hint\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.folder_name_hint", "folder name"));
+  s_cat(pm, "\",\"max\":24}}", sizeof(pm));
+  hal_msg_send(pm, s_len(pm));
+}
+
 static void members_open(const char *gid) {
   if (!xgroup_is(gid)) return;
   s_cpy(g_mp_gid, gid, sizeof(g_mp_gid));
@@ -2423,6 +2456,11 @@ void module_handle_event(void) {
     s_cat(pm, "\",\"max\":24}}", sizeof(pm));
     hal_msg_send(pm, s_len(pm));
   }
+  /* "New folder" on a group's menu or header (the host's onNewRoom). */
+  else if (s_eq(cmd, "rooms_new")) {
+    char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
+    folder_ask(id);
+  }
   else if (s_eq(cmd, "rooms_members")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
     members_open(id);
@@ -2465,20 +2503,7 @@ void module_handle_event(void) {
   else if (s_eq(cmd, "members_action") && g_mp_gid[0]) {
     char id[16] = ""; jstr(buf, "members_id", id, sizeof(id));
     if (s_eq(id, "inv")) invite_open(g_mp_gid);
-    else if (s_eq(id, "fold") && xgroup_is(g_mp_gid)) {
-      char pm[560] = "{\"type\":\"ui.prompt\",\"id\":\"xgfold:";
-      jesc(pm, sizeof(pm), g_mp_gid);
-      s_cat(pm, "\",\"title\":\"", sizeof(pm));
-      jesc(pm, sizeof(pm), wtr("prompt.newfolder_title", "New folder"));
-      s_cat(pm, "\",\"body\":\"", sizeof(pm));
-      jesc(pm, sizeof(pm), wtr("prompt.newfolder_body", "A folder for one topic inside this group. Its members are invited to it."));
-      s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
-      jesc(pm, sizeof(pm), wtr("prompt.create", "Create"));
-      s_cat(pm, "\",\"input\":{\"hint\":\"", sizeof(pm));
-      jesc(pm, sizeof(pm), wtr("prompt.folder_name_hint", "folder name"));
-      s_cat(pm, "\",\"max\":24}}", sizeof(pm));
-      hal_msg_send(pm, s_len(pm));
-    }
+    else if (s_eq(id, "fold")) folder_ask(g_mp_gid);
     else if (s_eq(id, "leave") && xgroup_is(g_mp_gid)) leave_ask(g_mp_gid);
     else if (s_eq(id, "vis") && xgroup_is(g_mp_gid) && xgroup_is_admin(g_mp_gid + 1)) {
       int to_private = xgroup_public(g_mp_gid + 1);

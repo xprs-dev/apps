@@ -611,6 +611,8 @@ void room_rail(void) {
       }
       s_cat(rail, "\",\"depth\":", sizeof(rail));
       { char nb[8]; u_itoa((unsigned)depth, nb); s_cat(rail, nb, sizeof(rail)); }
+      /* Where a folder may be added below it (10.2): the host's "New folder". */
+      if (room_may_nest(id)) s_cat(rail, ",\"nest\":true", sizeof(rail));
       s_cat(rail, ",\"seen\":", sizeof(rail));
       { char nb[24]; u_lltoa((unsigned long long)jint(row, "activity_ts"), nb); s_cat(rail, nb, sizeof(rail)); }
       s_cat(rail, "}", sizeof(rail));

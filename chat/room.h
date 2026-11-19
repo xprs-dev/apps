@@ -158,6 +158,11 @@ void blocked_publish(void);
  * Defined in main.c, which holds the core's answer. */
 int room_tree(const char *id, char *parent, unsigned cap);
 
+/* May this station add a folder below room [id] (the admin of a closed
+ * group not yet five levels deep)? Stated on its rail entry as `nest`, so the host
+ * offers "New folder" there. Defined in main.c. */
+int room_may_nest(const char *id);
+
 /* Shared with main.c */
 void fmt_time_at(char *b, unsigned long long epoch);
 /* YYYY-MM-DD in the reader's local time, for the host's day separators. */

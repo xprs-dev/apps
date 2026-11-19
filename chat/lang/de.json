@@ -109,6 +109,8 @@
   "msg.folder_failed": "Der Ordner konnte nicht angelegt werden",
   "msg.folder_created": "Ordner angelegt",
   "msg.admin_picture": "Nur der Administrator der Gruppe kann ihr Bild ändern",
+  "msg.admin_folder": "Nur der Administrator der Gruppe kann Ordner hinzufügen",
+  "msg.folder_deep": "Ordner gehen höchstens fünf Ebenen tief",
   "msg.picture_changed": "Bild geändert",
   "msg.invite_closed": "Beitritt nicht möglich: die Einladung ist nicht mehr offen",
   "msg.admin_invite": "Nur die Verwaltung oder die Moderation der Gruppe kann einladen",

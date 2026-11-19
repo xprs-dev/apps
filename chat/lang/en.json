@@ -109,6 +109,8 @@
   "msg.folder_failed": "Could not create the folder",
   "msg.folder_created": "Folder created",
   "msg.admin_picture": "Only the group's admin can change its picture",
+  "msg.admin_folder": "Only the group's admin can add folders",
+  "msg.folder_deep": "Folders go five levels deep at most",
   "msg.picture_changed": "Picture changed",
   "msg.invite_closed": "Could not join: the invitation is no longer open",
   "msg.admin_invite": "Only the group's admin or a moderator can invite",
