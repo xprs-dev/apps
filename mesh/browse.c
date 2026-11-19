@@ -700,7 +700,7 @@ int browse_command(const char *cmd, const char *full)
         if (is_me() && al_eq(id, "own:add")) {
             say("{\"type\":\"ui.prompt\",\"id\":\"own:add\",\"title\":\"Add a person\","
                 "\"body\":\"Their callsign, as it shows in the list.\","
-                "\"input\":{\"hint\":\"X1\u2026\"},\"confirm\":\"Add\"}");
+                "\"input\":{\"hint\":\"X1…\"},\"confirm\":\"Add\"}");
             return 1;
         }
         if (is_me() && (al_eq(id, "own:close") || al_starts(id, "m:"))) {

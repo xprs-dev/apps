@@ -17,8 +17,32 @@
  * section whose name is a valid C identifier. The weak attribute
  * keeps tests.wasm linkable even when no tests are present (the
  * runner just reports zero cases). */
+#ifdef __XCC
+/* xcc: the cases registered themselves from constructors (see
+ * wapp_test.h); run those once, then walk the list. */
+#define WAPP_TESTS_MAX 1024
+static const WappTestCase *g_cases[WAPP_TESTS_MAX];
+static unsigned g_case_n;
+void wapp__register(const WappTestCase *c) {
+    if (g_case_n < WAPP_TESTS_MAX) g_cases[g_case_n++] = c;
+}
+extern void __wasm_call_ctors(void);
+static unsigned case_count(void) {
+    static int started;
+    if (!started) { started = 1; __wasm_call_ctors(); }
+    return g_case_n;
+}
+static const WappTestCase *case_at(unsigned i) { return g_cases[i]; }
+#else
 extern const WappTestCase __start_wapp_tests __attribute__((weak));
 extern const WappTestCase __stop_wapp_tests  __attribute__((weak));
+static unsigned case_count(void) {
+    return (unsigned)(&__stop_wapp_tests - &__start_wapp_tests);
+}
+static const WappTestCase *case_at(unsigned i) {
+    return &__start_wapp_tests + i;
+}
+#endif
 
 /* ── Tiny helpers (no libc, keep tests.wasm small) ──────────────── */
 
@@ -209,11 +233,9 @@ void module_run_tests(void) {
 
     uint64_t t0 = hal_time_ms();
 
-    const WappTestCase *p   = &__start_wapp_tests;
-    const WappTestCase *end = &__stop_wapp_tests;
-
-    /* Walk by struct stride; the section is an array of WappTestCase. */
-    for (; p < end; p++) {
+    unsigned n = case_count();
+    for (unsigned i = 0; i < n; i++) {
+        const WappTestCase *p = case_at(i);
         derive_suite(p->file, suite, sizeof(suite));
 
         int is_skip = disabled[0] &&

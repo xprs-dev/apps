@@ -4,7 +4,7 @@
  * An ordinary wapp, installed and shared like any other and never part of
  * the app. It carries two things:
  *
- *   1. A toolchain the HOST runs for other wapps' builds (media/llvm.wasm,
+ *   1. A toolchain the HOST runs for other wapps' builds (media/cc.wasm,
  *      media/usr; see fetch-toolchain.sh and the app's compiler_addon.dart).
  *      This program has nothing to do with that part.
  *

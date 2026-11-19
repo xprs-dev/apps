@@ -53,6 +53,24 @@ unsigned wapp__itoa(long long v, char *out, unsigned cap);
  * Defines and registers a test case named `name`. The body runs as
  * a function; pass by reaching the end without a failed expectation.
  */
+#ifdef __XCC
+/* xcc (the on-device compiler) has no linker sections: each case adds
+ * itself to the runner's list when the module starts. */
+void wapp__register(const WappTestCase *c);
+#define WAPP_TEST(case_name)                                              \
+    static void wapp__case_##case_name(WappTestCtx *ctx);                 \
+    static const WappTestCase wapp__entry_##case_name = {                 \
+        .name = #case_name,                                               \
+        .file = __FILE__,                                                 \
+        .line = __LINE__,                                                 \
+        .fn   = wapp__case_##case_name,                                   \
+    };                                                                    \
+    __attribute__((constructor))                                          \
+    static void wapp__reg_##case_name(void) {                             \
+        wapp__register(&wapp__entry_##case_name);                         \
+    }                                                                     \
+    static void wapp__case_##case_name(WappTestCtx *ctx)
+#else
 #define WAPP_TEST(case_name)                                              \
     static void wapp__case_##case_name(WappTestCtx *ctx);                 \
     __attribute__((used, retain, section("wapp_tests")))                  \
@@ -63,6 +81,7 @@ unsigned wapp__itoa(long long v, char *out, unsigned cap);
         .fn   = wapp__case_##case_name,                                   \
     };                                                                    \
     static void wapp__case_##case_name(WappTestCtx *ctx)
+#endif
 
 /* Force-fail with a literal message. */
 #define WAPP_FAIL(literal_msg) do {                                       \
