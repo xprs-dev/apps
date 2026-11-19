@@ -204,5 +204,11 @@
   "prompt.mod_body": "The admin asks you to moderate this group: accept people who ask to join, remove members and correct or remove posts. You stay a member either way.",
   "prompt.mod_accept": "Accept",
   "msg.mod_closed": "The offer to moderate is no longer open",
-  "msg.mod_now": "You are now a moderator of this group"
+  "msg.mod_now": "You are now a moderator of this group",
+  "label.rename": "Rename",
+  "prompt.rename_title": "Rename",
+  "prompt.rename_body": "Everyone who follows it sees the new name.",
+  "prompt.save": "Save",
+  "msg.rename_failed": "Could not rename it",
+  "msg.renamed": "Renamed"
 }

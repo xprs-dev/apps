@@ -1662,6 +1662,8 @@ static void push_members_page(int offset, int header, int reset) {
         jesc(o, sz, wtr("label.new_folder", "New folder"));
         s_cat(o, "\",\"icon\":\"create_new_folder\"}", sz);
       }
+      /* Its name and its picture are the group's own words (6.3.2, 10.1). */
+      s_cat(o, ",{\"id\":\"ren\",\"label\":\"", sz); jesc(o, sz, wtr("label.rename", "Rename")); s_cat(o, "\",\"icon\":\"edit\"}", sz);
       s_cat(o, ",{\"id\":\"pic\",\"label\":\"", sz); jesc(o, sz, wtr("label.picture", "Picture")); s_cat(o, "\",\"icon\":\"image\"}", sz);
       /* Public (anyone reads) or private (sealed, members read), 10.7.1. */
       s_cat(o, ",{\"id\":\"vis\",\"label\":\"", sz);
@@ -1729,6 +1731,45 @@ static void folder_ask(const char *gid) {
   jesc(pm, sizeof(pm), wtr("prompt.folder_name_hint", "folder name"));
   s_cat(pm, "\",\"max\":24}}", sizeof(pm));
   hal_msg_send(pm, s_len(pm));
+}
+
+/* A group's or a folder's name, changed by its admin: asked for with the
+ * name it has now, announced by the core as the group's own t:identity. */
+static void rename_ask(const char *gid) {
+  if (!xgroup_is(gid)) return;
+  if (!xgroup_is_admin(gid + 1)) {
+    notify("warning", wtr("msg.admin_only", "Only the group's admin can do that"));
+    return;
+  }
+  int k = xgroup_find(gid + 1);
+  char pm[600] = "{\"type\":\"ui.prompt\",\"id\":\"xgren:";
+  jesc(pm, sizeof(pm), gid);
+  s_cat(pm, "\",\"title\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.rename_title", "Rename"));
+  s_cat(pm, "\",\"body\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.rename_body", "Everyone who follows it sees the new name."));
+  s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.save", "Save"));
+  s_cat(pm, "\",\"input\":{\"hint\":\"", sizeof(pm));
+  jesc(pm, sizeof(pm), wtr("prompt.group_name_hint", "name"));
+  s_cat(pm, "\",\"value\":\"", sizeof(pm));
+  if (k >= 0) jesc(pm, sizeof(pm), g_xgroup[k].nick);
+  s_cat(pm, "\",\"max\":24}}", sizeof(pm));
+  hal_msg_send(pm, s_len(pm));
+}
+
+static void group_rename(const char *gid, const char *nick) {
+  if (!xgroup_is(gid) || !nick[0]) return;
+  if (hal_xprs_group_rename(gid + 1, s_len(gid + 1), nick, s_len(nick)) != 0) {
+    notify("warning", wtr("msg.rename_failed", "Could not rename it"));
+    return;
+  }
+  /* The rooms learn the name from the groups (and a folder's path with it);
+   * the panel restates its title. */
+  xgroups_refresh();
+  room_rail();
+  if (s_eq(gid, g_mp_gid)) { g_mp_roster_ok = 0; push_members_page(0, 1, 1); }
+  notify("info", wtr("msg.renamed", "Renamed"));
 }
 
 static void members_open(const char *gid) {
@@ -2517,6 +2558,7 @@ void module_handle_event(void) {
         push_members_page(0, 1, 1);
       }
     }
+    else if (s_eq(id, "ren") && xgroup_is(g_mp_gid)) rename_ask(g_mp_gid);
     else if (s_eq(id, "pic") && xgroup_is(g_mp_gid)) {
       char pm[96] = "{\"type\":\"ui.pick.picture\",\"id\":\"gpic:";
       jesc(pm, sizeof(pm), g_mp_gid);
@@ -2634,6 +2676,10 @@ void module_handle_event(void) {
     else if (s_pre(pid, "xgfold:")) {
       char nick[64] = ""; jstr(buf, "prompt_input", nick, sizeof(nick));
       folder_create(pid + 7, nick);
+    }
+    else if (s_pre(pid, "xgren:")) {
+      char nick[64] = ""; jstr(buf, "prompt_input", nick, sizeof(nick));
+      group_rename(pid + 6, nick);
     }
     else if (s_pre(pid, "xrpw:")) {
       /* A passphrase for a redacted message: try it, and the core remembers it

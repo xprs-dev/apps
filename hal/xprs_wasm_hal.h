@@ -2075,6 +2075,14 @@ __attribute__((import_module("hal"), import_name("xprs_group_picture")))
 int32_t hal_xprs_group_picture(const char *group, uint32_t group_len,
                                const char *token, uint32_t token_len);
 
+/* Rename closed group `group` (a folder is one, XPRS.md 10.2): the nick: of
+ * its own t:identity (6.3.2, 10.1), signed with the group's key, so only its
+ * admin can. hal_xprs_groups reports the new name. 0 = announced,
+ * -1 = refused (not the admin, or no name). */
+__attribute__((import_module("hal"), import_name("xprs_group_rename")))
+int32_t hal_xprs_group_rename(const char *group, uint32_t group_len,
+                              const char *nick, uint32_t nick_len);
+
 /* Accept the membership of closed group `group` ("X5..." or "#X5...") that
  * this station was offered (section 26.3.1). The core finds the offer and
  * signs the acceptance with the profile key. 0 = joined, -1 = refused (no

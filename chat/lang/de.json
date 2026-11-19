@@ -204,5 +204,11 @@
   "prompt.mod_body": "Der Admin bittet dich, diese Gruppe zu moderieren: Beitrittsanfragen annehmen, Mitglieder entfernen und Beiträge korrigieren oder löschen. Mitglied bleibst du so oder so.",
   "prompt.mod_accept": "Annehmen",
   "msg.mod_closed": "Das Angebot zum Moderieren gilt nicht mehr",
-  "msg.mod_now": "Du moderierst jetzt diese Gruppe"
+  "msg.mod_now": "Du moderierst jetzt diese Gruppe",
+  "label.rename": "Umbenennen",
+  "prompt.rename_title": "Umbenennen",
+  "prompt.rename_body": "Alle, die ihr folgen, sehen den neuen Namen.",
+  "prompt.save": "Speichern",
+  "msg.rename_failed": "Umbenennen fehlgeschlagen",
+  "msg.renamed": "Umbenannt"
 }

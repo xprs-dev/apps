@@ -204,5 +204,11 @@
   "prompt.mod_body": "El admin te pide moderar este grupo: aceptar a quien pide entrar, quitar miembros y corregir o borrar mensajes. Sigues siendo miembro en cualquier caso.",
   "prompt.mod_accept": "Aceptar",
   "msg.mod_closed": "La oferta de moderar ya no está abierta",
-  "msg.mod_now": "Ahora moderas este grupo"
+  "msg.mod_now": "Ahora moderas este grupo",
+  "label.rename": "Renombrar",
+  "prompt.rename_title": "Renombrar",
+  "prompt.rename_body": "Todos los que lo siguen ven el nuevo nombre.",
+  "prompt.save": "Guardar",
+  "msg.rename_failed": "No se pudo renombrar",
+  "msg.renamed": "Renombrado"
 }

@@ -238,6 +238,9 @@ const char* mock_folder_ask(void){ return g_folder_ask; }
 const char* mock_picture_ask(void){ return g_picture_ask; }
 int32_t hal_xprs_group_folder(const char* p,uint32_t pl,const char* n,uint32_t nl,char* o,uint32_t cap){ if(g_hk_folder) return g_hk_folder(p,pl,n,nl,o,cap); snprintf(g_folder_ask,sizeof(g_folder_ask),"%.*s:%.*s",(int)pl,p,(int)nl,n); const char* c="X5FOLD"; uint32_t m=strlen(c); if(m>cap) return -1; memcpy(o,c,m); if(m<cap) o[m]=0; return m; }
 int32_t hal_xprs_group_picture(const char* g,uint32_t gl,const char* t,uint32_t tl){ if(g_hk_picture) return g_hk_picture(g,gl,t,tl); snprintf(g_picture_ask,sizeof(g_picture_ask),"%.*s:%.*s",(int)gl,g,(int)tl,t); return 0; }
+/* A rename, read back by the test as "<group>:<nick>". */
+char g_rename_ask[64];
+int32_t hal_xprs_group_rename(const char* g,uint32_t gl,const char* n,uint32_t nl){ snprintf(g_rename_ask,sizeof(g_rename_ask),"%.*s:%.*s",(int)gl,g,(int)nl,n); return 0; }
 /* XPRS.md 7.8: correcting and withdrawing, and a moderator's acts. Single-node
  * tests read back what was asked; sim.c installs the hooks to network them. */
 int32_t (*g_hk_edit)(const char*,uint32_t,const char*,uint32_t,const char*,uint32_t,uint32_t,char*,uint32_t) = 0;

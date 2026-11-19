@@ -204,5 +204,11 @@
   "prompt.mod_body": "L'admin vous demande de modérer ce groupe : accepter les demandes d'adhésion, retirer des membres et corriger ou supprimer des messages. Vous restez membre dans tous les cas.",
   "prompt.mod_accept": "Accepter",
   "msg.mod_closed": "L'offre de modération n'est plus ouverte",
-  "msg.mod_now": "Vous modérez maintenant ce groupe"
+  "msg.mod_now": "Vous modérez maintenant ce groupe",
+  "label.rename": "Renommer",
+  "prompt.rename_title": "Renommer",
+  "prompt.rename_body": "Tous ceux qui le suivent voient le nouveau nom.",
+  "prompt.save": "Enregistrer",
+  "msg.rename_failed": "Impossible de renommer",
+  "msg.renamed": "Renommé"
 }
