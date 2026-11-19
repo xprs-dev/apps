@@ -2,18 +2,13 @@
  * tools.xprs.compiler — the Compiler add-on.
  *
  * An ordinary wapp, installed and shared like any other and never part of
- * the app. It carries two things:
- *
- *   1. A toolchain the HOST runs for other wapps' builds (media/cc.wasm,
- *      media/usr; see fetch-toolchain.sh and the app's compiler_addon.dart).
- *      This program has nothing to do with that part.
- *
- *   2. This program: an AI that edits a wapp. The editor opens the add-on
- *      "on" the wapp being edited; the host says which with
- *      {"type":"host.edit_target","dir":"<absolute package dir>"}. The AI
- *      reads the wapp's files, answers in the chat, and proposes whole-file
- *      replacements. Nothing is written until the person taps Apply, and
- *      Undo puts the previous files back. Building happens in the editor.
+ * the app: an AI that edits a wapp. The editor opens the add-on "on" the
+ * wapp being edited; the host says which with
+ * {"type":"host.edit_target","dir":"<absolute package dir>"}. The AI reads
+ * the wapp's files, answers in the chat, and proposes whole-file
+ * replacements. Nothing is written until the person taps Apply, and Undo
+ * puts the previous files back. Building happens in the editor, with the
+ * compiler the app bundles.
  *
  * Services: Claude (Anthropic Messages API), Codex / OpenAI, OpenCode Zen and
  * any OpenAI-compatible server (Ollama, LM Studio, OpenRouter, ...). The key

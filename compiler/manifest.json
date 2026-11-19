@@ -1,9 +1,9 @@
 {
   "id": "tools.xprs.compiler",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "kind": "addon",
   "title": "Compiler",
-  "description": "Build wapps on this device and edit them with AI.",
+  "description": "Edit wapps with AI.",
   "icon": "🛠️",
   "tick_interval_ms": 0,
   "requires": {
@@ -22,7 +22,6 @@
   ],
   "provides": {
     "functionalities": [
-      "wapp.build",
       "wapp.edit"
     ]
   }

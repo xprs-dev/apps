@@ -312,6 +312,7 @@
   {"file":"circles/circles-0.8.1.wapp","id":"tools.geogram.circles","version":"0.8.1","size":76187,"title":"Circles","description":"Private, encrypted group chat over Reticulum."},
   {"file":"circles/circles-0.9.0.wapp","id":"tools.geogram.circles","version":"0.9.0","size":79742,"title":"Circles","description":"Private, encrypted group chat over Reticulum."},
   {"file":"compiler/compiler-0.2.0.wapp","id":"tools.xprs.compiler","version":"0.2.0","size":258962,"title":"Compiler","description":"Build wapps on this device and edit them with AI."},
+  {"file":"compiler/compiler-0.3.0.wapp","id":"tools.xprs.compiler","version":"0.3.0","size":35428,"title":"Compiler","description":"Edit wapps with AI."},
   {"file":"files/files-0.1.0.wapp","id":"tools.geogram.files","version":"0.1.0","size":16360,"title":"Files","description":"Decentralized file archive — share media over Blossom HTTP and BitTorrent."},
   {"file":"files/files-0.1.1.wapp","id":"tools.geogram.files","version":"0.1.1","size":16985,"title":"Files","description":"Decentralized file archive — share media over Blossom HTTP and BitTorrent."},
   {"file":"files/files-0.1.2.wapp","id":"tools.geogram.files","version":"0.1.2","size":17208,"title":"Files","description":"Decentralized file archive — share media over Blossom HTTP and BitTorrent."},
