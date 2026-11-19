@@ -9,7 +9,8 @@
         "$": "field",
         "name": "activity",
         "$type": "chat",
-        "hint": "@field.activity_hint"
+        "hint": "@field.activity_hint",
+        "max": 130
       },
       {
         "$": "action",

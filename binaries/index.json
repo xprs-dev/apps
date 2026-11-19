@@ -507,6 +507,7 @@
   {"file":"social/social-0.5.5.wapp","id":"tools.xprs.social","version":"0.5.5","size":59261,"title":"Status","description":"Post a status and see what people around you are saying."},
   {"file":"social/social-0.5.6.wapp","id":"tools.xprs.social","version":"0.5.6","size":63756,"title":"Status","description":"Post a status and see what people around you are saying."},
   {"file":"social/social-0.5.7.wapp","id":"tools.xprs.social","version":"0.5.7","size":68243,"title":"Status","description":"Post a status and see what people around you are saying."},
+  {"file":"social/social-0.5.8.wapp","id":"tools.xprs.social","version":"0.5.8","size":68581,"title":"Status","description":"Post a status and see what people around you are saying."},
   {"file":"tasks/tasks-1.0.1.wapp","id":"tools.xprs.tasks","version":"1.0.1","size":6399,"title":"Task Monitor","description":"Live view of background tasks; pause, resume, stop."},
   {"file":"tasks/tasks-1.0.2.wapp","id":"tools.xprs.tasks","version":"1.0.2","size":6400,"title":"Task Monitor","description":"Live view of background tasks; pause, resume, stop."},
   {"file":"tasks/tasks-1.0.3.wapp","id":"tools.xprs.tasks","version":"1.0.3","size":6793,"title":"Task Monitor","description":"See background tasks and pause or stop them."},
