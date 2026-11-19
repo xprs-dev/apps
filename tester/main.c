@@ -268,8 +268,19 @@ void module_handle_event(void) {
             char id[16], text[512];
             int r = wapp_ai_reply(buf, n, id, sizeof(id), text, sizeof(text));
             if (r != 0) {
-                send_notify(r > 0 ? "success" : "error",
-                            r > 0 ? "AI reply" : "AI error", text, 0);
+                /* The reply is the AI's own words: escape them. */
+                char out[900];
+                unsigned pos = 0;
+                append_cstr(out, sizeof(out), &pos,
+                            "{\"type\":\"notify\",\"level\":\"");
+                append_cstr(out, sizeof(out), &pos, r > 0 ? "success" : "error");
+                append_cstr(out, sizeof(out), &pos, "\",\"title\":\"");
+                append_cstr(out, sizeof(out), &pos,
+                            r > 0 ? "AI reply" : "AI error");
+                append_cstr(out, sizeof(out), &pos, "\",\"body\":\"");
+                append_json_escaped(out, sizeof(out), &pos, text, str_len(text));
+                append_cstr(out, sizeof(out), &pos, "\"}");
+                hal_msg_send(out, pos);
                 continue;
             }
         }
