@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.tester",
-  "version":         "1.0.5",
+  "version":         "1.0.6",
   "kind":            "system",
   "title":           "Tester",
   "description":     "Fire test notifications to check how they look.",

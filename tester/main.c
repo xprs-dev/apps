@@ -86,6 +86,13 @@ static void append_json_escaped(char *dst, unsigned max, unsigned *pos,
     }
 }
 
+/* Every notification this wapp fires names a view it never shows. The host
+ * does not raise a notification about what is on screen (the screen already
+ * says it), and one that names nothing is about its whole wapp: fired from
+ * the Tester's own page, none of them appeared. A sample is about nothing
+ * on screen, and says so. */
+#define NOTIFY_VIEW ",\"view\":\"sample\""
+
 /* ── Notification emitter ─────────────────────────────────────────── */
 
 /*
@@ -113,7 +120,7 @@ static void send_notify(const char *level, const char *title,
         append_cstr(buf, sizeof(buf), &pos, scope);
         append_cstr(buf, sizeof(buf), &pos, "\"");
     }
-    append_cstr(buf, sizeof(buf), &pos, "}");
+    append_cstr(buf, sizeof(buf), &pos, NOTIFY_VIEW "}");
 
     hal_msg_send(buf, pos);
 }
@@ -132,7 +139,7 @@ static void send_event_notify(const char *topic, unsigned tlen,
     } else {
         append_json_escaped(buf, sizeof(buf), &pos, data, dlen);
     }
-    append_cstr(buf, sizeof(buf), &pos, "\"}");
+    append_cstr(buf, sizeof(buf), &pos, "\"" NOTIFY_VIEW "}");
     hal_msg_send(buf, pos);
 }
 
@@ -205,7 +212,7 @@ static void handle_widget_response(const char *buf, unsigned n) {
     append_cstr(out, sizeof(out), &pos, title);
     append_cstr(out, sizeof(out), &pos, "\",\"body\":\"");
     append_json_escaped(out, sizeof(out), &pos, buf, n);
-    append_cstr(out, sizeof(out), &pos, "\"}");
+    append_cstr(out, sizeof(out), &pos, "\"" NOTIFY_VIEW "}");
     hal_msg_send(out, pos);
 }
 
@@ -279,7 +286,7 @@ void module_handle_event(void) {
                             r > 0 ? "AI reply" : "AI error");
                 append_cstr(out, sizeof(out), &pos, "\",\"body\":\"");
                 append_json_escaped(out, sizeof(out), &pos, text, str_len(text));
-                append_cstr(out, sizeof(out), &pos, "\"}");
+                append_cstr(out, sizeof(out), &pos, "\"" NOTIFY_VIEW "}");
                 hal_msg_send(out, pos);
                 continue;
             }

@@ -518,6 +518,7 @@
   {"file":"tester/tester-1.0.3.wapp","id":"tools.xprs.tester","version":"1.0.3","size":16513,"title":"Tester","description":"Fire test notifications to check how they look."},
   {"file":"tester/tester-1.0.4.wapp","id":"tools.xprs.tester","version":"1.0.4","size":18709,"title":"Tester","description":"Fire test notifications to check how they look."},
   {"file":"tester/tester-1.0.5.wapp","id":"tools.xprs.tester","version":"1.0.5","size":19067,"title":"Tester","description":"Fire test notifications to check how they look."},
+  {"file":"tester/tester-1.0.6.wapp","id":"tools.xprs.tester","version":"1.0.6","size":19682,"title":"Tester","description":"Fire test notifications to check how they look."},
   {"file":"things/things-0.1.0.wapp","id":"tools.xprs.things","version":"0.1.0","size":36873,"title":"Things","description":"Things - the devices around you: pumps, generators, sensors and plugs (X4 callsigns), what they report, and the ones you pin."},
   {"file":"things/things-0.1.1.wapp","id":"tools.xprs.things","version":"0.1.1","size":38696,"title":"Things","description":"Things - the devices around you: pumps, generators, sensors and plugs (X4 callsigns), what they report, and the ones you pin."},
   {"file":"things/things-0.2.0.wapp","id":"tools.xprs.things","version":"0.2.0","size":57372,"title":"Things","description":"Things - the devices around you: doorbells, cameras, sensors, meters, switches and locks (X4 callsigns), what each one can do, and the ones you ask to be told about."},
