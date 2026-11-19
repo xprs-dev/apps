@@ -1,5 +1,5 @@
 /*
- * The Compiler add-on's AI editor, native, against a mock HAL: what it shows
+ * The AI add-on's wapp editor, native, against a mock HAL: what it shows
  * when opened on a wapp, the request it builds for each kind of service, how
  * it reads the answer, and Apply / Undo on real files.
  */
@@ -54,7 +54,7 @@ static void deliver(const char *json) {
 static char g_dir[256];
 
 static void make_wapp(void) {
-    snprintf(g_dir, sizeof(g_dir), "%s/compiler_native_wapp",
+    snprintf(g_dir, sizeof(g_dir), "%s/ai_native_wapp",
              getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
     char p[512];
     mkdir(g_dir, 0755);

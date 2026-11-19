@@ -1,5 +1,5 @@
 /*
- * tools.xprs.compiler — the Compiler add-on.
+ * tools.xprs.ai — the AI add-on.
  *
  * An ordinary wapp, installed and shared like any other and never part of
  * the app: an AI that edits a wapp. The editor opens the add-on "on" the
@@ -552,18 +552,18 @@ static void ai_send(const char *text, size_t n) {
         return;
     }
     if (g_dir.n == 0) {
-        chat("in", "Compiler",
+        chat("in", "AI",
              t("msg.no_target", "Open this from the editor of a wapp."));
         return;
     }
     if (!provider_is_claude() && (provider_model()[0] == 0 ||
                                   provider_base()[0] == 0)) {
-        chat("in", "Compiler",
+        chat("in", "AI",
              t("msg.need_model", "Set the model and address in Settings."));
         return;
     }
     if (s_key.n == 0 && !is(&s_provider, "compatible")) {
-        chat("in", "Compiler",
+        chat("in", "AI",
              t("msg.need_key", "Add the service's key in Settings."));
         return;
     }
@@ -579,7 +579,7 @@ static void ai_send(const char *text, size_t n) {
                               (uint32_t)body.n, 600000);
     g_req_started = hal_time_ms();
     if (g_req < 0)
-        chat("in", "Compiler", t("msg.send_failed", "Could not send it."));
+        chat("in", "AI", t("msg.send_failed", "Could not send it."));
     sb_free(&url);
     sb_free(&body);
     sb_free(&hdr);
@@ -708,7 +708,7 @@ static void poll_request(void) {
     g_req = -1;
     const char *p = sb_str(&body), *e = p + body.n;
     if (st < 0) {
-        chat("in", "Compiler",
+        chat("in", "AI",
              t("msg.unreachable", "The service could not be reached."));
     } else if (status < 200 || status >= 300) {
         error_text(p, e, &text);
@@ -716,23 +716,23 @@ static void poll_request(void) {
         sb_puts(&m, t("msg.refused", "The service said no"));
         sb_puts(&m, ": ");
         sb_puts(&m, text.n ? sb_str(&text) : "HTTP error");
-        chat("in", "Compiler", sb_str(&m));
+        chat("in", "AI", sb_str(&m));
         sb_free(&m);
     } else {
         const char *sr = j_get(p, e, "stop_reason");
         sb_t srv = {0};
         if (sr) j_str(sr, e, &srv);
         if (is(&srv, "refusal")) {
-            chat("in", "Compiler",
+            chat("in", "AI",
                  t("msg.declined", "The AI declined this request."));
         } else if (reply_text(p, e, &text) && text.n) {
             turn_add("assistant", sb_str(&text), text.n);
             take_reply(&text);
             if (is(&srv, "max_tokens"))
-                chat("in", "Compiler",
+                chat("in", "AI",
                      t("msg.cut", "The answer was cut off; ask for less at once."));
         } else {
-            chat("in", "Compiler", t("msg.empty", "The AI sent nothing back."));
+            chat("in", "AI", t("msg.empty", "The AI sent nothing back."));
         }
         sb_free(&srv);
     }
@@ -761,7 +761,7 @@ static void apply_changes(void) {
     sb_free(&abs);
     files_free(g_pending, &g_npending);
     set_field("changes", t("msg.applied", "Applied. Build it in the editor."));
-    chat("in", "Compiler", t("msg.applied", "Applied. Build it in the editor."));
+    chat("in", "AI", t("msg.applied", "Applied. Build it in the editor."));
     (void)written;
     load_target();
 }

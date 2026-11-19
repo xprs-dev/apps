@@ -1,5 +1,5 @@
-#ifndef COMPILER_HAL_MOCK_H
-#define COMPILER_HAL_MOCK_H
+#ifndef AI_HAL_MOCK_H
+#define AI_HAL_MOCK_H
 
 #define MOCK_OUT_MAX 256
 extern char *mock_out[MOCK_OUT_MAX];

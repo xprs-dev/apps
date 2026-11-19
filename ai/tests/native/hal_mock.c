@@ -1,5 +1,5 @@
 /*
- * A mock HAL for the Compiler add-on's native tests: the host's message
+ * A mock HAL for the AI add-on's native tests: the host's message
  * queues, the add-on's key-value store, real files on disk, and one canned
  * HTTP service whose last request the test reads back.
  */
