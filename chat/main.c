@@ -2218,17 +2218,17 @@ static void rank_section(char *o, unsigned sz, const char *by, const char *title
         s_cat(sub, wtr("rank.joined", " joined this month"), sizeof(sub));
       } else if (s_eq(by, "members")) {
         u_lltoa((unsigned long long)members, nb); s_cat(sub, nb, sizeof(sub));
-        s_cat(sub, wtr("rank.members", " members"), sizeof(sub));
+        s_cat(sub, members == 1 ? wtr("rank.member", " member") : wtr("rank.members", " members"), sizeof(sub));
       } else {
         s_cat(sub, "~", sizeof(sub)); u_lltoa((unsigned long long)posts, nb); s_cat(sub, nb, sizeof(sub));
-        s_cat(sub, wtr("rank.posts", " posts"), sizeof(sub));
+        s_cat(sub, posts == 1 ? wtr("rank.post", " post") : wtr("rank.posts", " posts"), sizeof(sub));
         s_cat(sub, " \xc2\xb7 ", sizeof(sub));
         u_lltoa((unsigned long long)posters, nb); s_cat(sub, nb, sizeof(sub));
-        s_cat(sub, wtr("rank.people", " people"), sizeof(sub));
+        s_cat(sub, posters == 1 ? wtr("rank.person", " person") : wtr("rank.people", " people"), sizeof(sub));
         if (!open && members > 0) {
           s_cat(sub, " \xc2\xb7 ", sizeof(sub));
           u_lltoa((unsigned long long)members, nb); s_cat(sub, nb, sizeof(sub));
-          s_cat(sub, wtr("rank.members", " members"), sizeof(sub));
+          s_cat(sub, members == 1 ? wtr("rank.member", " member") : wtr("rank.members", " members"), sizeof(sub));
         }
       }
       s_cat(o, "\",\"subtitle\":\"", sz); jesc(o, sz, sub);

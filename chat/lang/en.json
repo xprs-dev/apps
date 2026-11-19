@@ -233,5 +233,8 @@
   "rank.members": " members",
   "rank.joined": " joined this month",
   "rank.open": "open",
-  "rank.public": "public"
+  "rank.public": "public",
+  "rank.member": " member",
+  "rank.post": " post",
+  "rank.person": " person"
 }
