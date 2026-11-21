@@ -1195,7 +1195,7 @@ static void clear_field(const char *field) {
 int32_t module_init(void) {
     hal_log(6, "[social] up — XPRS only", 24);
     /* The feed's source is the spool, and the core says when the spool grew --
-     * once per flush, which is also once per burst. This used to be a sqlite
+     * once per flush, which is also once per burst. This used to be a database
      * read every 2.8 seconds on a 700ms clock, whose answer on a quiet radio
      * is always the same sixty rows. */
     {

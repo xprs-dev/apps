@@ -943,12 +943,12 @@ uint32_t hal_event_recv(char *topic_buf, uint32_t topic_buf_len,
 
 /* ── Database (hal.db: per-wapp SQL storage) ────────────────────────── *
  *
- * Generic database access for wapps: SQL in the SQLite dialect, run by the
- * host's zx database engine. `path` is RELATIVE to this wapp's private data
+ * Generic database access for wapps: SQL, run by the host's zx database
+ * engine. `path` is RELATIVE to this wapp's private data
  * directory — a leading '/' and any ".." segment are rejected, so a wapp can
  * never reach another wapp's files or escape its sandbox. The database is
- * created if missing and stored as `<path>.zx` (a trailing .sqlite3, .sqlite
- * or .db is replaced); inside an encrypted profile it is encrypted.
+ * created if missing and stored as `<path>.zx` (a trailing .db is
+ * replaced); inside an encrypted profile it is encrypted.
  *
  * Binary values are NOT marshalled across the boundary: store binary as
  * base64 TEXT. Bind parameters are an optional JSON array matched to '?'

@@ -1,7 +1,7 @@
 // hal.db for a wapp's native tests, on the real database engine.
 //
 // The host answers hal_db_* with a zx store (app/lib/wapp/wapp_engine.dart:
-// a ZxSqlDb per opened path, SQL in the SQLite dialect, bind parameters as a
+// a ZxSqlDb per opened path, SQL run by zx, bind parameters as a
 // JSON array, rows back as a JSON array of objects). A native test is C and
 // cannot link a Dart engine, so ../hal_db_zx.c starts this program and speaks
 // to it one JSON line at a time:
@@ -13,7 +13,7 @@
 //   <- {"ok":false,"error":"..."}                   on any failure
 //
 // The store is a file, named as the host names it (`<name>.zx`, a trailing
-// .sqlite3/.sqlite/.db replaced), opened with the host's options, so a test
+// .db replaced), opened with the host's options, so a test
 // that closes and reopens it sees what a restarted wapp sees. Parameters and
 // rows are converted exactly as the host converts them.
 import 'dart:convert';
@@ -24,7 +24,7 @@ import 'package:zx/zxdb.dart';
 String _storePath(String path) {
   final slash = path.lastIndexOf('/');
   final dir = slash < 0 ? '' : path.substring(0, slash + 1);
-  var name = path.substring(slash + 1).replaceFirst(RegExp(r'\.(sqlite3?|db)$'), '');
+  var name = path.substring(slash + 1).replaceFirst(RegExp(r'\.db$'), '');
   if (!name.endsWith('.zx')) name = '$name.zx';
   return '$dir$name';
 }

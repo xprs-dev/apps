@@ -6,7 +6,7 @@
  * bridge in sdk/zxdb_bridge (a few lines of Dart on package:zx that open,
  * name and convert exactly as the host does) and talks to it over two pipes,
  * one JSON line per call. A statement that works here works in the app,
- * because it ran on the same engine. There is no SQLite anywhere: link this
+ * because it ran on the same engine. Link this
  * file instead of writing a hal_db mock.
  *
  * The run script sets ZXDB_BRIDGE to the command that starts the bridge,
