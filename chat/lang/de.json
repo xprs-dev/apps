@@ -122,6 +122,8 @@
   "msg.deleted": "Chat gelöscht",
   "label.carried": "Überbracht",
   "label.via": "über",
+  "msg.repeated": "Erneut an die erreichbaren Stationen gesendet",
+  "msg.could_not_repeat": "Diese Nachricht ist hier nicht mehr vorhanden, um sie erneut zu senden",
   "label.mod_removed": "Frühere Fassungen wurden von einem Moderator entfernt",
   "label.tap_reveal": "Antippen, um den verborgenen Text aufzudecken",
   "label.nearby": "In der Nähe",

@@ -2509,6 +2509,31 @@ void module_handle_event(void) {
     cmd_field(buf, "mid", mid, sizeof(mid));
     if (id[0] && mid[0]) info_publish(id, mid);
   }
+  /* "Repeat" on one of our own messages: the packet as it was first sent,
+   * read from the core's archive by its identifier and handed to the core
+   * again. The same bytes, the same signature and so the same identifier:
+   * whoever already has it keeps one copy, and a station that was not in
+   * reach the first time now takes it. For somebody moving between stations
+   * who wants the same word left at each, without writing it again. */
+  else if (s_eq(cmd, "rooms_repeat")) {
+    char mid[24] = "";
+    cmd_field(buf, "mid", mid, sizeof(mid));
+    int sent = 0;
+    if (mid[0]) {
+      char q[80] = "{\"id\":\"";
+      s_cat(q, mid, sizeof(q)); s_cat(q, "\",\"limit\":1}", sizeof(q));
+      int32_t n = hal_xprs_history(q, s_len(q), g_hist, sizeof(g_hist) - 1);
+      if (n > 0 && n < (int)sizeof(g_hist)) {
+        g_hist[n] = 0;
+        const char *cur = g_hist; static char pk[3000]; static char wire[1200];
+        wire[0] = 0;
+        if (next_object(&cur, pk, sizeof(pk))) jstr(pk, "wire", wire, sizeof(wire));
+        if (wire[0] && hal_xprs_send(wire, s_len(wire)) == 0) sent = 1;
+      }
+    }
+    if (sent) notify("info", wtr("msg.repeated", "Sent again to the stations in reach"));
+    else notify("warning", wtr("msg.could_not_repeat", "This message is no longer kept here to send again"));
+  }
   else if (s_eq(cmd, "rooms_sendplain")) {
     /* One waiting message, from its menu: send it now in the open. */
     char id[48] = "", mid[24] = "";

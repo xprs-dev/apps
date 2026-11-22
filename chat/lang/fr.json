@@ -122,6 +122,8 @@
   "msg.deleted": "Discussion supprimée",
   "label.carried": "Acheminé",
   "label.via": "via",
+  "msg.repeated": "Renvoyé aux stations à portée",
+  "msg.could_not_repeat": "Ce message n'est plus conservé ici pour être renvoyé",
   "label.mod_removed": "Des versions antérieures ont été retirées par un modérateur",
   "label.tap_reveal": "Touchez pour révéler le texte masqué",
   "label.nearby": "À proximité",

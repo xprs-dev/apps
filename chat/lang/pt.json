@@ -122,6 +122,8 @@
   "msg.deleted": "Conversa apagada",
   "label.carried": "Transportada",
   "label.via": "via",
+  "msg.repeated": "Enviada de novo às estações ao alcance",
+  "msg.could_not_repeat": "Esta mensagem já não está guardada aqui para ser enviada de novo",
   "label.mod_removed": "Versões anteriores removidas por um moderador",
   "label.tap_reveal": "Toque para revelar o texto oculto",
   "label.nearby": "Por perto",
