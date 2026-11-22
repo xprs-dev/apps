@@ -250,6 +250,8 @@ static int xgroup_is_admin(const char *call) {
 /* room.h: may this station add a folder below room [id]? A folder is listed
  * with the group key (10.2), so only the admin can, public or private, and
  * the tree stops at the fifth level because every client ignores deeper. */
+int room_has_page(const char *id) { return xgroup_is(id); }
+
 int room_may_nest(const char *id) {
   return xgroup_is(id) && xgroup_is_admin(id + 1) && xgroup_depth(id + 1) < 5;
 }

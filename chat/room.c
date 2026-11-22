@@ -633,6 +633,10 @@ void room_rail(void) {
        * "Share link". Not the rooms by range (Local, Regional, Global),
        * which are no group, and not a person. */
       if (room_shares(id)) s_cat(rail, ",\"share\":true", sizeof(rail));
+      /* Whether this room has a page of its own (members, name, picture):
+       * stated either way, so the host offers "Group info" only where it
+       * opens something. */
+      s_cat(rail, room_has_page(id) ? ",\"page\":true" : ",\"page\":false", sizeof(rail));
       s_cat(rail, ",\"seen\":", sizeof(rail));
       { char nb[24]; u_lltoa((unsigned long long)jint(row, "activity_ts"), nb); s_cat(rail, nb, sizeof(rail)); }
       s_cat(rail, "}", sizeof(rail));

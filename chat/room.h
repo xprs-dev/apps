@@ -169,6 +169,10 @@ int room_tree(const char *id, char *parent, unsigned cap);
  * offers "New folder" there. Defined in main.c. */
 int room_may_nest(const char *id);
 
+/* Does [id] have a page of its own to open (a closed group's members, name
+ * and picture)? Stated on its rail entry as `page`. Defined in main.c. */
+int room_has_page(const char *id);
+
 /* Shared with main.c */
 void fmt_time_at(char *b, unsigned long long epoch);
 /* YYYY-MM-DD in the reader's local time, for the host's day separators. */
