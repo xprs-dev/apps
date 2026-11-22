@@ -121,6 +121,7 @@
   "msg.unarchived": "Discussion désarchivée",
   "msg.deleted": "Discussion supprimée",
   "label.carried": "Acheminé",
+  "label.via": "via",
   "label.mod_removed": "Des versions antérieures ont été retirées par un modérateur",
   "label.tap_reveal": "Touchez pour révéler le texte masqué",
   "label.nearby": "À proximité",

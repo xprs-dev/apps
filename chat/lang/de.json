@@ -121,6 +121,7 @@
   "msg.unarchived": "Chat aus dem Archiv geholt",
   "msg.deleted": "Chat gelöscht",
   "label.carried": "Überbracht",
+  "label.via": "über",
   "label.mod_removed": "Frühere Fassungen wurden von einem Moderator entfernt",
   "label.tap_reveal": "Antippen, um den verborgenen Text aufzudecken",
   "label.nearby": "In der Nähe",

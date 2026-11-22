@@ -121,6 +121,7 @@
   "msg.unarchived": "Chat desarchivado",
   "msg.deleted": "Chat eliminado",
   "label.carried": "Transportado",
+  "label.via": "vía",
   "label.mod_removed": "Un moderador eliminó versiones anteriores",
   "label.tap_reveal": "Toca para revelar el texto oculto",
   "label.nearby": "Cerca",

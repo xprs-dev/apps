@@ -503,7 +503,19 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
   s_cat(m, "\",\"mid\":\"", sizeof(m)); jesc(m, sizeof(m), mid);
   s_cat(m, "\"", sizeof(m));
   if (parent && parent[0]) { s_cat(m, ",\"parent\":\"", sizeof(m)); jesc(m, sizeof(m), parent); s_cat(m, "\"", sizeof(m)); }
-  if (via && via[0]) { s_cat(m, ",\"via\":\"", sizeof(m)); jesc(m, sizeof(m), via_label(via)); s_cat(m, "\"", sizeof(m)); }
+  /* How it got here. A message a station carried in (a relay chain on the
+   * wire) says who handed it over, "via X3ABCD": the bearer alone read
+   * "LAN" on a message from somebody far away that a station at home had
+   * repeated, as if its author were on the home network. */
+  { char lab[48] = "";
+    const char *last = path && path[0] ? path : "";
+    for (const char *c = last; *c; c += 1) if (*c == ',' && c[1]) last = c + 1;
+    if (!last[0] && via && via[0] == '~') last = via + 1;   /* as stored */
+    if (last[0] && !s_eq(dir, "out")) {
+      s_cpy(lab, wtr("label.via", "via"), sizeof(lab));
+      s_cat(lab, " ", sizeof(lab)); s_cat(lab, last, sizeof(lab));
+    } else if (via && via[0]) s_cpy(lab, via_label(via), sizeof(lab));
+    if (lab[0]) { s_cat(m, ",\"via\":\"", sizeof(m)); jesc(m, sizeof(m), lab); s_cat(m, "\"", sizeof(m)); } }
   /* The network a foreign sender belongs to (Meshtastic/MeshCore), so a
    * bubble can wear a tag beside the bearer -- most people do not know an
    * MT callsign is a Meshtastic node bridged in. "" for one of ours. */
@@ -954,6 +966,15 @@ int room_admit(const room_msg_t *m) {
   const char *sender = m->sender ? m->sender : "";
   const char *parent = m->parent ? m->parent : "";
   const char *via = m->via ? m->via : "";
+  /* Carried in by a station: what is kept is who handed it over ("~X3ABCD"),
+   * so the bubble says the same after a reload as when it arrived. */
+  char handed[16] = "";
+  if (m->path && m->path[0] && !s_eq(m->dir, "out")) {
+    const char *last = m->path;
+    for (const char *c = last; *c; c += 1) if (*c == ',' && c[1]) last = c + 1;
+    handed[0] = '~'; s_cpy(handed + 1, last, sizeof(handed) - 1);
+    via = handed;
+  }
   const char *auth = m->auth ? m->auth : "";
   const char *rid = m->rid ? m->rid : "";
   const char *status = m->status ? m->status : "";
