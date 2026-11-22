@@ -22,7 +22,7 @@
   "field.searchall_tip": "Ein Ergebnis antippen, um es zu öffnen.",
   "screen.newchat": "Neuer Chat",
   "screen.newchat_tip": "Eine Station finden und ein direktes Gespräch beginnen.",
-  "field.finduser_empty": "Noch niemand in Reichweite.\nStationen erscheinen hier, sobald das Funkgerät sie hört - oder gib ein Rufzeichen ein, um sofort zu schreiben.",
+  "field.finduser_empty": "Noch niemand in Reichweite.\nStationen erscheinen hier, sobald das Funkgerät sie hört - oder gib ein Rufzeichen ein oder füge den Schlüssel einer Person (npub1...) ein, um sofort zu schreiben.",
   "field.finduser_tip": "Jede XPRS-Station, von der dieses Gerät weiß.",
   "screen.group": "Gruppe",
   "screen.invite": "Einladen",

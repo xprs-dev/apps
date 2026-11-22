@@ -22,7 +22,7 @@
   "field.searchall_tip": "Toque num resultado para o abrir.",
   "screen.newchat": "Nova conversa",
   "screen.newchat_tip": "Encontrar uma estação e iniciar uma conversa direta.",
-  "field.finduser_empty": "Ainda ninguém ao alcance.\nAs estações aparecem aqui à medida que o rádio as ouve - ou escreva um indicativo para enviar mensagem de imediato.",
+  "field.finduser_empty": "Ainda ninguém ao alcance.\nAs estações aparecem aqui à medida que o rádio as ouve - ou escreva um indicativo, ou cole a chave de uma pessoa (npub1...), para enviar mensagem de imediato.",
   "field.finduser_tip": "Todas as estações XPRS de que este dispositivo teve conhecimento.",
   "screen.group": "Grupo",
   "screen.invite": "Convidar",

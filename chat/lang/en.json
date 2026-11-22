@@ -22,7 +22,7 @@
   "field.searchall_tip": "Tap a result to open it.",
   "screen.newchat": "New chat",
   "screen.newchat_tip": "Find a station and start a direct conversation.",
-  "field.finduser_empty": "Nobody within reach yet.\nStations appear here as the radio hears them - or type a callsign to message one straight away.",
+  "field.finduser_empty": "Nobody within reach yet.\nStations appear here as the radio hears them - or type a callsign, or paste a person's key (npub1...), to write to them straight away.",
   "field.finduser_tip": "Every XPRS station this device has heard of.",
   "screen.group": "Group",
   "screen.invite": "Invite",
