@@ -236,5 +236,8 @@
   "rank.public": "public",
   "rank.member": " membre",
   "rank.post": " message",
-  "rank.person": " personne"
+  "rank.person": " personne",
+  "label.share_link": "Partager le lien",
+  "prompt.share_title": "Partager ",
+  "prompt.done": "Terminé"
 }

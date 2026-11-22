@@ -1680,16 +1680,21 @@ static void push_members_page(int offset, int header, int reset) {
      * folder (10.2), which stops at the fifth level because every client
      * ignores deeper. A member gets the list alone. */
     s_cat(o, ",\"actions\":[", sz);
+    /* Anybody may pass the group on: a link that opens it in the app or in a
+     * browser, where somebody who is no member can ask to join (10.3). */
+    s_cat(o, "{\"id\":\"share\",\"label\":\"", sz);
+    jesc(o, sz, wtr("label.share_link", "Share link"));
+    s_cat(o, "\",\"icon\":\"share\"}", sz);
     if (!xgroup_is_admin(g_mp_gid + 1) && xgroup_can_moderate(g_mp_gid + 1)) {
       /* A moderator lets people in and takes places away (10.3). */
-      s_cat(o, "{\"id\":\"inv\",\"label\":\"", sz); jesc(o, sz, wtr("label.invite", "Invite")); s_cat(o, "\",\"icon\":\"person_add\",\"primary\":true},", sz);
+      s_cat(o, ",{\"id\":\"inv\",\"label\":\"", sz); jesc(o, sz, wtr("label.invite", "Invite")); s_cat(o, "\",\"icon\":\"person_add\",\"primary\":true},", sz);
       members_state_action(o, sz); s_cat(o, ",", sz);
       s_cat(o, "{\"id\":\"leave\",\"label\":\"", sz);
       jesc(o, sz, wtr("label.leave", "Leave group"));
       s_cat(o, "\",\"icon\":\"logout\"}", sz);
     }
     else if (xgroup_is_admin(g_mp_gid + 1)) {
-      s_cat(o, "{\"id\":\"inv\",\"label\":\"", sz); jesc(o, sz, wtr("label.invite", "Invite")); s_cat(o, "\",\"icon\":\"person_add\",\"primary\":true}", sz);
+      s_cat(o, ",{\"id\":\"inv\",\"label\":\"", sz); jesc(o, sz, wtr("label.invite", "Invite")); s_cat(o, "\",\"icon\":\"person_add\",\"primary\":true}", sz);
       if (xgroup_depth(g_mp_gid + 1) < 5) {
         s_cat(o, ",{\"id\":\"fold\",\"label\":\"", sz);
         jesc(o, sz, wtr("label.new_folder", "New folder"));
@@ -1709,7 +1714,7 @@ static void push_members_page(int offset, int header, int reset) {
     }
     else if (xgroup_may_post(g_mp_gid + 1)) {
       /* A member's own door out (26.3.1): leaving is theirs to decide. */
-      s_cat(o, "{\"id\":\"leave\",\"label\":\"", sz);
+      s_cat(o, ",{\"id\":\"leave\",\"label\":\"", sz);
       jesc(o, sz, wtr("label.leave", "Leave group"));
       s_cat(o, "\",\"icon\":\"logout\"}", sz);
     }
@@ -2138,6 +2143,45 @@ static void remove_member(const char *arg) {
   notify("info", m);
   g_mp_roster_ok = 0;
   push_members_page(0, 1, 1);
+}
+/* A link to a group, for passing on: xprs.dev/in/<x5 callsign> for a group
+ * with a callsign, xprs.dev/in/g/<name> for an open group, whose name could
+ * be mistaken for a station's. The same two forms the web chat writes
+ * (portal chat_page.html groupLink). Opened where XPRS is installed it opens
+ * this chat on the group; in a browser, the web chat of a station that keeps
+ * the group. */
+static void group_link(const char *gid, char *out, unsigned osz) {
+  const char *name = gid[0] == '#' ? gid + 1 : gid;
+  s_cpy(out, "https://xprs.dev/in/", osz);
+  if (!(name[0] == 'X' && name[1] == '5')) s_cat(out, "g/", osz);
+  unsigned n = s_len(out);
+  for (unsigned i = 0; name[i] && n + 1 < osz; i++) {
+    char c = name[i];
+    out[n++] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+  }
+  out[n] = 0;
+}
+/* Shown with a Copy button and as a code to scan: the host's prompt does
+ * both, and a wapp has no clipboard of its own. */
+static void share_link(const char *gid) {
+  if (!gid[0]) return;
+  char link[96]; group_link(gid, link, sizeof(link));
+  char t[48]; room_title(gid, t, sizeof(t));
+  char m[700] = "{\"type\":\"ui.prompt\",\"id\":\"xgshare:";
+  jesc(m, sizeof(m), gid);
+  s_cat(m, "\",\"title\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.share_title", "Share "));
+  jesc(m, sizeof(m), t);
+  s_cat(m, "\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), link);
+  s_cat(m, "\",\"copy\":\"", sizeof(m));
+  jesc(m, sizeof(m), link);
+  s_cat(m, "\",\"qr\":\"", sizeof(m));
+  jesc(m, sizeof(m), link);
+  s_cat(m, "\",\"confirm\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.done", "Done"));
+  s_cat(m, "\"}", sizeof(m));
+  hal_msg_send(m, s_len(m));
 }
 static void leave_ask(const char *gid) {
   char t[48]; room_title(gid, t, sizeof(t));
@@ -2676,6 +2720,7 @@ void module_handle_event(void) {
     if (s_eq(id, "inv")) invite_open(g_mp_gid);
     else if (s_eq(id, "fold")) folder_ask(g_mp_gid);
     else if (s_eq(id, "leave") && xgroup_is(g_mp_gid)) leave_ask(g_mp_gid);
+    else if (s_eq(id, "share")) share_link(g_mp_gid);
     else if (s_eq(id, "vis") && xgroup_is(g_mp_gid) && xgroup_is_admin(g_mp_gid + 1)) {
       int to_private = xgroup_public(g_mp_gid + 1);
       if (hal_xprs_group_private(g_mp_gid + 1, s_len(g_mp_gid + 1), to_private ? 1 : 0) != 0) {
