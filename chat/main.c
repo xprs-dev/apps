@@ -2676,6 +2676,10 @@ void module_handle_event(void) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
     folder_ask(id);
   }
+  else if (s_eq(cmd, "rooms_share")) {
+    char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
+    if (room_shares(id)) share_link(id);
+  }
   else if (s_eq(cmd, "rooms_members")) {
     char id[48] = ""; cmd_field(buf, "convo", id, sizeof(id));
     members_open(id);

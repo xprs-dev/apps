@@ -50,6 +50,7 @@ int room_ensure(const char *id, const char *title);
 int room_known(const char *id);
 /* An id this wapp can draw: "#..." or a station callsign. */
 int room_renderable(const char *id);
+int room_shares(const char *id);
 
 /* THE DOOR. 1 stored and shown, 0 filtered or already held, -1 no database. */
 int room_admit(const room_msg_t *m);

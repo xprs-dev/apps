@@ -40,6 +40,19 @@ static void room_flush_reads(int h);
 static int is_xgroup(const char *id) {
   return id[0] == '#' && id[1] == 'X' && id[2] == '5' && s_len(id) == 7;
 }
+/* A group that can be passed on as a link: `#X5...` (a closed or public
+ * group, by its callsign) or `#NAME` (an open group). The three rooms by
+ * range are no group and are everybody's already. */
+int room_shares(const char *id) {
+  if (!id || id[0] != '#' || !id[1]) return 0;
+  if (s_eq(id, "#LOCAL") || s_eq(id, "#REGIONAL") || s_eq(id, "#GLOBAL")) return 0;
+  for (const char *p = id + 1; *p; p += 1) {
+    char ch = *p;
+    if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-')) return 0;
+  }
+  return 1;
+}
+
 int room_renderable(const char *id) {
   if (!id || !id[0]) return 0;
   if (id[0] == '#') return id[1] != 0;
@@ -616,6 +629,10 @@ void room_rail(void) {
       { char nb[8]; u_itoa((unsigned)depth, nb); s_cat(rail, nb, sizeof(rail)); }
       /* Where a folder may be added below it (10.2): the host's "New folder". */
       if (room_may_nest(id)) s_cat(rail, ",\"nest\":true", sizeof(rail));
+      /* A group, open or closed, can be passed on as a link: the host's
+       * "Share link". Not the rooms by range (Local, Regional, Global),
+       * which are no group, and not a person. */
+      if (room_shares(id)) s_cat(rail, ",\"share\":true", sizeof(rail));
       s_cat(rail, ",\"seen\":", sizeof(rail));
       { char nb[24]; u_lltoa((unsigned long long)jint(row, "activity_ts"), nb); s_cat(rail, nb, sizeof(rail)); }
       s_cat(rail, "}", sizeof(rail));
