@@ -81,6 +81,117 @@ TEST(the_rooms_by_range_exist_by_default_and_nothing_else) {
   CHECK(!room_known("#NEWS"));
 }
 
+/* A Local packet said at [ts] ("2026-09-04_10:00:00"). */
+static void said_at(const char *from, const char *id, const char *text, const char *ts) {
+  char row[1200];
+  snprintf(row, sizeof(row),
+    "{\"id\":\"%s\",\"type\":\"message\",\"from\":\"%s\",\"to\":\"\",\"fields\":[[\"t\",\"message\"],[\"f\",\"%s\"],[\"ts\",\"%s\"],[\"scope\",\"local\"],[\"m\",\"%s\"]],\"forUs\":false,\"sealed\":false,\"scope\":\"local\",\"bearer\":\"rns\",\"sig\":\"verified\"}",
+    id, from, from, ts, text);
+  event_push("xprs.message", row);
+  module_handle_event();
+}
+
+/* Words handed over days after they were said (there is no server: a station
+ * kept them, a path opened late) are drawn where they were said, far up the
+ * room. They are news all the same: counted, rung, the room lifted. But the
+ * line under the room's name stays with the message at its foot, and the room
+ * keeps a mark on them that the view offers to jump to until they have been
+ * on screen. The Global chat once named "X1LQ5E: Hi out there" on the list
+ * while the open room showed nothing new at its foot. */
+TEST(late_words_are_news_and_the_room_marks_them) {
+  fresh();
+  said_at("X1PEER", "late01", "the newest", "2026-09-04_10:00:00");
+  cap_clear();
+  said_at("X1OLD", "late03", "hi out there", "2026-08-30_10:00:00");
+  CHECK(cap_count("ui.convo.msg") == 1);                 /* stored and drawn */
+  CHECK(cap_count("\"type\":\"notify\"") == 1);          /* rung */
+  CHECK(cap_contains("\"view\":\"msg:late03\""));        /* the tap lands on it */
+  CHECK(cap_contains("\"bump\":true"));                  /* the room is lifted */
+  CHECK(cap_contains("\"count\":2"));                    /* and counted */
+  CHECK(!cap_contains("\"subtitle\":\"X1OLD: hi out there\""));
+  /* A message on time rings without a place to land: the foot is the place. */
+  cap_clear();
+  said_at("X1PEER", "late02", "on time", "2026-09-04_10:01:00");
+  CHECK(cap_count("\"type\":\"notify\"") == 1);
+  CHECK(!cap_contains("\"view\":\"msg:"));
+  /* Opening the room: the line names the newest, the mark comes with it, and
+   * the late words are drawn above the newest. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"subtitle\":\"X1PEER: on time\""));
+  { const char *mk = cap_find("ui.convo.marks");
+    CHECK(mk && strstr(mk, "\"mid\":\"late03\"") && strstr(mk, "\"kind\":\"late\""));
+    CHECK(mk && !strstr(mk, "late01") && !strstr(mk, "late02")); }
+  { int io = -1, in = -1;
+    for (int i = 0; i < cap_n(); i++) {
+      if (io < 0 && strstr(cap_nth(i), "\"text\":\"hi out there\"")) io = i;
+      if (in < 0 && strstr(cap_nth(i), "\"text\":\"the newest\"")) in = i;
+    }
+    CHECK(io >= 0 && in >= 0 && io < in); }
+  /* Late words arriving while the room is open are marked at once. */
+  cap_clear();
+  said_at("X1OLD", "late04", "also old", "2026-08-31_10:00:00");
+  { const char *mk = cap_find("ui.convo.marks");
+    CHECK(mk && strstr(mk, "late03") && strstr(mk, "late04")); }
+  /* Seen on screen: the marks go, and stay gone after a reopen. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_seen\",\"rooms_convo\":\"#LOCAL\",\"rooms_seen\":\"late03,late04\"}");
+  module_handle_event();
+  { const char *mk = cap_find("ui.convo.marks");
+    CHECK(mk && strstr(mk, "\"marks\":[]")); }
+  inbox_set("{\"command\":\"nav_back\"}");
+  module_handle_event();
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  { const char *mk = cap_find("ui.convo.marks");
+    CHECK(mk && strstr(mk, "\"marks\":[]")); }
+  inbox_set("{\"command\":\"nav_back\"}");
+  module_handle_event();
+}
+
+/* A mark far up the room, past the tail an open draws: the jump asks for the
+ * rows from just above it down to the foot, and a tapped notification lands
+ * there by itself. A catch-up refill is history and marks nothing. */
+TEST(a_jump_to_late_words_draws_down_to_them) {
+  fresh();
+  said_at("X1PEER", "j00000", "anchor", "2026-09-04_08:00:00");
+  for (int i = 0; i < 70; i++) {
+    char id[16], ts[32], text[24];
+    snprintf(id, sizeof(id), "j%05d", i + 1);
+    snprintf(ts, sizeof(ts), "2026-09-04_%02d:%02d:00", 9 + i / 60, i % 60);
+    snprintf(text, sizeof(text), "line %d", i + 1);
+    said_at("X1PEER", id, text, ts);
+  }
+  said_at("X1OLD", "jlate1", "said early", "2026-09-04_08:30:00");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  CHECK(!cap_contains("\"text\":\"said early\""));       /* past the tail */
+  CHECK(cap_contains("\"mid\":\"jlate1\""));             /* but marked */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_around\",\"rooms_convo\":\"#LOCAL\",\"rooms_around\":\"jlate1\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"text\":\"said early\""));
+  CHECK(cap_contains("\"text\":\"anchor\""));            /* context above it */
+  CHECK(cap_contains("\"text\":\"line 70\""));           /* down to the foot */
+  CHECK(cap_count("ui.convo.msg") == 72);
+  /* The notification's way in: view.open names it, the open draws and jumps. */
+  inbox_set("{\"command\":\"nav_back\"}");
+  module_handle_event();
+  cap_clear();
+  inbox_set("{\"type\":\"view.open\",\"view\":\"msg:jlate1\"}");
+  module_handle_event();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  CHECK(cap_contains("\"text\":\"said early\""));
+  { const char *j = cap_find("ui.convo.jump");
+    CHECK(j && strstr(j, "\"mid\":\"jlate1\"") && strstr(j, "\"id\":\"#LOCAL\"")); }
+  inbox_set("{\"command\":\"nav_back\"}");
+  module_handle_event();
+}
+
 TEST(a_local_message_is_stored_and_shown_once) {
   fresh();
   local_packet("X1PEER", "aaa111", "hello room", "local");
@@ -2338,6 +2449,8 @@ int main(void) {
   run_a_bridged_meshtastic_message_carries_its_network_and_relay_path();
   run_the_rooms_by_range_exist_by_default_and_nothing_else();
   run_a_local_message_is_stored_and_shown_once();
+  run_late_words_are_news_and_the_room_marks_them();
+  run_a_jump_to_late_words_draws_down_to_them();
   run_undirected_traffic_goes_to_the_room_its_scope_names();
   run_each_room_sends_with_its_own_scope();
   run_the_local_room_sends_and_votes_with_scope_local();

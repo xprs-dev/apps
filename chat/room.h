@@ -91,6 +91,14 @@ void room_open(const char *id);
 /* The user left the open conversation (nav_back). */
 void room_left(void);
 const char *room_open_id(void);
+/* Late words (room_admit marks them): the marks of room [id] to the host as
+ * ui.convo.marks; [mids] seen (comma separated) drop theirs; the rows from
+ * just above [mid] down to the foot; and the message the next room_open
+ * should land on (a tapped notification, view "msg:<mid>"). */
+void room_marks_emit(const char *id);
+void room_seen(const char *id, const char *mids);
+void room_around(const char *id, const char *mid);
+void room_jump_to(const char *mid);
 /* User action: make [id] exist, focus it on screen and paint it. */
 void room_start(const char *id, const char *title);
 

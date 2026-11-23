@@ -325,6 +325,12 @@ void db_init_room(int h) {
           "status TEXT NOT NULL DEFAULT '',"
           "sys INTEGER NOT NULL DEFAULT 0)",
           0);
+  /* A room is drawn by ts, and every arrival asks for the newest (room_admit). */
+  db_exec(h, "CREATE INDEX IF NOT EXISTS messages_ts ON messages(ts)", 0);
+  /* Words that arrived after newer ones were already here, drawn up the
+   * history: kept until their bubble has been on screen (room_seen). */
+  db_exec(h, "CREATE TABLE IF NOT EXISTS marks(mid TEXT PRIMARY KEY, kind TEXT NOT NULL, ts INTEGER NOT NULL)", 0);
+  db_exec(h, "CREATE INDEX IF NOT EXISTS marks_ts ON marks(ts)", 0);
   db_exec(h, "CREATE TABLE IF NOT EXISTS reactions("
              "mid TEXT, who TEXT, kind TEXT, PRIMARY KEY(mid, who))", 0);
   db_exec(h, "CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)", 0);

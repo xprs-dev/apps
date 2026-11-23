@@ -2518,6 +2518,7 @@ void module_handle_event(void) {
     if (s_eq(typ, "view.open")) {
       char v[48] = ""; jstr(buf, "view", v, sizeof(v));
       if (s_pre(v, "members:")) members_open(v + 8);
+      else if (s_pre(v, "msg:")) room_jump_to(v + 4);   /* late words; the open follows */
       return;
     }
     if (!s_eq(typ, "action") || !jstr(buf, "action", cmd, sizeof(cmd))) return;
@@ -2596,6 +2597,20 @@ void module_handle_event(void) {
     if (id[0] && mid[0]) room_history(id, mid);
   }
   else if (s_eq(cmd, "rooms_open") || s_eq(cmd, "conversations_open")) { g_search_live = 0; do_open(buf); }
+  /* Late words (room.c): the host saw these marked bubbles, or wants the rows
+   * from just above one down to the foot before it jumps there. */
+  else if (s_eq(cmd, "rooms_seen")) {
+    char id[48] = "", mids[600] = "";
+    cmd_field(buf, "convo", id, sizeof(id));
+    cmd_field(buf, "seen", mids, sizeof(mids));
+    room_seen(id, mids);
+  }
+  else if (s_eq(cmd, "rooms_around")) {
+    char id[48] = "", mid[24] = "";
+    cmd_field(buf, "convo", id, sizeof(id));
+    cmd_field(buf, "around", mid, sizeof(mid));
+    room_around(id, mid);
+  }
   /* The host names a thread it just deep-linked into: "open X1WATT, and by the
    * way that is what to call it". It has been sending this since the graph
    * grew a Message button and nothing here read it, so the name fell on the

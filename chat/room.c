@@ -16,9 +16,14 @@ static int scoped_room(const char *id) {
 #define BODY_MAX 900
 #define TAIL 50
 #define ROOM_H_MAX 8
+/* Most late arrivals a room keeps a mark for, and most rows a jump to one
+ * draws above the tail (room_around). */
+#define MARKS_MAX 50
+#define AROUND_MAX 200
 
 static char g_self[16] = "";
 static char g_open[48] = "";     /* the conversation on screen, or "" */
+static char g_jump[24] = "";     /* late words a tapped notification asked for */
 static char g_top[48] = "";      /* first row of the rail as last drawn */
 static int  g_open_mod;          /* we are a moderator or the admin of the open group */
 static int  g_local_on = 1;
@@ -599,7 +604,11 @@ static void unread_publish(void) {
 /* A person cannot see this message: the app is in the background or they
  * are in another room. The host dedups on the tag across restarts, so the
  * room and the id are the tag. */
-static void notify_msg(const char *room, const char *from, const char *body, const char *mid) {
+/* [late]: the words were said long before they got here, so the tap lands
+ * on them rather than at the foot of the room (view.open "msg:<mid>",
+ * room_jump_to). */
+static void notify_msg(const char *room, const char *from, const char *body, const char *mid,
+                       int late) {
   char m[600] = "{\"type\":\"notify\",\"level\":\"info\",\"title\":\"";
   jesc(m, sizeof(m), room[0] == '#' ? room : from);
   s_cat(m, "\",\"body\":\"", sizeof(m));
@@ -608,6 +617,7 @@ static void notify_msg(const char *room, const char *from, const char *body, con
   s_cat(m, "\",\"convo\":\"", sizeof(m)); jesc(m, sizeof(m), room);
   s_cat(m, "\",\"tag\":\"chat:", sizeof(m)); jesc(m, sizeof(m), room);
   s_cat(m, ":", sizeof(m)); jesc(m, sizeof(m), mid);
+  if (late) { s_cat(m, "\",\"view\":\"msg:", sizeof(m)); jesc(m, sizeof(m), mid); }
   s_cat(m, "\"}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
@@ -978,6 +988,21 @@ int room_admit(const room_msg_t *m) {
   const char *auth = m->auth ? m->auth : "";
   const char *rid = m->rid ? m->rid : "";
   const char *status = m->status ? m->status : "";
+  /* ARRIVING now is not being SAID now. There is no server here: a station
+   * that kept words for days, a Reticulum path that opened late, hands them
+   * over long after they were said, and the room draws them where they were
+   * said, far up the history. They are news all the same -- counted, rung,
+   * the room lifted -- but the line under the room's name stays with the
+   * message at its foot, or the list names words the open room does not show
+   * there (the Global chat said "X1LQ5E: Hi out there", five days up). Instead
+   * the room keeps a MARK on it, and the view offers a jump to it until it has
+   * been on screen (room_marks_emit, room_seen). Read before the INSERT, so
+   * the newest is somebody else's. */
+  int late = 0;
+  if (!m->replay && !m->sys && in) {
+    long long newest = db_int(h, "SELECT ts AS n FROM messages ORDER BY ts DESC LIMIT 1", 0, 0);
+    if (newest > 0 && (long long)ts < newest) late = 1;
+  }
   { pj_t p; pj_init(&p);
     pj_str(&p, m->mid); pj_str(&p, m->dir); pj_str(&p, sender); pj_int(&p, (long long)ts);
     pj_str(&p, body); pj_str(&p, parent); pj_str(&p, via); pj_str(&p, auth);
@@ -1005,10 +1030,18 @@ int room_admit(const room_msg_t *m) {
     if (in && sender[0]) people_note(sender);
     if (xprs_is_station(m->room)) people_note(m->room);
   }
+  if (late) {
+    pj_t p; pj_init(&p); pj_str(&p, m->mid); pj_int(&p, (long long)ts);
+    db_exec(h, "INSERT OR IGNORE INTO marks(mid,kind,ts) VALUES(?,'late',?)", pj_done(&p));
+  }
   int count = (!m->replay && in && !m->sys && !s_eq(m->room, g_open)) ? 1 : 0;
   if (m->replay) {
     pj_t p; pj_init(&p); pj_str(&p, m->room);
     db_exec(g_idx, "UPDATE rooms SET closed=0 WHERE id=?", pj_done(&p));
+  } else if (late) {
+    /* News, but not the newest: counted and lifted, the line stays. */
+    pj_t p; pj_init(&p); pj_int(&p, (long long)hal_time_epoch()); pj_int(&p, count); pj_str(&p, m->room);
+    db_exec(g_idx, "UPDATE rooms SET activity_ts=?, closed=0, unread=unread+? WHERE id=?", pj_done(&p));
   } else {
     char last[128] = "";
     if (!m->sys) {
@@ -1046,12 +1079,13 @@ int room_admit(const room_msg_t *m) {
         if (who[0]) emit_react(m->room, m->mid, who, 0, s_eq(who, g_self));
       }
     } }
+  if (late && s_eq(m->room, g_open)) room_marks_emit(m->room);
   if (!m->replay) {
     if (created > 0 || !s_eq(g_top, m->room)) room_rail();
     /* Not for an archived conversation: archiving is how a person says "do
      * not bother me with this one". */
     if (in && !m->sys && !room_is_archived(m->room) && room_notifies(m->room))
-      notify_msg(m->room, sender, body, m->mid);
+      notify_msg(m->room, sender, body, m->mid, late);
     unread_publish();
     /* A live 1:1 we just heard owes its sender an s:read once a person opens
      * this room (XPRS.md 13.7). Recorded here, in the room's own database, so
@@ -1398,8 +1432,121 @@ void room_open(const char *id) {
     emit_tail(id, h);
     /* Groups never earn read receipts (13.7.1); only a 1:1 flushes. */
     if (id[0] != '#') room_flush_reads(h);
+    room_marks_emit(id);
+    /* A tapped notification for late words: draw down to them, then say where. */
+    if (g_jump[0]) {
+      char mid[24]; s_cpy(mid, g_jump, sizeof(mid)); g_jump[0] = 0;
+      pj_t p; pj_init(&p); pj_str(&p, mid);
+      if (db_int(h, "SELECT 1 AS n FROM messages WHERE mid=? LIMIT 1", pj_done(&p), 0) == 1) {
+        room_around(id, mid);
+        char m[120] = "{\"type\":\"ui.convo.jump\",\"id\":\"";
+        jesc(m, sizeof(m), id); s_cat(m, "\",\"mid\":\"", sizeof(m));
+        jesc(m, sizeof(m), mid); s_cat(m, "\"}", sizeof(m));
+        hal_msg_send(m, s_len(m));
+      }
+    }
   }
   unread_publish();
+}
+
+/* -- late words: the marks a room keeps on them -------------------------
+ * A message said before the newest one already here is drawn up the history,
+ * where nobody looking at the foot of the room sees it. The room marks it
+ * (room_admit), the host offers a jump to each mark until its bubble has been
+ * on screen (rooms_seen), and a jump to one outside the drawn tail asks for
+ * the rows between it and the foot (rooms_around). */
+void room_jump_to(const char *mid) { s_cpy(g_jump, mid ? mid : "", sizeof(g_jump)); }
+
+void room_marks_emit(const char *id) {
+  int h = room_handle(id);
+  if (h < 0) return;
+  static char m[MARKS_MAX * 48 + 160];
+  s_cpy(m, "{\"type\":\"ui.convo.marks\",\"id\":\"", sizeof(m));
+  jesc(m, sizeof(m), id); s_cat(m, "\",\"marks\":[", sizeof(m));
+  pj_t p; pj_init(&p); pj_int(&p, MARKS_MAX);
+  int n = db_query(h, "SELECT mid,kind FROM marks ORDER BY ts ASC LIMIT ?", pj_done(&p), g_q, sizeof(g_q));
+  if (n > 0) {
+    const char *cur = g_q; char row[120]; int first = 1;
+    while (next_object(&cur, row, sizeof(row))) {
+      char mid[24] = "", kind[12] = "";
+      jstr(row, "mid", mid, sizeof(mid)); jstr(row, "kind", kind, sizeof(kind));
+      if (!mid[0]) continue;
+      if (!first) s_cat(m, ",", sizeof(m));
+      first = 0;
+      s_cat(m, "{\"mid\":\"", sizeof(m)); jesc(m, sizeof(m), mid);
+      s_cat(m, "\",\"kind\":\"", sizeof(m)); jesc(m, sizeof(m), kind);
+      s_cat(m, "\"}", sizeof(m));
+    }
+  }
+  s_cat(m, "]}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+
+/* [mids]: comma separated, the marked bubbles the person has now seen. */
+void room_seen(const char *id, const char *mids) {
+  if (!room_renderable(id) || !mids || !mids[0]) return;
+  int h = room_handle(id);
+  if (h < 0) return;
+  int gone = 0;
+  const char *c = mids;
+  while (*c) {
+    char mid[24]; unsigned k = 0;
+    while (*c && *c != ',') { if (k < sizeof(mid) - 1) mid[k++] = *c; c++; }
+    mid[k] = 0;
+    if (*c == ',') c++;
+    if (!mid[0]) continue;
+    pj_t p; pj_init(&p); pj_str(&p, mid);
+    db_exec(h, "DELETE FROM marks WHERE mid=?", pj_done(&p));
+    gone++;
+  }
+  if (gone) room_marks_emit(id);
+}
+
+/* Draw the rows from a little above [mid] down to the foot of the room, so a
+ * jump lands inside an unbroken history. Rows the host already holds are
+ * dropped there by mid. Capped at AROUND_MAX: a mark further up than that
+ * gets the rows around it, and the date headings show the gap. */
+void room_around(const char *id, const char *mid) {
+  if (!room_renderable(id) || !mid || !mid[0]) return;
+  int h = room_handle(id);
+  if (h < 0) return;
+  static char row[400];
+  pj_t p; pj_init(&p); pj_str(&p, mid);
+  if (db_query(h, "SELECT ts,seq FROM messages WHERE mid=? LIMIT 1", pj_done(&p), row, sizeof(row)) <= 0) return;
+  long long ts = 0, seq = 0;
+  { const char *cur = row; char o[120];
+    if (next_object(&cur, o, sizeof(o))) { ts = jint(o, "ts"); seq = jint(o, "seq"); } }
+  /* Ten rows of context above it. */
+  long long from_ts = ts, from_seq = seq;
+  pj_init(&p); pj_int(&p, ts); pj_int(&p, ts); pj_int(&p, seq);
+  if (db_query(h, "SELECT ts,seq FROM messages WHERE ts<? OR (ts=? AND seq<?) "
+                  "ORDER BY ts DESC, seq DESC LIMIT 10", pj_done(&p), g_q, sizeof(g_q)) > 0) {
+    const char *cur = g_q; char o[120];
+    while (next_object(&cur, o, sizeof(o))) { from_ts = jint(o, "ts"); from_seq = jint(o, "seq"); }
+  }
+  /* Keyset pages, oldest first. A page that does not fit the reply buffer is
+   * asked again at half the size, as emit_tail does. */
+  int sent = 0, page = 25, first = 1;
+  while (sent < AROUND_MAX) {
+    pj_init(&p);
+    pj_int(&p, from_ts); pj_int(&p, from_ts); pj_int(&p, from_seq); pj_int(&p, page);
+    int n = db_query(h, first
+        ? "SELECT seq," ROW_COLS " FROM messages WHERE ts>? OR (ts=? AND seq>=?) ORDER BY ts ASC, seq ASC LIMIT ?"
+        : "SELECT seq," ROW_COLS " FROM messages WHERE ts>? OR (ts=? AND seq>?) ORDER BY ts ASC, seq ASC LIMIT ?",
+        pj_done(&p), g_q, sizeof(g_q));
+    if (n == -2) { if (page <= 3) break; page /= 2; continue; }
+    if (n <= 0) break;
+    first = 0;
+    const char *cur = g_q; static char r[1400];
+    int got = 0;
+    while (next_object(&cur, r, sizeof(r))) {
+      emit_stored(id, h, r);
+      from_ts = jint(r, "ts"); from_seq = jint(r, "seq");
+      got += 1; sent += 1;
+      if (sent >= AROUND_MAX) break;
+    }
+    if (got < page) break;
+  }
 }
 
 void room_left(void) { g_open[0] = 0; }
@@ -1497,6 +1644,8 @@ void room_hide(const char *id, const char *mid) {
   if (h >= 0) {
     pj_t p; pj_init(&p); pj_str(&p, mid);
     db_exec(h, "DELETE FROM messages WHERE mid=?", pj_done(&p));
+    pj_init(&p); pj_str(&p, mid);
+    db_exec(h, "DELETE FROM marks WHERE mid=?", pj_done(&p));
   }
   emit_remove(id, mid);
 }
@@ -1584,6 +1733,7 @@ void room_delete(const char *id) {
   if (h >= 0) {
     db_exec(h, "DELETE FROM messages", 0);
     db_exec(h, "DELETE FROM reactions", 0);
+    db_exec(h, "DELETE FROM marks", 0);
     pj_t p; pj_init(&p); pj_int(&p, (long long)hal_time_epoch());
     db_exec(h, "INSERT OR REPLACE INTO meta(k,v) VALUES('cleared',?)", pj_done(&p));
   }
