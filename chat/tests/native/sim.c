@@ -1259,6 +1259,66 @@ static void t_join_request(void){
   /* Answered: the list no longer carries the request. */
   cap_clear(); open_members(A,"#X5PUBL");
   CHECK(cap_contains("ui.members.set") && !cap_contains("req:X1ZOEY"));
+
+  /* A person who asked three times is one request, judged by when each was
+   * sent: copies of the older ones arriving afterwards (another bearer, a
+   * history page) neither replace the newest nor write another note, and a
+   * decline answers all three. Seen on the bench phone, 2026-11-23: three
+   * notes per request and a declined request back on the list. */
+  grp_t* h=add_group("X5ASKS","Asked thrice");
+  group_put(h,"X1ANNA","admin");
+  const char* asks[3][2] = { {"2026-11-23_12:00:00","first"},
+                             {"2026-11-23_12:05:00","second"},
+                             {"2026-11-23_12:10:00","third"} };
+  int order[7] = {0,1,2,0,1,2,1};
+  int notes = 0;
+  for (int k=0;k<7;k++){
+    const char* a2=asks[order[k]][0]; const char* w=asks[order[k]][1];
+    char r2[1400], t2[1500], mid2[16];
+    snprintf(mid2,sizeof mid2,"q1%04d",k);
+    msg_packet(r2,sizeof r2,"X1ZEKE","X5ASKS","global",mid2,w);
+    /* msg_packet stamps every row alike: put this one's own ts on it. */
+    char* st=strstr(r2,STAMP); if(st) memcpy(st,a2,strlen(STAMP));
+    snprintf(t2,sizeof t2,"{\"request\":true,\"ts\":\"%s\",%s",a2,r2+1);
+    enqueue(A,"xprs.message",t2);
+    cap_clear(); pump(A);
+    if (cap_contains("X1ZEKE asks to join")) notes++;
+  }
+  CHECK(notes == 3);   /* the first, second and third, once each, in order */
+  cap_clear(); open_members(A,"#X5ASKS");
+  { const char* r=cap_last("ui.members.set");
+    CHECK(r && strstr(r,"req:X1ZEKE") && strstr(r,"third") && !strstr(r,"second")); }
+  ui(A,"{\"command\":\"prompt\",\"prompt_id\":\"xgreq:#X5ASKS|X1ZEKE\",\"prompt_value\":\"no\"}");
+  /* Late copies of all three after the decline: still answered. */
+  for (int k=0;k<3;k++){
+    char r2[1400], t2[1500], mid2[16];
+    snprintf(mid2,sizeof mid2,"q2%04d",k);
+    msg_packet(r2,sizeof r2,"X1ZEKE","X5ASKS","global",mid2,asks[k][1]);
+    char* st=strstr(r2,STAMP); if(st) memcpy(st,asks[k][0],strlen(STAMP));
+    snprintf(t2,sizeof t2,"{\"request\":true,\"ts\":\"%s\",%s",asks[k][0],r2+1);
+    enqueue(A,"xprs.message",t2);
+  }
+  cap_clear(); pump(A);
+  CHECK(!cap_contains("X1ZEKE asks to join"));
+  cap_clear(); open_members(A,"#X5ASKS");
+  CHECK(cap_contains("ui.members.set") && !cap_contains("req:X1ZEKE"));
+  /* A request sent after the decline is a new one. */
+  { char r2[1400], t2[1500];
+    msg_packet(r2,sizeof r2,"X1ZEKE","X5ASKS","global","q30000","fourth");
+    char* st=strstr(r2,STAMP); if(st) memcpy(st,"2026-11-23_13:00:00",strlen(STAMP));
+    snprintf(t2,sizeof t2,"{\"request\":true,\"ts\":\"2026-11-23_13:00:00\",%s",r2+1);
+    enqueue(A,"xprs.message",t2); cap_clear(); pump(A);
+    CHECK(cap_contains("X1ZEKE asks to join")); }
+
+  /* The list on screen shows a request the moment it arrives. */
+  cap_clear(); open_members(A,"#X5PUBL");
+  { char r2[1400], t2[1500];
+    msg_packet(r2,sizeof r2,"X1YARA","X5PUBL","global","q40000","while it is open");
+    char* st=strstr(r2,STAMP); if(st) memcpy(st,"2026-11-23_13:30:00",strlen(STAMP));
+    snprintf(t2,sizeof t2,"{\"request\":true,\"ts\":\"2026-11-23_13:30:00\",%s",r2+1);
+    enqueue(A,"xprs.message",t2); cap_clear(); pump(A);
+    const char* r=cap_last("ui.members.set");
+    CHECK(r && strstr(r,"req:X1YARA") && strstr(r,"while it is open")); }
 }
 
 int main(void){

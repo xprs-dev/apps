@@ -1537,38 +1537,44 @@ int room_set_notify(const char *id, int on) {
   return on ? 1 : 0;
 }
 
-/* Requests to join a closed group this station may answer (10.3). */
-int room_joinreq_add(const char *gid, const char *call, const char *body) {
-  /* The same request heard twice (two bearers, a replay) is one request. */
-  { pj_t q; pj_init(&q); pj_str(&q, gid); pj_str(&q, call); pj_str(&q, body ? body : "");
-    if (db_int(g_idx, "SELECT 1 AS n FROM joinreq WHERE gid=? AND call=? AND body=? LIMIT 1",
+/* Requests to join a closed group this station may answer (10.3), one per
+ * person, judged by when it was sent ([mts], the message's ts:, seconds). */
+int room_joinreq_add(const char *gid, const char *call, const char *body,
+                     long long mts) {
+  /* An answer answers everything that person sent before it: a copy of an
+   * old request that arrives after the accept or the decline (another
+   * bearer, a history page) is not a new request. */
+  { pj_t q; pj_init(&q); pj_str(&q, gid); pj_str(&q, call); pj_int(&q, mts);
+    if (db_int(g_idx, "SELECT 1 AS n FROM jreq_done WHERE gid=? AND call=? AND mts>=? LIMIT 1",
                pj_done(&q), 0) == 1) return 0; }
-  /* ...and one already answered stays answered: a copy that arrives after
-   * the accept or the decline (another bearer, a history page) is not a new
-   * request. Different words are. */
-  { pj_t q; pj_init(&q); pj_str(&q, gid); pj_str(&q, call); pj_str(&q, body ? body : "");
-    if (db_int(g_idx, "SELECT 1 AS n FROM joinreq_done WHERE gid=? AND call=? AND body=? LIMIT 1",
+  /* The request on file is as new or newer: this is a copy, or an older one. */
+  { pj_t q; pj_init(&q); pj_str(&q, gid); pj_str(&q, call); pj_int(&q, mts);
+    if (db_int(g_idx, "SELECT 1 AS n FROM jreq WHERE gid=? AND call=? AND mts>=? LIMIT 1",
                pj_done(&q), 0) == 1) return 0; }
   pj_t p; pj_init(&p); pj_str(&p, gid); pj_str(&p, call); pj_str(&p, body ? body : "");
-  pj_int(&p, (long long)hal_time_epoch());
-  db_exec(g_idx, "INSERT OR REPLACE INTO joinreq(gid, call, body, ts) VALUES(?,?,?,?)", pj_done(&p));
+  pj_int(&p, mts); pj_int(&p, (long long)hal_time_epoch());
+  db_exec(g_idx, "INSERT OR REPLACE INTO jreq(gid, call, body, mts, ts) VALUES(?,?,?,?,?)",
+          pj_done(&p));
   return 1;
 }
 void room_joinreq_del(const char *gid, const char *call) {
   long long now = (long long)hal_time_epoch();
-  /* A month of answers is plenty to absorb late copies; older ones go. */
-  { pj_t q; pj_init(&q); pj_int(&q, now - 30LL * 86400);
-    db_exec(g_idx, "DELETE FROM joinreq_done WHERE ts < ?", pj_done(&q)); }
-  { pj_t q; pj_init(&q); pj_int(&q, now); pj_str(&q, gid); pj_str(&q, call);
-    db_exec(g_idx, "INSERT OR REPLACE INTO joinreq_done(gid, call, body, ts) "
-                   "SELECT gid, call, COALESCE(body, ''), ? FROM joinreq WHERE gid=? AND call=?",
+  /* Answered up to the request on file, or up to now when none is (an
+   * answer from a list drawn before it arrived): later words are new. */
+  long long upto = now;
+  { pj_t q; pj_init(&q); pj_str(&q, gid); pj_str(&q, call);
+    long long m = db_int(g_idx, "SELECT mts AS n FROM jreq WHERE gid=? AND call=? LIMIT 1",
+                         pj_done(&q), -1);
+    if (m >= 0) upto = m; }
+  { pj_t q; pj_init(&q); pj_str(&q, gid); pj_str(&q, call); pj_int(&q, upto); pj_int(&q, now);
+    db_exec(g_idx, "INSERT OR REPLACE INTO jreq_done(gid, call, mts, ts) VALUES(?,?,?,?)",
             pj_done(&q)); }
   pj_t p; pj_init(&p); pj_str(&p, gid); pj_str(&p, call);
-  db_exec(g_idx, "DELETE FROM joinreq WHERE gid=? AND call=?", pj_done(&p));
+  db_exec(g_idx, "DELETE FROM jreq WHERE gid=? AND call=?", pj_done(&p));
 }
 int room_joinreq_list(const char *gid, char *out, unsigned cap) {
   pj_t p; pj_init(&p); pj_str(&p, gid);
-  return db_query(g_idx, "SELECT call,body FROM joinreq WHERE gid=? ORDER BY ts DESC LIMIT 20",
+  return db_query(g_idx, "SELECT call,body FROM jreq WHERE gid=? ORDER BY mts DESC LIMIT 20",
                   pj_done(&p), out, cap);
 }
 

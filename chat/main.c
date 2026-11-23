@@ -524,13 +524,23 @@ static void group_ask(const char *gid) {
   sysnote(gid, wtr("msg.ask_sent", "Your request to join was sent to the group's admin and moderators."));
 }
 /* A request heard by this station, which may accept it. */
-static void join_request_note(const char *gid, const char *from, const char *text) {
+/* The member panel's state, defined with the panel below. */
+static char g_mp_gid[12];
+static int  g_mp_roster_ok;
+static void push_members_page(int offset, int header, int reset);
+static void join_request_note(const char *gid, const char *from, const char *text,
+                              uint64_t ts) {
   if (!from[0] || is_blocked(from)) return;
   /* Already let in (invited, member or more): a late copy of what they once
    * asked is not a request any more. */
   if (xgroup_is(gid) && hal_xprs_group_role_at(gid + 1, s_len(gid + 1), from, s_len(from),
                                                (uint32_t)hal_time_epoch()) >= 1) return;
-  if (!room_joinreq_add(gid, from, text)) return;
+  /* No ts on the wire: the moment it arrived stands in. */
+  if (!room_joinreq_add(gid, from, text, ts ? (long long)ts : (long long)hal_time_epoch()))
+    return;
+  /* The member list of this group is open: it shows the request now, not
+   * after it is closed and opened again. */
+  if (s_eq(g_mp_gid, gid)) { g_mp_roster_ok = 0; push_members_page(0, 1, 1); }
   if (!room_known(gid)) return;
   char line[700]; s_cpy(line, from, sizeof(line));
   s_cat(line, wtr("msg.asks_join", " asks to join: "), sizeof(line));
@@ -1271,7 +1281,7 @@ static void on_core_packet(const char *topic, const char *row) {
    * says, not a lock (XPRS.md 10.7). */
   /* Somebody outside the group asking to join (10.3): the core hands it only
    * to the group's admin and moderators. Kept as a request, not a post. */
-  if (closed && jbool(row, "request")) { join_request_note(gid, from, m); return; }
+  if (closed && jbool(row, "request")) { join_request_note(gid, from, m, ts); return; }
   /* A post in the clear is public by its nature (10.7.1): anybody who opened
    * the group reads it. A private group's posts are sealed, and only its
    * members' devices can open those. */

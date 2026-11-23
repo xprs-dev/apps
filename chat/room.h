@@ -119,7 +119,8 @@ int  room_set_notify(const char *id, int on);
  * again. */
 void room_delete(const char *id);
 void room_set_hint(const char *id, const char *line);
-int room_joinreq_add(const char *gid, const char *call, const char *body);
+int room_joinreq_add(const char *gid, const char *call, const char *body,
+                     long long mts);
 void room_joinreq_del(const char *gid, const char *call);
 int room_joinreq_list(const char *gid, char *out, unsigned cap);
 /* The Archived screen's list (people field "archived"). */

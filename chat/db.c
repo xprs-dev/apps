@@ -282,6 +282,25 @@ void db_init_index(int h) {
   /* Requests already answered, so a late copy of one is not asked again. */
   db_exec(h, "CREATE TABLE IF NOT EXISTS joinreq_done(gid TEXT NOT NULL, call TEXT NOT NULL, "
              "body TEXT NOT NULL, ts INTEGER, PRIMARY KEY(gid, call, body))", 0);
+  /* The same two, judged by WHEN a request was sent (mts, the message's own
+   * ts:) instead of by its words. One person's requests are one request:
+   * the newest is shown, a copy of an older one is not news, and an answer
+   * answers everything that person sent before it. The tables above held
+   * one row per person but deduplicated by the words, so a person who asked
+   * three times had each request replace the others as copies arrived over
+   * different bearers, each replacement wrote another note in the room, and
+   * a decline marked only the words on screen at that moment as answered
+   * (seen on the bench phone, 2026-11-23). */
+  db_exec(h, "CREATE TABLE IF NOT EXISTS jreq(gid TEXT NOT NULL, call TEXT NOT NULL, "
+             "body TEXT, mts INTEGER NOT NULL, ts INTEGER, PRIMARY KEY(gid, call))", 0);
+  db_exec(h, "CREATE TABLE IF NOT EXISTS jreq_done(gid TEXT NOT NULL, call TEXT NOT NULL, "
+             "mts INTEGER NOT NULL, ts INTEGER, PRIMARY KEY(gid, call))", 0);
+  /* Pending requests of an older build carry over, once. */
+  if (db_int(h, "SELECT 1 AS n FROM meta WHERE k='jreq_moved' LIMIT 1", 0, 0) != 1) {
+    db_exec(h, "INSERT OR IGNORE INTO jreq(gid, call, body, mts, ts) "
+               "SELECT gid, call, body, COALESCE(ts, 0), ts FROM joinreq", 0);
+    db_exec(h, "INSERT OR REPLACE INTO meta(k, v) VALUES('jreq_moved', '1')", 0);
+  }
   /* Which room a 1:1 we sent lives in, keyed by the receipt id the core
    * reports on xprs.status.tx -- so a tick can find its bubble after a
    * restart. */
