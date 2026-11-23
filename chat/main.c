@@ -113,6 +113,22 @@ static void notify(const char *level, const char *body) {
   s_cat(m, "\"}", sizeof(m));
   hal_msg_send(m, s_len(m));
 }
+/* A notification that leads somewhere when it is tapped: the host opens this
+ * wapp and hands [view] back as {type:"view.open"} (view_open). [tag] lets
+ * the host raise it once however often the request is heard again. */
+static void notify_view(const char *level, const char *body, const char *view,
+                        const char *tag) {
+  char m[900] = "{\"type\":\"notify\",\"level\":\"";
+  s_cat(m, level, sizeof(m));
+  s_cat(m, "\",\"title\":\"Chat\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), body);
+  s_cat(m, "\",\"view\":\"", sizeof(m));
+  jesc(m, sizeof(m), view);
+  s_cat(m, "\",\"tag\":\"", sizeof(m));
+  jesc(m, sizeof(m), tag);
+  s_cat(m, "\"}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
 static void screen_open(const char *name) {
   char m[100] = "{\"type\":\"ui.screen.open\",\"name\":\"";
   s_cat(m, name, sizeof(m)); s_cat(m, "\"}", sizeof(m));
@@ -521,7 +537,13 @@ static void join_request_note(const char *gid, const char *from, const char *tex
   s_cat(line, text ? text : "", sizeof(line));
   s_cat(line, wtr("msg.asks_join_where", " (Members, to answer)"), sizeof(line));
   sysnote(gid, line);
-  notify("info", line);
+  /* Tapped, it opens the group's member list, where the request is the
+   * first row and Accept is one tap (members_open, view_open). It used to
+   * open nothing: the admin saw that somebody asked and had no way to it. */
+  char view[24] = "members:"; s_cat(view, gid, sizeof(view));
+  char tag[48] = "joinreq:"; s_cat(tag, gid, sizeof(tag));
+  s_cat(tag, ":", sizeof(tag)); s_cat(tag, from, sizeof(tag));
+  notify_view("info", line, view, tag);
 }
 /* A reply marker on a wire with room for a section 5 id: "+<6hex> text". */
 static int strip_reply6(char *text, char parent[8]) {
@@ -2481,6 +2503,13 @@ void module_handle_event(void) {
   char cmd[40] = "";
   if (!jstr(buf, "command", cmd, sizeof(cmd)) || !cmd[0]) {
     char typ[24] = ""; jstr(buf, "type", typ, sizeof(typ));
+    /* A tapped notification that named a place in this wapp (notify_view):
+     * the host opens the wapp and says where. */
+    if (s_eq(typ, "view.open")) {
+      char v[48] = ""; jstr(buf, "view", v, sizeof(v));
+      if (s_pre(v, "members:")) members_open(v + 8);
+      return;
+    }
     if (!s_eq(typ, "action") || !jstr(buf, "action", cmd, sizeof(cmd))) return;
   }
 

@@ -1221,6 +1221,46 @@ static void t_folders(void){
     CHECK(r && strstr(r,"\"parent\":\"#X5GULF\"")); }
 }
 
+/* Somebody outside a group asks to join it (10.3). The admin is told, and
+ * the notification leads somewhere: tapped, it opens the group's member list
+ * with the request as its first row, and Accept invites them. Reported
+ * 2026-11-23: the notification opened nothing and the admin had no way to
+ * the request. */
+static void t_join_request(void){
+  printf("a request to join -- the notification opens the member list\n");
+  reset_world();
+  int A=add_node("X1ANNA"); add_node("X1ZOEY");
+  grp_t* g=add_group("X5PUBL","Open house");
+  group_put(g,"X1ANNA","admin");
+
+  /* The core hands the admin a non-member's post to the group as a request. */
+  char row[1400], tagged[1500];
+  msg_packet(row,sizeof row,"X1ZOEY","X5PUBL","global","q00001","Please let me in");
+  snprintf(tagged,sizeof tagged,"{\"request\":true,%s",row+1);
+  enqueue(A,"xprs.message",tagged);
+  cap_clear(); pump(A);
+  { const char* n=cap_last("\"type\":\"notify\"");
+    CHECK(n && strstr(n,"X1ZOEY") && strstr(n,"asks to join"));
+    CHECK(n && strstr(n,"\"view\":\"members:#X5PUBL\""));
+    CHECK(n && strstr(n,"\"tag\":\"joinreq:#X5PUBL:X1ZOEY\"")); }
+
+  /* The tap: the host opens the wapp and says where (view.open). */
+  cap_clear();
+  ui(A,"{\"type\":\"view.open\",\"view\":\"members:#X5PUBL\"}");
+  CHECK(cap_contains("ui.members.set") && cap_contains("\"id\":\"req:X1ZOEY\""));
+  CHECK(cap_contains("@screen.group"));
+
+  /* Accept: a tap on the row, then Yes. */
+  cap_clear();
+  ui(A,"{\"command\":\"members_tap\",\"members_id\":\"req:X1ZOEY\"}");
+  CHECK(cap_contains("xgreq:#X5PUBL|X1ZOEY"));
+  ui(A,"{\"command\":\"prompt\",\"prompt_id\":\"xgreq:#X5PUBL|X1ZOEY\",\"prompt_value\":\"yes\"}");
+  CHECK(!strcmp(grp_role(g,"X1ZOEY"),"invited"));
+  /* Answered: the list no longer carries the request. */
+  cap_clear(); open_members(A,"#X5PUBL");
+  CHECK(cap_contains("ui.members.set") && !cap_contains("req:X1ZOEY"));
+}
+
 int main(void){
   mock_set_time(1700000000ULL);
   g_hk_identity=hk_identity; g_hk_send=hk_send; g_hk_message=hk_message;
@@ -1245,6 +1285,7 @@ int main(void){
   t_folders();
   t_edits();
   t_moderation();
+  t_join_request();
 
   printf("\nsim: %d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
