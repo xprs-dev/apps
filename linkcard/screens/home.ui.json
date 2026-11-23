@@ -1,0 +1,16 @@
+[
+  {
+    "$": "screen",
+    "name": "@screen.linkcard",
+    "tip": "@screen.linkcard_tip",
+    "children": [
+      {
+        "$": "group",
+        "name": "@group.cards",
+        "children": [
+          {"$": "field", "name": "cards_on", "$type": "bool", "label": "@field.cards_on", "tip": "@field.cards_on_tip", "default": true, "apply": "cards_apply"}
+        ]
+      }
+    ]
+  }
+]

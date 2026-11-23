@@ -1,0 +1,43 @@
+{
+  "id":              "tools.xprs.linkcard",
+  "version":         "1.0.0",
+  "kind":            "system",
+  "title":           "Link cards",
+  "description":     "A picture, title and summary for links you share.",
+  "summary":         "When you share a web link, your device reads the page once and sends its picture, title and a few words with your message, so the people who receive it see what it is without their devices ever contacting the site.",
+  "icon":            "media/icons/linkcard.svg",
+  "tags":            ["system", "tools"],
+  "entry_ui":        "screens/home.ui.json",
+  "tick_interval_ms": 0,
+  "permissions":     [],
+  "provides": {
+    "functionalities": [
+      {
+        "id": "link.card",
+        "description": "Read a web page once and return its title, a short summary and its picture as a media token.",
+        "timeout_ms": 25000,
+        "endpoints": [
+          {
+            "name": "card",
+            "description": "The card for one link",
+            "params": [
+              {"name": "url", "type": "string", "description": "An http(s) address"}
+            ],
+            "returns": {
+              "url": "string", "title": "string", "summary": "string",
+              "site": "string", "file": "string (media token, optional)"
+            }
+          }
+        ]
+      }
+    ],
+    "events":    [],
+    "variables": []
+  },
+  "requires": {
+    "hal":       ["log", "kv", "http", "msg", "media"],
+    "events":    [],
+    "libraries": [],
+    "variables": []
+  }
+}

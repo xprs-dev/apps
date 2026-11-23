@@ -1,0 +1,7 @@
+{
+  "screen.linkcard": "Link cards",
+  "screen.linkcard_tip": "A link you share is sent with the page's picture, title and a few words. Your device reads the page once; the people who receive it never contact the site.",
+  "group.cards": "Link cards",
+  "field.cards_on": "Make link cards",
+  "field.cards_on_tip": "Off: links are sent as plain text."
+}

@@ -1,0 +1,7 @@
+{
+  "screen.linkcard": "Cartões de ligação",
+  "screen.linkcard_tip": "Uma ligação que partilha segue com a imagem, o título e algumas palavras da página. O seu dispositivo lê a página uma vez; quem recebe nunca contacta o site.",
+  "group.cards": "Cartões de ligação",
+  "field.cards_on": "Criar cartões de ligação",
+  "field.cards_on_tip": "Desligado: as ligações seguem como texto simples."
+}

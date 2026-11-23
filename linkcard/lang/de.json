@@ -1,0 +1,7 @@
+{
+  "screen.linkcard": "Linkkarten",
+  "screen.linkcard_tip": "Ein geteilter Link wird mit Bild, Titel und ein paar Worten der Seite gesendet. Dein Gerät liest die Seite einmal; wer ihn empfängt, kontaktiert die Seite nie.",
+  "group.cards": "Linkkarten",
+  "field.cards_on": "Linkkarten erstellen",
+  "field.cards_on_tip": "Aus: Links werden als reiner Text gesendet."
+}

@@ -1,0 +1,11 @@
+# name base-url — each name.html is read as if fetched from base-url and
+# must give name.expect (tests/native).
+og https://news.example.com/2026/11/storm?ref=home
+twitter https://example.net/posts/mesh
+jsonld https://example.org/articles/solar
+plain https://radio.example.com/pages/home.html
+long https://example.com/
+private https://example.com/admin
+nothing https://example.com/
+same https://example.com/same
+latin1 http://cafe.example.fr/

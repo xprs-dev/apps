@@ -277,6 +277,30 @@ provider keeps none of it. Errors are `"<code>: <words>"` with code
 and, per incoming message, `wapp_ai_reply(msg, n, id, ..., text, ...)`.
 The Tester wapp's "Ask the AI" is the smallest caller.
 
+### 5.4 `link.card`: what a shared link is, made once by the sender
+
+Provided by the Link cards wapp (`apps/linkcard`, `tools.xprs.linkcard`,
+in the System folder). It reads a web page once and answers its title, a
+short summary and its picture, already in the media store:
+
+```json
+"args":   {"url": "https://..."}
+"result": {"url":"...","title":"...","summary":"...","site":"...",
+           "file":"file:<sha>.<ext>"}
+```
+
+`file` is absent when the page names no picture or it could not be had.
+Errors are `"<code>: <words>"` with code `off` (switched off in the wapp),
+`refused` (not a public http(s) address), `unreachable`, `nothing` (the page
+says nothing about itself), `busy`, `unsupported`.
+
+The host's chat box asks for it itself (`FunctionalityBroker.ask`,
+`lib/wapp/link_cards.dart`) and sends an ordinary message: the words with
+the link, the title and summary on a line after them, and the picture's
+small preview as the message's one attachment (XPRS.md 7.7.7). The page is
+read by `sdk/wapp_page_meta.h`; any wapp that needs a page's title includes
+the same header.
+
 ---
 
 ## 6. Identity-addressed messaging (transport-agnostic)
@@ -530,7 +554,9 @@ int32_t hal_http_status       (request_id);
 void    hal_http_free         (request_id);
 ```
 
-`method`: 0=GET 1=POST 2=PUT 3=DELETE. `hal_http_request2` adds headers as
+`method`: 0=GET 1=POST 2=PUT 3=DELETE. A `Range: bytes=0-N` header bounds
+the answer to N+1 bytes whatever the server does (the link-card reader asks
+a page's first 1 MB this way). `hal_http_request2` adds headers as
 `Name: value` lines separated by `\n` (an API key in `Authorization`, a
 `Content-Type`), a byte body, and a timeout of 1–600 s (0 = 30 s), for
 services that take a key in a header and answer slowly. It is answered, not

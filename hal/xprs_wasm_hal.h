@@ -128,6 +128,15 @@ __attribute__((import_module("hal"), import_name("media_put_file")))
 uint32_t hal_media_put_file(const char *path, uint32_t path_len,
                             char *out_buf, uint32_t out_len);
 
+/* Bytes the wapp holds (e.g. a picture it downloaded) into the archive, as a
+ * file of type [ext] ("jpg", "png", ...). Writes the wire token
+ * "file:<sha256>.<ext>"; a picture gets the same preview a put_file does.
+ * 0 = failure (empty, over the 16 MB cap, no archive). */
+__attribute__((import_module("hal"), import_name("media_put_bytes")))
+uint32_t hal_media_put_bytes(const char *buf, uint32_t buf_len,
+                             const char *ext, uint32_t ext_len,
+                             char *out_buf, uint32_t out_len);
+
 /* Update {"name","description","tags":[..]} (absent keys unchanged). */
 __attribute__((import_module("hal"), import_name("media_set_meta")))
 uint32_t hal_media_set_meta(const char *hash, uint32_t hash_len,
@@ -569,7 +578,11 @@ int32_t hal_http_request(int32_t method,
  * NULL/0. body: raw bytes, ignored for GET. timeout_ms: 1000..600000,
  * 0 = 30 s. Read and free exactly as for hal_http_request. No need to poll:
  * when the answer is in, the host delivers {"type":"http.done","id":<id>}
- * to module_handle_event, so a wapp waiting on one declares no clock. */
+ * to module_handle_event, so a wapp waiting on one declares no clock.
+ * A "Range: bytes=0-N" header also bounds the answer: the host reads at
+ * most N+1 bytes even from a server that ignores the header, so a wapp can
+ * ask for an address it cannot vet (a shared link) without risking a
+ * gigabyte in memory. */
 __attribute__((import_module("hal"), import_name("http_request2")))
 int32_t hal_http_request2(int32_t method,
                           const char *url, uint32_t url_len,
