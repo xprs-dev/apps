@@ -545,7 +545,7 @@ static void join_request_note(const char *gid, const char *from, const char *tex
   char line[700]; s_cpy(line, from, sizeof(line));
   s_cat(line, wtr("msg.asks_join", " asks to join: "), sizeof(line));
   s_cat(line, text ? text : "", sizeof(line));
-  s_cat(line, wtr("msg.asks_join_where", " (Members, to answer)"), sizeof(line));
+  s_cat(line, wtr("msg.asks_join_where", " (answer in Members)"), sizeof(line));
   sysnote(gid, line);
   /* Tapped, it opens the group's member list, where the request is the
    * first row and Accept is one tap (members_open, view_open). It used to
@@ -1836,7 +1836,7 @@ static void rename_ask(const char *gid) {
   s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
   jesc(pm, sizeof(pm), wtr("prompt.save", "Save"));
   s_cat(pm, "\",\"input\":{\"hint\":\"", sizeof(pm));
-  jesc(pm, sizeof(pm), wtr("prompt.group_name_hint", "name"));
+  jesc(pm, sizeof(pm), wtr("prompt.group_name_hint", "group name"));
   s_cat(pm, "\",\"value\":\"", sizeof(pm));
   if (k >= 0) jesc(pm, sizeof(pm), g_xgroup[k].nick);
   s_cat(pm, "\",\"max\":24}}", sizeof(pm));

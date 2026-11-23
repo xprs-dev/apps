@@ -291,12 +291,37 @@ static int32_t hk_send(const char* w, uint32_t l){
 }
 
 /* a 1:1 — the core builds and signs the packet; we just carry it to `to`. */
+static void msg_packet(char* row,int cap,const char* from,const char* to,const char* scope,
+                       const char* id,const char* body);
 static int32_t hk_message(const char* to,uint32_t tl,const char* text,uint32_t l,
                           uint32_t priv,char* id,uint32_t cap){
   (void)tl;(void)l;
   const char* from = cur>=0 ? N[cur].call : "X1TEST";
   char mid[16]; snprintf(mid,sizeof mid,"s%05d",++g_seq);
   snprintf(id,cap,"%s",mid);
+  /* A closed group: the core's message door, as the real one keeps it. A
+   * member's post is sealed and fans out to the members; a non-member is
+   * refused (-2), unless the post is a request to join (bit 4, 10.3), which
+   * reaches the admin and the moderators marked as one. */
+  { char d[16]; snprintf(d,sizeof d,"%.*s",(int)tl,to);
+    grp_t* g = grp_by_call(d);
+    if(g){
+      char row[1500], body[1000]; snprintf(body,sizeof body,"%.*s",(int)l,text);
+      msg_packet(row,sizeof row,from,d,"global",mid,body);
+      if(priv & 4u){
+        char req[1600]; snprintf(req,sizeof req,"{\"request\":true,%s",row+1);
+        for(int i=0;i<g->mn;i++){
+          const char* r=g->mem[i].role;
+          if(strcmp(r,"admin")&&strcmp(r,"mod")) continue;
+          int ni=node_by_call(g->mem[i].call); if(ni>=0) enqueue(ni,"xprs.message",req);
+        }
+        return 1;
+      }
+      if(!is_posting_member(g,from)) return -2;
+      remember_author(mid,from);
+      enqueue_members(g,from,"xprs.message",row);
+      return 1;                                      /* sealed to the group */
+    } }
   int ni=node_by_call(to);
   if(ni>=0){
     char row[1400];
@@ -860,7 +885,9 @@ static void t_group(void){
   /* Non-member X tries to post: refused (-2), nobody hears it. */
   cap_clear();
   send(X, "#X5GULF", "let me in");
-  CHECK(cap_contains("once you accept"));           /* the wapp's words for -2 */
+  /* -2 for somebody never invited: the words can be their request to join
+   * (10.3), so the wapp offers that instead of only refusing. */
+  CHECK(cap_contains("xgask:#X5GULF"));
   int heard=0;
   for(int i=0;i<NN;i++) heard+=N[i].pn;             /* nothing queued anywhere */
   CHECK(heard==0);
