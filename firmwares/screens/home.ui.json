@@ -1,65 +1,24 @@
 [
   {
     "$": "screen",
-    "name": "Stations",
+    "name": "Devices",
     "icon": "developer_board",
     "children": [
       {
         "$": "field",
-        "name": "stations",
+        "name": "devices",
         "$type": "people",
         "empty_art": "media/art/stations.svg",
-        "empty_title": "No station yet",
-        "empty": "A station is a small XPRS board that passes messages on for everyone around it, even when nobody has internet.\n\n1. Flash a board: plug it into this phone over USB and open the Flash tab.\n\n2. Keep the phone next to it. Within half a minute the new station asks to be claimed.\n\n3. Claim it and give it your WiFi. It then shows up here, where you can name it and see how it is doing.\n\nA board without Bluetooth is set up through its own WiFi hotspot, named XPRS- and its callsign."
-      }
-    ]
-  },
-  {
-    "$": "screen",
-    "name": "Flash",
-    "icon": "usb",
-    "tip": "Boards plugged in over USB. Tap one to flash it.",
-    "children": [
-      { "$": "field", "name": "flash_hub", "$type": "stats" },
-      { "$": "action", "name": "flash_refresh", "label": "Refresh", "style": "primary", "icon": "refresh" },
+        "empty_title": "Looking for devices",
+        "empty": "Stations on your WiFi, or near this device over Bluetooth, show up here.\n\nTo install XPRS on a new board, connect it with a USB cable.",
+        "layout": "headers"
+      },
       {
-        "$": "field",
-        "name": "flash",
-        "$type": "people",
-        "empty_art": "media/art/usb.svg",
-        "empty_title": "No board plugged in",
-        "empty": "Connect a board to this phone with a USB OTG cable (on a computer, any USB cable works).\n\nThe app recognises the chip, downloads the matching XPRS firmware from xprs.dev, writes it and checks the result.\n\nPlugged in but not listed? Tap Refresh in the menu at the top right."
+        "$": "action",
+        "name": "refresh",
+        "label": "Look again",
+        "icon": "refresh"
       }
-    ]
-  },
-  {
-    "$": "screen",
-    "name": "Device",
-    "icon": "usb",
-    "hidden": true,
-    "tip": "1. Wait for the chip to be identified.  2. Choose the firmware, unless one already fits.  3. Flash.",
-    "children": [
-      { "$": "action", "name": "flash_write", "label": "Flash", "style": "primary", "icon": "usb",
-        "confirm": true, "confirm-label": "Write the firmware?",
-        "confirm-text": "The board's firmware is replaced and verified. Keep it plugged in until it says done." },
-      { "$": "action", "name": "flash_choose", "label": "Choose firmware", "icon": "list" },
-      { "$": "action", "name": "flash_cancel", "label": "Stop", "style": "danger", "icon": "stop" },
-      { "$": "field", "name": "dev_now", "$type": "details", "empty": "" },
-      { "$": "field", "name": "dev_hub", "$type": "stats" },
-      { "$": "field", "name": "wipe", "$type": "bool", "label": "Wipe settings", "default": false,
-        "tip": "Off keeps the station's key, owner and WiFi. On makes it a new station." },
-      { "$": "action", "name": "flash_identify", "label": "Identify again", "icon": "search" },
-      { "$": "action", "name": "back", "label": "Back", "icon": "close" }
-    ]
-  },
-  {
-    "$": "screen",
-    "name": "Firmware",
-    "icon": "memory",
-    "hidden": true,
-    "tip": "Pick your board by its picture. The ones that fit the chip come first.",
-    "children": [
-      { "$": "field", "name": "flash_pick", "$type": "people", "empty": "No catalogue yet. Refresh on the Flash tab." }
     ]
   },
   {
@@ -68,18 +27,191 @@
     "icon": "memory",
     "hidden": true,
     "children": [
-      { "$": "field", "name": "hub", "$type": "stats" },
-      { "$": "field", "name": "now", "$type": "details", "empty": "" },
-      { "$": "action", "name": "claim", "label": "Claim", "style": "primary", "icon": "how_to_reg",
-        "tip": "Make it yours. The first owner to answer a fresh station keeps it." },
-      { "$": "action", "name": "open_wifi", "label": "WiFi", "icon": "wifi" },
-      { "$": "action", "name": "open_name", "label": "Name", "icon": "label" },
-      { "$": "action", "name": "open_identity", "label": "Identity", "icon": "key" },
-      { "$": "action", "name": "open_stats", "label": "Stats", "icon": "monitor_heart" },
-      { "$": "action", "name": "open_answers", "label": "Answers", "icon": "history" },
-      { "$": "action", "name": "forget", "label": "Forget", "style": "danger", "icon": "delete",
-        "confirm": true, "confirm-label": "Forget this station?",
-        "confirm-text": "It leaves the list. It is not changed, and it comes back if it asks again." }
+      {
+        "$": "field",
+        "name": "now",
+        "$type": "details",
+        "empty": ""
+      },
+      {
+        "$": "action",
+        "name": "claim",
+        "label": "Claim",
+        "style": "primary",
+        "icon": "how_to_reg",
+        "tip": "Make it yours. The first owner to answer a fresh station keeps it."
+      },
+      {
+        "$": "action",
+        "name": "update",
+        "label": "Update firmware",
+        "style": "primary",
+        "icon": "system_update",
+        "confirm": true,
+        "confirm-label": "Update its firmware?",
+        "confirm-text": "It downloads the newest XPRS, checks its signature, restarts into it and says how it went. If the new one does not come up, it goes back to the old one by itself."
+      },
+      {
+        "$": "field",
+        "name": "info",
+        "$type": "details",
+        "empty": "",
+        "layout": "rows"
+      },
+      {
+        "$": "action",
+        "name": "open_wifi",
+        "label": "WiFi",
+        "icon": "wifi"
+      },
+      {
+        "$": "action",
+        "name": "open_name",
+        "label": "Settings",
+        "icon": "settings"
+      },
+      {
+        "$": "action",
+        "name": "open_identity",
+        "label": "Callsign",
+        "icon": "key"
+      },
+      {
+        "$": "action",
+        "name": "open_stats",
+        "label": "Statistics",
+        "icon": "monitor_heart"
+      },
+      {
+        "$": "action",
+        "name": "open_answers",
+        "label": "History",
+        "icon": "history"
+      },
+      {
+        "$": "action",
+        "name": "forget",
+        "label": "Forget",
+        "style": "danger",
+        "icon": "delete",
+        "confirm": true,
+        "confirm-label": "Forget this station?",
+        "confirm-text": "It leaves the list. It is not changed, and it comes back if it is heard again."
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Flash",
+    "icon": "usb",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "fl_pic",
+        "$type": "image",
+        "shape": "wide",
+        "readonly": true,
+        "label": ""
+      },
+      {
+        "$": "field",
+        "name": "dev_now",
+        "$type": "details",
+        "empty": ""
+      },
+      {
+        "$": "field",
+        "name": "dev_hub",
+        "$type": "stats"
+      },
+      {
+        "$": "action",
+        "name": "flash_write",
+        "label": "Install XPRS",
+        "style": "primary",
+        "icon": "download",
+        "confirm": true,
+        "confirm-label": "Install XPRS on this board?",
+        "confirm-text": "Its firmware is replaced and checked. Keep the cable in until it says done."
+      },
+      {
+        "$": "action",
+        "name": "flash_cancel",
+        "label": "Stop",
+        "style": "danger",
+        "icon": "stop"
+      },
+      {
+        "$": "field",
+        "name": "fl_info",
+        "$type": "details",
+        "empty": "",
+        "layout": "rows"
+      },
+      {
+        "$": "field",
+        "name": "fl_adv",
+        "$type": "bool",
+        "label": "Advanced options",
+        "default": false,
+        "apply": "fl_adv"
+      },
+      {
+        "$": "group",
+        "name": "fl_advanced",
+        "children": [
+          {
+            "$": "action",
+            "name": "flash_choose",
+            "label": "Choose the board",
+            "icon": "list"
+          },
+          {
+            "$": "action",
+            "name": "fl_callsign",
+            "label": "Choose a callsign",
+            "icon": "key"
+          },
+          {
+            "$": "action",
+            "name": "fl_callsign_clear",
+            "label": "Let the board make one",
+            "icon": "close"
+          },
+          {
+            "$": "field",
+            "name": "wipe",
+            "$type": "bool",
+            "label": "Erase its settings",
+            "default": false,
+            "apply": "fl_wipe",
+            "tip": "Off keeps the station's key, owner and WiFi. On makes it a new station."
+          },
+          {
+            "$": "action",
+            "name": "flash_identify",
+            "label": "Identify it again",
+            "icon": "search"
+          }
+        ],
+        "label": ""
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Firmware",
+    "icon": "memory",
+    "hidden": true,
+    "tip": "Pick your board by its picture. The ones that fit its chip come first.",
+    "children": [
+      {
+        "$": "field",
+        "name": "flash_pick",
+        "$type": "people",
+        "empty": "No catalogue yet. Go back and tap Look again."
+      }
     ]
   },
   {
@@ -93,152 +225,460 @@
         "$": "group",
         "name": "Network",
         "children": [
-          { "$": "field", "name": "ssid", "$type": "string", "label": "Network", "hint": "its name" },
-          { "$": "field", "name": "wifi_pass", "$type": "secret", "label": "Password", "hint": "empty for an open network" }
+          {
+            "$": "field",
+            "name": "ssid",
+            "$type": "string",
+            "label": "Network",
+            "hint": "its name"
+          },
+          {
+            "$": "field",
+            "name": "wifi_pass",
+            "$type": "secret",
+            "label": "Password",
+            "hint": "empty for an open network"
+          }
         ]
       },
-      { "$": "action", "name": "wifi_apply", "label": "Join", "style": "primary", "icon": "wifi" },
-      { "$": "action", "name": "wifi_off", "label": "Leave WiFi", "icon": "power",
-        "confirm": true, "confirm-label": "Leave the network?",
-        "confirm-text": "The station drops its WiFi and stays reachable over Bluetooth and its own hotspot." },
-      { "$": "field", "name": "wifi_now", "$type": "details", "empty": "" },
-      { "$": "action", "name": "back", "label": "Back", "icon": "close" }
+      {
+        "$": "action",
+        "name": "wifi_apply",
+        "label": "Join",
+        "style": "primary",
+        "icon": "wifi"
+      },
+      {
+        "$": "action",
+        "name": "wifi_off",
+        "label": "Leave WiFi",
+        "icon": "power",
+        "confirm": true,
+        "confirm-label": "Leave the network?",
+        "confirm-text": "The station drops its WiFi and stays reachable over Bluetooth and its own hotspot."
+      },
+      {
+        "$": "field",
+        "name": "wifi_now",
+        "$type": "details",
+        "empty": ""
+      }
     ]
   },
   {
     "$": "screen",
-    "name": "Name",
-    "icon": "label",
+    "name": "Settings",
+    "icon": "settings",
     "hidden": true,
     "children": [
       {
         "$": "group",
         "name": "Station",
         "children": [
-          { "$": "field", "name": "nick", "$type": "string", "label": "Name", "hint": "roof-north", "max": 16 },
-          { "$": "field", "name": "zone", "$type": "enum", "label": "Time zone", "default": "auto",
+          {
+            "$": "field",
+            "name": "nick",
+            "$type": "string",
+            "label": "Name",
+            "hint": "roof-north",
+            "max": 16
+          },
+          {
+            "$": "field",
+            "name": "zone",
+            "$type": "enum",
+            "label": "Time zone",
+            "default": "auto",
             "children": [
-              { "$": "option", "name": "auto", "label": "Auto (looked up online)" },
-              { "$": "option", "name": "-12:00", "label": "-12:00" },
-              { "$": "option", "name": "-11:00", "label": "-11:00" },
-              { "$": "option", "name": "-10:00", "label": "-10:00" },
-              { "$": "option", "name": "-09:00", "label": "-09:00" },
-              { "$": "option", "name": "-08:00", "label": "-08:00" },
-              { "$": "option", "name": "-07:00", "label": "-07:00" },
-              { "$": "option", "name": "-06:00", "label": "-06:00" },
-              { "$": "option", "name": "-05:00", "label": "-05:00" },
-              { "$": "option", "name": "-04:00", "label": "-04:00" },
-              { "$": "option", "name": "-03:00", "label": "-03:00" },
-              { "$": "option", "name": "-02:00", "label": "-02:00" },
-              { "$": "option", "name": "-01:00", "label": "-01:00" },
-              { "$": "option", "name": "+00:00", "label": "+00:00 UTC" },
-              { "$": "option", "name": "+01:00", "label": "+01:00" },
-              { "$": "option", "name": "+02:00", "label": "+02:00" },
-              { "$": "option", "name": "+03:00", "label": "+03:00" },
-              { "$": "option", "name": "+04:00", "label": "+04:00" },
-              { "$": "option", "name": "+05:00", "label": "+05:00" },
-              { "$": "option", "name": "+05:30", "label": "+05:30" },
-              { "$": "option", "name": "+06:00", "label": "+06:00" },
-              { "$": "option", "name": "+07:00", "label": "+07:00" },
-              { "$": "option", "name": "+08:00", "label": "+08:00" },
-              { "$": "option", "name": "+09:00", "label": "+09:00" },
-              { "$": "option", "name": "+10:00", "label": "+10:00" },
-              { "$": "option", "name": "+11:00", "label": "+11:00" },
-              { "$": "option", "name": "+12:00", "label": "+12:00" },
-              { "$": "option", "name": "+13:00", "label": "+13:00" },
-              { "$": "option", "name": "+14:00", "label": "+14:00" }
-            ] },
-          { "$": "field", "name": "hotspot", "$type": "enum", "label": "Hotspot", "default": "same",
+              {
+                "$": "option",
+                "name": "auto",
+                "label": "Auto (looked up online)"
+              },
+              {
+                "$": "option",
+                "name": "-12:00",
+                "label": "-12:00"
+              },
+              {
+                "$": "option",
+                "name": "-11:00",
+                "label": "-11:00"
+              },
+              {
+                "$": "option",
+                "name": "-10:00",
+                "label": "-10:00"
+              },
+              {
+                "$": "option",
+                "name": "-09:00",
+                "label": "-09:00"
+              },
+              {
+                "$": "option",
+                "name": "-08:00",
+                "label": "-08:00"
+              },
+              {
+                "$": "option",
+                "name": "-07:00",
+                "label": "-07:00"
+              },
+              {
+                "$": "option",
+                "name": "-06:00",
+                "label": "-06:00"
+              },
+              {
+                "$": "option",
+                "name": "-05:00",
+                "label": "-05:00"
+              },
+              {
+                "$": "option",
+                "name": "-04:00",
+                "label": "-04:00"
+              },
+              {
+                "$": "option",
+                "name": "-03:00",
+                "label": "-03:00"
+              },
+              {
+                "$": "option",
+                "name": "-02:00",
+                "label": "-02:00"
+              },
+              {
+                "$": "option",
+                "name": "-01:00",
+                "label": "-01:00"
+              },
+              {
+                "$": "option",
+                "name": "+00:00",
+                "label": "+00:00 UTC"
+              },
+              {
+                "$": "option",
+                "name": "+01:00",
+                "label": "+01:00"
+              },
+              {
+                "$": "option",
+                "name": "+02:00",
+                "label": "+02:00"
+              },
+              {
+                "$": "option",
+                "name": "+03:00",
+                "label": "+03:00"
+              },
+              {
+                "$": "option",
+                "name": "+04:00",
+                "label": "+04:00"
+              },
+              {
+                "$": "option",
+                "name": "+05:00",
+                "label": "+05:00"
+              },
+              {
+                "$": "option",
+                "name": "+05:30",
+                "label": "+05:30"
+              },
+              {
+                "$": "option",
+                "name": "+06:00",
+                "label": "+06:00"
+              },
+              {
+                "$": "option",
+                "name": "+07:00",
+                "label": "+07:00"
+              },
+              {
+                "$": "option",
+                "name": "+08:00",
+                "label": "+08:00"
+              },
+              {
+                "$": "option",
+                "name": "+09:00",
+                "label": "+09:00"
+              },
+              {
+                "$": "option",
+                "name": "+10:00",
+                "label": "+10:00"
+              },
+              {
+                "$": "option",
+                "name": "+11:00",
+                "label": "+11:00"
+              },
+              {
+                "$": "option",
+                "name": "+12:00",
+                "label": "+12:00"
+              },
+              {
+                "$": "option",
+                "name": "+13:00",
+                "label": "+13:00"
+              },
+              {
+                "$": "option",
+                "name": "+14:00",
+                "label": "+14:00"
+              }
+            ]
+          },
+          {
+            "$": "field",
+            "name": "hotspot",
+            "$type": "enum",
+            "label": "Hotspot",
+            "default": "same",
             "children": [
-              { "$": "option", "name": "same", "label": "Keep" },
-              { "$": "option", "name": "on", "label": "On" },
-              { "$": "option", "name": "off", "label": "Off" }
-            ] },
-          { "$": "field", "name": "lora", "$type": "enum", "label": "LoRa", "default": "same",
+              {
+                "$": "option",
+                "name": "same",
+                "label": "Keep"
+              },
+              {
+                "$": "option",
+                "name": "on",
+                "label": "On"
+              },
+              {
+                "$": "option",
+                "name": "off",
+                "label": "Off"
+              }
+            ]
+          },
+          {
+            "$": "field",
+            "name": "lora",
+            "$type": "enum",
+            "label": "LoRa",
+            "default": "same",
             "hint": "taken at once, the station stays up",
             "children": [
-              { "$": "option", "name": "same", "label": "Keep" },
-              { "$": "option", "name": "xprs", "label": "XPRS" },
-              { "$": "option", "name": "meshtastic", "label": "XPRS+Meshtastic" },
-              { "$": "option", "name": "meshcore", "label": "XPRS+MeshCore" }
-            ] },
-          { "$": "field", "name": "freq", "$type": "text", "label": "Channel",
+              {
+                "$": "option",
+                "name": "same",
+                "label": "Keep"
+              },
+              {
+                "$": "option",
+                "name": "xprs",
+                "label": "XPRS"
+              },
+              {
+                "$": "option",
+                "name": "meshtastic",
+                "label": "XPRS+Meshtastic"
+              },
+              {
+                "$": "option",
+                "name": "meshcore",
+                "label": "XPRS+MeshCore"
+              }
+            ]
+          },
+          {
+            "$": "field",
+            "name": "freq",
+            "$type": "text",
+            "label": "Channel",
             "hint": "433.900MHz, or preset for the region's own",
-            "placeholder": "leave empty to keep it" }
+            "placeholder": "leave empty to keep it"
+          }
         ]
       },
-      { "$": "action", "name": "station_apply", "label": "Save", "style": "primary", "icon": "save" },
-      { "$": "action", "name": "back", "label": "Back", "icon": "close" }
+      {
+        "$": "action",
+        "name": "station_apply",
+        "label": "Save",
+        "style": "primary",
+        "icon": "save"
+      }
     ]
   },
   {
     "$": "screen",
-    "name": "Identity",
+    "name": "Callsign",
     "icon": "key",
     "hidden": true,
-    "tip": "A station's callsign comes from its key, and a new key is a new callsign. A licensed callsign replaces it on the air and keeps the key.",
+    "tip": "A station's callsign comes from its key: X3 and the first letters of the key. A new key is a new callsign. A licensed callsign replaces it on the air and keeps the key.",
     "children": [
+      {
+        "$": "action",
+        "name": "pick_callsign",
+        "label": "Choose a callsign",
+        "style": "primary",
+        "icon": "search",
+        "tip": "Search for a key whose callsign has the letters you like, and give it to the station."
+      },
       {
         "$": "group",
         "name": "Key",
         "children": [
-          { "$": "field", "name": "identity", "$type": "enum", "label": "Key", "default": "new",
+          {
+            "$": "field",
+            "name": "identity",
+            "$type": "enum",
+            "label": "Key",
+            "default": "new",
             "children": [
-              { "$": "option", "name": "new", "label": "New key" },
-              { "$": "option", "name": "import", "label": "Import nsec" }
-            ] },
-          { "$": "field", "name": "nsec", "$type": "secret", "label": "nsec", "hint": "nsec1..., sealed to the station" }
+              {
+                "$": "option",
+                "name": "new",
+                "label": "New key"
+              },
+              {
+                "$": "option",
+                "name": "import",
+                "label": "Import nsec"
+              }
+            ]
+          },
+          {
+            "$": "field",
+            "name": "nsec",
+            "$type": "secret",
+            "label": "nsec",
+            "hint": "nsec1..., sealed to the station"
+          }
         ]
       },
-      { "$": "action", "name": "identity_apply", "label": "Apply", "style": "primary", "icon": "key",
-        "confirm": true, "confirm-label": "Change its key?",
-        "confirm-text": "The station restarts under a new callsign. Anyone who knew the old one has to learn the new one." },
+      {
+        "$": "action",
+        "name": "identity_apply",
+        "label": "Apply",
+        "style": "primary",
+        "icon": "key",
+        "confirm": true,
+        "confirm-label": "Change its key?",
+        "confirm-text": "The station restarts under a new callsign. Anyone who knew the old one has to learn the new one."
+      },
       {
         "$": "group",
         "name": "Licensed callsign",
         "children": [
-          { "$": "field", "name": "call", "$type": "string", "label": "Callsign", "hint": "CT1ABC", "max": 11 }
+          {
+            "$": "field",
+            "name": "call",
+            "$type": "string",
+            "label": "Callsign",
+            "hint": "CT1ABC",
+            "max": 11
+          }
         ]
       },
-      { "$": "action", "name": "call_apply", "label": "Use this callsign", "icon": "cell_tower",
-        "confirm": true, "confirm-label": "Transmit under this callsign?",
-        "confirm-text": "The station restarts and transmits under it, with the same key. Only a callsign issued to you may be used on amateur bands." },
-      { "$": "action", "name": "call_derived", "label": "Use derived callsign", "icon": "key",
-        "confirm": true, "confirm-label": "Go back to its derived callsign?",
-        "confirm-text": "The station restarts under the callsign its key derives." },
-      { "$": "action", "name": "back", "label": "Back", "icon": "close" }
+      {
+        "$": "action",
+        "name": "call_apply",
+        "label": "Use this callsign",
+        "icon": "cell_tower",
+        "confirm": true,
+        "confirm-label": "Transmit under this callsign?",
+        "confirm-text": "The station restarts and transmits under it, with the same key. Only a callsign issued to you may be used on amateur bands."
+      },
+      {
+        "$": "action",
+        "name": "call_derived",
+        "label": "Use derived callsign",
+        "icon": "key",
+        "confirm": true,
+        "confirm-label": "Go back to its derived callsign?",
+        "confirm-text": "The station restarts under the callsign its key derives."
+      }
     ]
   },
   {
     "$": "screen",
-    "name": "Stats",
+    "name": "Statistics",
     "icon": "monitor_heart",
     "hidden": true,
     "children": [
-      { "$": "group", "name": "Station", "children": [
-        { "$": "field", "name": "st_station", "$type": "stats" },
-        { "$": "field", "name": "st_hears", "$type": "details", "empty": "" }
-      ] },
-      { "$": "group", "name": "Policy", "children": [
-        { "$": "field", "name": "st_policy", "$type": "stats" }
-      ] },
-      { "$": "group", "name": "Diagnostics", "children": [
-        { "$": "field", "name": "st_diag", "$type": "stats" }
-      ] },
-      { "$": "action", "name": "stats", "label": "Refresh", "style": "primary", "icon": "refresh" },
-      { "$": "action", "name": "crash", "label": "Crash report", "icon": "bug_report" },
-      { "$": "action", "name": "back", "label": "Back", "icon": "close" }
+      {
+        "$": "group",
+        "name": "Station",
+        "children": [
+          {
+            "$": "field",
+            "name": "st_station",
+            "$type": "stats"
+          },
+          {
+            "$": "field",
+            "name": "st_hears",
+            "$type": "details",
+            "empty": ""
+          }
+        ]
+      },
+      {
+        "$": "group",
+        "name": "Policy",
+        "children": [
+          {
+            "$": "field",
+            "name": "st_policy",
+            "$type": "stats"
+          }
+        ]
+      },
+      {
+        "$": "group",
+        "name": "Diagnostics",
+        "children": [
+          {
+            "$": "field",
+            "name": "st_diag",
+            "$type": "stats"
+          }
+        ]
+      },
+      {
+        "$": "action",
+        "name": "stats",
+        "label": "Refresh",
+        "style": "primary",
+        "icon": "refresh"
+      },
+      {
+        "$": "action",
+        "name": "crash",
+        "label": "Crash report",
+        "icon": "bug_report"
+      }
     ]
   },
   {
     "$": "screen",
-    "name": "Answers",
+    "name": "History",
     "icon": "history",
     "hidden": true,
     "children": [
-      { "$": "field", "name": "log", "$type": "log", "label": "What the station said" },
-      { "$": "action", "name": "log_clear", "label": "Clear", "icon": "delete" },
-      { "$": "action", "name": "back", "label": "Back", "icon": "close" }
+      {
+        "$": "field",
+        "name": "log",
+        "$type": "log",
+        "label": "What the station said"
+      },
+      {
+        "$": "action",
+        "name": "log_clear",
+        "label": "Clear",
+        "icon": "delete"
+      }
     ]
   }
 ]

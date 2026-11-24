@@ -46,6 +46,50 @@ void fw_cat_u(char *d, unsigned long long v, unsigned cap)
     fw_cat(d, r, cap);
 }
 
+/* The next number in a version at [*p]: what is not a digit is skipped up
+ * to the next '.' or '-', and so is anything after the digits. */
+static unsigned long long ver_num(const char **p)
+{
+    unsigned long long n = 0;
+    while (**p && **p != '.' && **p != '-' && (**p < '0' || **p > '9')) (*p)++;
+    while (**p >= '0' && **p <= '9') { n = n * 10 + (unsigned)(**p - '0'); (*p)++; }
+    while (**p && **p != '.' && **p != '-') (*p)++;
+    return n;
+}
+
+/* The last number in [s]: "beta.9" is 9, "rc10" is 10. */
+static unsigned long long ver_last_num(const char *s)
+{
+    const char *q = s + fw_len(s);
+    while (q > s && (q[-1] < '0' || q[-1] > '9')) q--;
+    const char *e = q;
+    while (q > s && q[-1] >= '0' && q[-1] <= '9') q--;
+    unsigned long long n = 0;
+    for (; q < e; q++) n = n * 10 + (unsigned)(*q - '0');
+    return n;
+}
+
+int fw_ver_cmp(const char *a, const char *b)
+{
+    if (!a[0] || !b[0]) return a[0] ? 1 : b[0] ? -1 : 0;
+    const char *p = a, *q = b;
+    if (*p == 'v') p++;
+    if (*q == 'v') q++;
+    /* The release part: numbers until a '-' (or the end) on either side. */
+    while ((*p && *p != '-') || (*q && *q != '-')) {
+        unsigned long long x = (*p && *p != '-') ? ver_num(&p) : 0;
+        unsigned long long y = (*q && *q != '-') ? ver_num(&q) : 0;
+        if (x != y) return x < y ? -1 : 1;
+        if (*p == '.') p++;
+        if (*q == '.') q++;
+    }
+    int pa = *p == '-', pb = *q == '-';
+    if (pa != pb) return pa ? -1 : 1;          /* a pre-release is older */
+    if (!pa) return 0;
+    unsigned long long x = ver_last_num(p), y = ver_last_num(q);
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+
 char fw_up(char c) { return (c >= 'a' && c <= 'z') ? (char)(c - 32) : c; }
 
 /* ── SHA-256, for the section 5 identifier ────────────────────────────── */

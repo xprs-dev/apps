@@ -1,6 +1,27 @@
 /*
- * firmwares -- set up the station you just flashed (XPRS.md 11.9, 11.10),
- * and read how it is doing (15.5).
+ * firmwares -- install XPRS on a board, set up the station you just flashed
+ * (XPRS.md 11.9, 11.10), keep it updated (11.8) and read how it is doing
+ * (15.5).
+ *
+ * One list, no tabs: the boards on a USB cable, then the stations heard on
+ * WiFi, Bluetooth or LoRa (waiting for an owner, yours, other people's),
+ * then, with nothing on the cable, how to plug a board in. Each row is drawn
+ * with how it is reached (usb, wifi, bluetooth), never a random pattern.
+ * A tap opens what it is:
+ *
+ *   Flash     a board on the cable: its picture, one line saying what
+ *             happens next, a progress bar while it works, what is known
+ *             about it, and one button, Install XPRS. Advanced options hold
+ *             the rest: another board, a chosen callsign, erase settings.
+ *   Station   a station on the air: its firmware (and whether a newer one
+ *             is published), how long it has run, how it is heard, whose it
+ *             is and how it is set, as plain rows; then what can be done:
+ *             Claim, Update firmware, WiFi, Settings, Callsign, Statistics,
+ *             History.
+ *
+ * Back is the host's arrow and the phone's gesture: `screen_closed` steps
+ * back one panel (WiFi -> Station -> the list), so no screen carries a Back
+ * button of its own.
  *
  * A freshly flashed station has no owner, no network and no name, and says
  * so: it airs `t:request q:owner` with its key in `k:` on its local bearers.
@@ -42,7 +63,7 @@
 #include "../hal/xprs_wasm_hal.h"
 #include "wire.h"
 
-#define ST_MAX       8
+#define ST_MAX       16
 
 typedef struct {
     char call[12];
@@ -89,6 +110,19 @@ static char g_my_npub[70];
  * callsign this table names (11.10). */
 static struct { char call[12]; char npub[70]; } g_ids[4];
 static int g_ids_w;
+
+/* A callsign chosen on the Flash panel (ui.callsign.pick): the key that
+ * derives it, held in memory only, for the next board flashed here. Once
+ * the cable has made that board ours, [g_key_for] names it, and the key is
+ * sent to it sealed (give_key) as soon as the core has heard its own key. */
+static char g_want_call[12], g_want_nsec[72], g_key_for[12];
+
+static void forget_wanted(void)
+{
+    for (unsigned i = 0; i < sizeof g_want_nsec; i++) g_want_nsec[i] = 0;
+    g_want_call[0] = 0;
+    g_key_for[0] = 0;
+}
 
 static char g_ev[4096];
 static char g_topic[64];
@@ -326,10 +360,6 @@ static void signal_parts(const st_t *s, int have_host, char *out, unsigned cap, 
     if (!out[0]) fw_cpy(out, "not heard", cap);
 }
 
-static void signal_words(const st_t *s, int have_host, char *out, unsigned cap)
-{
-    signal_parts(s, have_host, out, cap, 0);
-}
 
 static void tile(const char *id, const char *label, const char *value,
                  const char *unit, const char *hint, const char *progress, int alert);
@@ -383,8 +413,19 @@ static void flag_hidden(const char *name, int hidden)
     say(m);
 }
 
+/* The panel open now, so `screen_closed` (the host's back arrow, or the
+ * phone's back gesture) can step back to the screen it came from instead of
+ * dropping the person on the list. */
+static char g_screen[16];
+
+/* What the Flash panel was last opened as, to retitle it when the board
+ * turns out to be a T-Deck rather than "Install XPRS". */
+static char g_flash_shown[40];
+
 static void screen_open(const char *name, const char *title)
 {
+    fw_cpy(g_screen, name, sizeof g_screen);
+    if (fw_eq(name, "Flash")) fw_cpy(g_flash_shown, title, sizeof g_flash_shown);
     char m[160] = "{\"type\":\"ui.screen.open\",\"name\":\"";
     fw_cat(m, name, sizeof m);
     fw_cat(m, "\",\"title\":\"", sizeof m);
@@ -452,63 +493,207 @@ static void tiles_end(void)
     say(g_out);
 }
 
-/* The Station screen: six tiles, the Now line, and which buttons apply. */
+/* ── Words a person reads ─────────────────────────────────────────────── */
+/* The newest firmware the catalogue offers (flash_read keeps it), so a
+ * station heard on the air can be told it has an update. Stations do not
+ * say which board they are, so this is the newest of any board: every
+ * board is published at one version, and a station behind it is behind. */
+static char g_latest[24];
+
+/* What a bearer is called on the screen. */
+static const char *bearer_name(const char *b)
+{
+    if (fw_starts(b, "ble")) return "Bluetooth";
+    if (fw_eq(b, "lan")) return "WiFi network";
+    if (fw_eq(b, "wifi")) return "WiFi";
+    if (fw_eq(b, "lora")) return "LoRa radio";
+    if (fw_eq(b, "rns") || fw_eq(b, "reticulum")) return "Reticulum";
+    return b[0] ? b : "";
+}
+
+/* Its icon on a list row: how it is reached, never a random pattern. */
+static const char *bearer_icon(const char *b)
+{
+    if (fw_starts(b, "ble")) return "bluetooth";
+    if (fw_eq(b, "lan") || fw_eq(b, "wifi")) return "wifi";
+    if (fw_eq(b, "lora")) return "cell_tower";
+    return "router";
+}
+
+/* The bearer it was last heard on, from the core or from its ask. */
+static void bearer_of(const st_t *s, int have, char *out, unsigned cap)
+{
+    out[0] = 0;
+    if (have) fw_json(g_host, "bearer", out, cap);
+    if (!out[0]) fw_cpy(out, s->bearer, cap);
+    for (char *p = out; *p; p++) if (*p >= 'A' && *p <= 'Z') *p = (char)(*p + 32);
+}
+
+/* "Bluetooth, -87 dBm, 12 s ago", or "not heard lately". */
+static void reach_words(const st_t *s, int have, char *out, unsigned cap)
+{
+    char b[12];
+    bearer_of(s, have, b, sizeof b);
+    int rssi = 0;
+    signal_parts(s, have, out, cap, &rssi);
+    fw_cpy(out, bearer_name(b), cap);
+    if (!out[0]) { fw_cpy(out, "not heard lately", cap); return; }
+    if (rssi) { fw_cat(out, ", -", cap); fw_cat_u(out, (unsigned)(rssi < 0 ? -rssi : rssi), cap); fw_cat(out, " dBm", cap); }
+    if (have) { char ago[24]; ago_words(host_num("agoMs"), ago, sizeof ago); fw_cat(out, ", ", cap); fw_cat(out, ago, cap); }
+}
+
+/* The firmware version it runs: what the core heard last, else what it
+ * told us. */
+static void fw_of(const st_t *s, int have, char *out, unsigned cap)
+{
+    out[0] = 0;
+    if (have) fw_json(g_host, "fw", out, cap);
+    if (!out[0]) fw_cpy(out, s->fw, cap);
+}
+
+static int behind(const char *fw) { return fw[0] && g_latest[0] && fw_ver_cmp(fw, g_latest) < 0; }
+
+/* When this device installed its firmware over the cable (kv fl.<call>:
+ * "<epoch>|<version>"), as "3 days ago". 0 when it did not. */
+static int installed_words(const char *call, char *out, unsigned cap)
+{
+    char k[24] = "fl.", v[48];
+    fw_cat(k, call, sizeof k);
+    uint32_t n = hal_kv_get(k, fw_len(k), v, sizeof v - 1);
+    v[n] = 0;
+    unsigned long long at = 0;
+    for (const char *p = v; *p >= '0' && *p <= '9'; p++) at = at * 10 + (unsigned)(*p - '0');
+    unsigned long long now = hal_time_epoch();
+    if (!at || !now || now < at) return 0;
+    unsigned long long d = (now - at) / 86400ULL;
+    out[0] = 0;
+    if (d == 0) fw_cpy(out, "today", cap);
+    else if (d == 1) fw_cpy(out, "yesterday", cap);
+    else { fw_cat_u(out, d, cap); fw_cat(out, " days ago", cap); }
+    fw_cat(out, ", from this device", cap);
+    return 1;
+}
+
+/* ── Details: label and value rows, in titled sections ───────────────── */
+static int g_det_first, g_det_rows;
+
+static void det_begin(const char *field)
+{
+    fw_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"", sizeof g_out);
+    fw_cat(g_out, field, sizeof g_out);
+    fw_cat(g_out, "\",\"value\":[", sizeof g_out);
+    g_det_first = 1;
+    g_det_rows = 0;
+}
+
+static void det_section(const char *title)
+{
+    if (!g_det_first) fw_cat(g_out, "]},", sizeof g_out);
+    g_det_first = 0;
+    fw_cat(g_out, "{\"title\":\"", sizeof g_out);
+    fw_jesc(g_out, title, sizeof g_out);
+    fw_cat(g_out, "\",\"items\":[", sizeof g_out);
+    g_det_rows = 0;
+}
+
+/* A row with nothing to say is left out rather than shown as "?". */
+static void det_row(const char *label, const char *value)
+{
+    if (!value || !value[0]) return;
+    if (g_det_rows++) fw_cat(g_out, ",", sizeof g_out);
+    fw_cat(g_out, "{\"label\":\"", sizeof g_out);
+    fw_jesc(g_out, label, sizeof g_out);
+    fw_cat(g_out, "\",\"value\":\"", sizeof g_out);
+    fw_jesc(g_out, value, sizeof g_out);
+    fw_cat(g_out, "\"}", sizeof g_out);
+}
+
+static void det_end(void)
+{
+    if (!g_det_first) fw_cat(g_out, "]}", sizeof g_out);
+    fw_cat(g_out, "]}", sizeof g_out);
+    say(g_out);
+}
+
+/* The Station screen: what can be learned about it, then what can be done.
+ * Facts as rows a person reads top to bottom; the buttons that do not apply
+ * to this station (not yours, nothing newer) are left off. */
 static void push_hub(void)
 {
     if (g_sel < 0 || g_sel >= g_nst) return;
     st_t *s = &g_st[g_sel];
     int have = host_facts(s);
-    unsigned long long agoms = have ? host_num("agoMs") : 0;
-    int stale = !have || agoms > 600000ULL;
+    char v[96], w[64];
 
-    tiles_begin("hub");
-    tile("owner", "Owner",
-         s->mine ? "You" : s->unowned ? "Nobody" : s->theirs ? "Not you" : "?",
-         "", s->unowned && !s->mine ? "tap Claim" : s->theirs ? "somebody else's" : "", "", 0);
-    {
-        /* What it said, or what being heard over the LAN implies. */
-        int joining = fw_eq(s->wifi, "joining");
-        char lanes[64] = "";
-        if (have) fw_json_list(g_host, "bearers", lanes, sizeof lanes);
-        int on_lan = 0;
-        for (const char *p = lanes; *p; p++) if (fw_starts(p, "lan")) on_lan = 1;
-        tile("wifi", "WiFi", s->wifi[0] ? s->wifi : on_lan ? "up" : "unknown", "",
-             s->ip[0] ? s->ip : on_lan && !s->wifi[0] ? "heard over the LAN" : "",
-             joining ? "0.5" : "", fw_eq(s->wifi, "failed"));
-    }
-    signal_tile(s, have, agoms, stale);
-    {
-        char up[16] = "";
-        if (have) fw_json(g_host, "uptime", up, sizeof up);
-        if (!up[0]) fw_cpy(up, s->uptime, sizeof up);
-        tile("up", "Up", up, "", "", "", 0);
-    }
-    {
-        char fw[24] = "";
-        if (have) fw_json(g_host, "fw", fw, sizeof fw);
-        if (!fw[0]) fw_cpy(fw, s->fw, sizeof fw);
-        tile("fw", "Firmware", fw, "", "", "", 0);
-    }
-    {
-        char pe[8] = "";
-        if (have) fw_json(g_host, "peers", pe, sizeof pe);
-        if (!pe[0]) fw_cpy(pe, s->peers, sizeof pe);
-        tile("peers", "Peers", pe, "", "", "", 0);
-    }
-    tiles_end();
     if (!s->now[0])
-        fw_cpy(s->now, s->mine ? "Yours" : s->unowned ? "Waiting for an owner"
-                     : s->theirs ? "Somebody else's" : "Not heard from yet", sizeof s->now);
+        fw_cpy(s->now, s->mine ? "Yours" : s->unowned ? "Waiting for an owner. Claim it to set it up."
+                     : s->theirs ? "Somebody else's station" : "Asking whose it is...", sizeof s->now);
     one_line("now", "Now", s->now);
 
+    det_begin("info");
+    det_section("Firmware");
+    fw_of(s, have, w, sizeof w);
+    if (w[0]) { fw_cpy(v, "XPRS ", sizeof v); fw_cat(v, w, sizeof v); }
+    else fw_cpy(v, s->asking ? "asking..." : "not reported yet", sizeof v);
+    det_row("Version", v);
+    if (w[0] && g_latest[0]) {
+        if (behind(w)) { fw_cpy(v, g_latest, sizeof v); fw_cat(v, " is available", sizeof v); }
+        else fw_cpy(v, "this is the newest", sizeof v);
+        det_row("Newest", v);
+    }
+    if (installed_words(s->call, v, sizeof v)) det_row("Installed", v);
+    v[0] = 0; if (have) fw_json(g_host, "lifetime", v, sizeof v);
+    if (v[0]) { char l[48] = ""; fw_cat(l, v, sizeof l); fw_cat(l, " in total", sizeof l); det_row("Running", l); }
+    v[0] = 0; if (have) fw_json(g_host, "uptime", v, sizeof v);
+    if (!v[0]) fw_cpy(v, s->uptime, sizeof v);
+    if (v[0]) { char l[48] = ""; fw_cat(l, v, sizeof l); fw_cat(l, " since its last restart", sizeof l); det_row("Up", l); }
+
+    det_section("Connection");
+    reach_words(s, have, v, sizeof v);
+    det_row("Heard over", v);
+    det_row("Owner", s->mine ? "You" : s->unowned ? "Nobody yet" : s->theirs ? "Somebody else" : "");
+    {
+        int on_lan = 0;
+        char lanes[64] = "";
+        if (have) fw_json_list(g_host, "bearers", lanes, sizeof lanes);
+        for (const char *p = lanes; *p; p++) if (fw_starts(p, "lan")) on_lan = 1;
+        v[0] = 0;
+        if (fw_eq(s->wifi, "joining")) fw_cpy(v, "joining...", sizeof v);
+        else if (fw_eq(s->wifi, "failed")) fw_cpy(v, "could not join", sizeof v);
+        else if (fw_eq(s->wifi, "off")) fw_cpy(v, "off", sizeof v);
+        else if (s->wifi[0] || on_lan) fw_cpy(v, "connected", sizeof v);
+        if (v[0] && s->ip[0]) { fw_cat(v, ", ", sizeof v); fw_cat(v, s->ip, sizeof v); }
+        det_row("WiFi", v);
+    }
+    if (s->ap[0]) det_row("Own hotspot", fw_eq(s->ap, "on") ? "on" : fw_eq(s->ap, "off") ? "off" : s->ap);
+    v[0] = 0; if (have) fw_json(g_host, "peers", v, sizeof v);
+    if (!v[0]) fw_cpy(v, s->peers, sizeof v);
+    if (v[0]) { fw_cat(v, " in reach", sizeof v); det_row("Stations", v); }
+
+    det_section("Options");
+    det_row("Name", s->nick);
+    det_row("Time zone", s->zone);
+    if (s->lora[0])
+        det_row("LoRa", fw_eq(s->lora, "meshtastic") ? "XPRS + Meshtastic"
+                      : fw_eq(s->lora, "meshcore") ? "XPRS + MeshCore" : "XPRS");
+    det_row("Channel", s->freq);
+    det_end();
+
     flag_hidden("claim", !(s->unowned && !s->mine));
+    flag_hidden("update", !(s->mine && behind(w)));
+    if (s->mine && behind(w)) {
+        char l[40] = "Update to ";
+        fw_cat(l, g_latest, sizeof l);
+        field_set("update__label", l);
+    }
     flag_hidden("open_wifi", !s->mine);
     flag_hidden("open_name", !s->mine);
     flag_hidden("open_identity", !s->mine);
 }
 
-static void item(const char *id, const char *title, const char *sub,
-                 const char *tags, int dim, int *first)
+static void item_full(const char *id, const char *title, const char *sub,
+                      const char *tags, int dim, const char *icon,
+                      const char *picture, int *first)
 {
     if (!*first) fw_cat(g_out, ",", sizeof g_out);
     *first = 0;
@@ -521,9 +706,12 @@ static void item(const char *id, const char *title, const char *sub,
     fw_cat(g_out, "\",\"tags\":[", sizeof g_out);
     fw_cat(g_out, tags, sizeof g_out);
     fw_cat(g_out, "]", sizeof g_out);
+    if (icon && icon[0]) { fw_cat(g_out, ",\"icon\":\"", sizeof g_out); fw_jesc(g_out, icon, sizeof g_out); fw_cat(g_out, "\"", sizeof g_out); }
+    if (picture && picture[0]) { fw_cat(g_out, ",\"picture\":\"", sizeof g_out); fw_jesc(g_out, picture, sizeof g_out); fw_cat(g_out, "\"", sizeof g_out); }
     if (dim) fw_cat(g_out, ",\"dim\":true", sizeof g_out);
     fw_cat(g_out, "}", sizeof g_out);
 }
+
 
 static void tag(char *tags, unsigned cap, const char *prefix, const char *v)
 {
@@ -535,15 +723,23 @@ static void tag(char *tags, unsigned cap, const char *prefix, const char *v)
     fw_cat(tags, "\"", cap);
 }
 
+/* The boards on the cable, and how to plug one in, drawn by the flashing
+ * half below. */
+static void list_cable(int *any);
+static void list_cable_help(int *any);
+
+/* The one list: boards on the cable first, then the stations heard on
+ * WiFi, Bluetooth or LoRa, then (with no cable in) how to add a board. */
 static void push_list(void)
 {
-    fw_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"stations\",\"sections\":[",
+    fw_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"devices\",\"sections\":[",
            sizeof g_out);
     int any = 0;
+    list_cable(&any);
     static const char *const titles[3] = {
         "{\"title\":\"Waiting for an owner\",\"items\":[",
-        "{\"title\":\"Yours\",\"items\":[",
-        "{\"title\":\"Others\",\"items\":["
+        "{\"title\":\"Your stations\",\"items\":[",
+        "{\"title\":\"Other stations nearby\",\"items\":["
     };
     for (int pass = 0; pass < 3; pass++) {
         int first = 1;
@@ -559,21 +755,26 @@ static void push_list(void)
                 any = 1;
             }
             int have = host_facts(s);
-            char sub[64], ago[24];
-            signal_words(s, have, sub, sizeof sub);
             unsigned long long agoms = have ? host_num("agoMs") : 0;
-            if (have) { ago_words(agoms, ago, sizeof ago); fw_cat(sub, ", ", sizeof sub); fw_cat(sub, ago, sizeof sub); }
+            char sub[96] = "", b[12], fw[24];
+            if (s->nick[0]) { fw_cat(sub, s->call, sizeof sub); fw_cat(sub, ", ", sizeof sub); }
+            {
+                char r[64];
+                reach_words(s, have, r, sizeof r);
+                fw_cat(sub, r, sizeof sub);
+            }
             if (pass == 0) fw_cat(sub, ". Tap to claim it", sizeof sub);
-            char tags[160] = "", fw[24] = "", up[16] = "";
-            if (have) { fw_json(g_host, "fw", fw, sizeof fw); fw_json(g_host, "uptime", up, sizeof up); }
-            tag(tags, sizeof tags, "fw ", fw[0] ? fw : s->fw);
-            tag(tags, sizeof tags, "WiFi ", s->wifi);
-            tag(tags, sizeof tags, "up ", up[0] ? up : s->uptime);
-            item(s->call, s->nick[0] ? s->nick : s->call, sub, tags,
-                 !have || agoms > 600000ULL, &first);
+            bearer_of(s, have, b, sizeof b);
+            fw_of(s, have, fw, sizeof fw);
+            char tags[160] = "";
+            tag(tags, sizeof tags, "XPRS ", fw);
+            if (pass == 1 && behind(fw)) tag(tags, sizeof tags, "", "update available");
+            item_full(s->call, s->nick[0] ? s->nick : s->call, sub, tags,
+                      !have || agoms > 600000ULL, bearer_icon(b), "", &first);
         }
         if (!first) fw_cat(g_out, "]}", sizeof g_out);
     }
+    list_cable_help(&any);
     fw_cat(g_out, "]}", sizeof g_out);
     say(g_out);
 }
@@ -723,6 +924,7 @@ static void listen(void)
                                     fw_eq(g_st[i].pend_what, "call")))) keying = 1;
         if (g_st[i].ask_pol) asking = 1;
     }
+    if (g_key_for[0]) keying = 1;        /* waiting to hear the new board */
     sub(&g_sub_res, asked, "xprs.result");
     sub(&g_sub_tx, asked, "xprs.status.tx");
     sub(&g_sub_ids, keying, "xprs.identity");
@@ -796,6 +998,32 @@ static int send_sealed(st_t *s, char *body, const char *what)
     return send_cmd(s, w, what);
 }
 
+/* The callsign chosen for a board just flashed here: its key, sealed to the
+ * station's own key, which the station takes and restarts under (11.10).
+ * Waits, without a clock, until the core has heard the station say its key:
+ * on_identity, the next core.flash, or the next look at the list call it. */
+static void give_key(void)
+{
+    if (!g_key_for[0] || !g_want_nsec[0]) return;
+    int i = find(g_key_for);
+    if (i < 0) return;
+    st_t *s = &g_st[i];
+    if (!s->npub[0]) key_from_core(s, host_facts(s));
+    if (!s->npub[0]) return;
+    if (s->pend_id[0] && !s->pend_final) return;
+    if (s->pend_id[0]) done_pending(s);
+    if (!g_me[0]) who_am_i();
+    char body[96], line[64] = "Giving it the callsign ";
+    fw_cat(line, g_want_call, sizeof line);
+    const char *kv[] = { "nsec", g_want_nsec, 0 };
+    if (fw_body(body, sizeof body, kv) > 0 && send_sealed(s, body, "key") == 0) {
+        log_line(s->call, line);
+        set_now(s, line);
+    }
+    forget_wanted();
+    listen();
+}
+
 static void do_wifi(st_t *s, char *ssid, char *pass)
 {
     char body[128];
@@ -847,7 +1075,8 @@ static void do_cmd(st_t *s, const char *cmd, const char *what)
     char ts[24], w[FW_WIRE_UNSIGNED + 1];
     stamp_for(s, ts, sizeof ts);
     if (fw_cmd(w, sizeof w, g_me, s->call, ts, cmd) >= 0 && send_cmd(s, w, what) == 0)
-        set_now(s, fw_eq(what, "zdiag") ? "Asking for its stats..." : "Asking for its crash report...");
+        set_now(s, fw_eq(what, "zdiag") ? "Asking for its stats..."
+                 : fw_eq(what, "update") ? "Asking it to update..." : "Asking for its crash report...");
 }
 
 /* q:policy and q:mail: a t:request, answered by anybody's station as an
@@ -1062,6 +1291,11 @@ static void on_identity(const char *row)
         }
     }
     if (!fw_call_matches(call, k)) return;
+    if (g_key_for[0] && fw_eq(call, g_key_for)) {
+        int j = find(call);
+        if (j >= 0 && !g_st[j].npub[0]) fw_cpy(g_st[j].npub, k, sizeof g_st[j].npub);
+        give_key();
+    }
     fw_cpy(g_ids[g_ids_w].call, call, sizeof g_ids[0].call);
     fw_cpy(g_ids[g_ids_w].npub, k, sizeof g_ids[0].npub);
     g_ids_w = (g_ids_w + 1) % 4;
@@ -1137,21 +1371,21 @@ static void on_observation(const char *row)
         } else { s->theirs = 1; s->mine = 0; s->unowned = 0; }
         s->ask_pol = 0;
         if (s->probe) {
-            /* Asked because it was heard (discover): kept only if ours.
-             * Somebody else's station is not this list's business. */
+            /* Asked because it was heard (discover). Somebody else's is
+             * listed too, under Other stations nearby: what it runs can be
+             * read by anybody. It is not asked again this session. */
             s->probe = 0;
             if (s->theirs) {
                 fw_cpy(g_notmine[g_notmine_w], s->call, sizeof g_notmine[0]);
                 g_notmine_w = (g_notmine_w + 1) % 8;
-                drop(i);
-                listen();
-                return;
+            } else {
+                log_line(s->call, s->mine ? "Found: it is yours" : "Found: it is waiting for an owner");
             }
-            log_line(s->call, s->mine ? "Found: it is yours" : "Found: it is waiting for an owner");
         }
         if (s->mine) key_from_core(s, host_facts(s));
         if (!s->mine) s->asking = 0;          /* nothing more is coming */
-        set_now(s, s->mine ? "Yours" : s->unowned ? "Waiting for an owner" : "Somebody else's");
+        set_now(s, s->mine ? "Yours" : s->unowned ? "Waiting for an owner. Claim it to set it up."
+                 : "Somebody else's station. You can see how it is doing; only its owner can change it.");
         listen();
         save();
         push_list();
@@ -1231,6 +1465,12 @@ static void on_result(const char *row)
         } else if (fw_eq(what, "wifi")) {
             log_line(s->call, "Joining the network...");
             set_now(s, "Joining the network...");
+        } else if (fw_eq(what, "update")) {
+            char line[96] = "Updating";
+            if (g_latest[0]) { fw_cat(line, " to ", sizeof line); fw_cat(line, g_latest, sizeof line); }
+            fw_cat(line, ". It restarts and says how it went in a few minutes.", sizeof line);
+            log_line(s->call, line);
+            set_now(s, line);
         } else if (fw_eq(what, "call")) {
             char line[80] = "Restarting as ";
             fw_cat(line, s->want_call[0] ? s->want_call : "its derived callsign", sizeof line);
@@ -1272,6 +1512,11 @@ static void on_result(const char *row)
         } else if (fw_eq(what, "call")) {
             char line[80] = "Transmitting as ";
             fw_cat(line, s->call, sizeof line);
+            log_line(s->call, line);
+            set_now(s, line);
+        } else if (fw_eq(what, "update")) {
+            char line[64] = "Updated: now XPRS ";
+            fw_cat(line, s->fw, sizeof line);
             log_line(s->call, line);
             set_now(s, line);
         } else if (fw_eq(what, "zdiag")) {
@@ -1329,6 +1574,7 @@ static void on_result(const char *row)
         else if (fw_eq(code, "404")) fw_cpy(line, "Its firmware cannot do that; update it first. ", sizeof line);
         else if (fw_eq(code, "429")) fw_cpy(line, "Busy, try again in a moment. ", sizeof line);
         else if (fw_eq(code, "500") && fw_eq(what, "wifi")) fw_cpy(line, "Could not join: ", sizeof line);
+        else if (fw_eq(code, "500") && fw_eq(what, "update")) fw_cpy(line, "The update did not take, it went back to its old firmware: ", sizeof line);
         else { fw_cpy(line, "Refused (", sizeof line); fw_cat(line, code, sizeof line); fw_cat(line, "): ", sizeof line); }
         fw_cat(line, m, sizeof line);
         log_line(s->call, line);
@@ -1370,13 +1616,13 @@ static void on_status(const char *row)
 /* The core owns the cable, the loader, the catalogue and the files
  * (hal_flash_*); this wapp picks, asks, and draws what `core.flash` says.
  *
- *   Flash tab   the boards plugged in over USB. Tap one.
- *   Device      that board: Flash on top, the firmware chosen for it, what
- *               the chip said. Opening it identifies the board; when one
- *               published firmware fits, it is chosen and downloaded
- *               without another tap. Otherwise: Choose firmware.
+ *   the list    the boards on the cable lead it. Tap one.
+ *   Flash       that board. Opening it identifies the board; when one
+ *               published firmware fits, it is chosen without another tap,
+ *               and every published firmware is already here (prefetch), so
+ *               Install XPRS is ready at once.
  *   Firmware    the catalogue with the website's pictures, the boards that
- *               fit this chip first; tapping one chooses it.
+ *               fit this chip first; tapping one chooses it and goes back.
  *
  * The state is read ONCE per event into the structs below and every screen
  * is drawn from them. Drawing straight off the 8 KB JSON, one scan per
@@ -1483,6 +1729,7 @@ static void flash_read(void)
         b->mb = (unsigned)num_of(g_obj, "flashMb");
         b->local_bytes = num_of(g_obj, "localBytes");
         b->flashable = bool_of(g_obj, "flashable");
+        if (b->flashable && fw_ver_cmp(b->version, g_latest) > 0) fw_cpy(g_latest, b->version, sizeof g_latest);
     }
     g_fs.pid[0] = g_fs.chip[0] = g_fs.chip_label[0] = g_fs.runs[0] = g_fs.runs_version[0] = 0;
     g_fs.suggested[0] = g_fs.likely[0] = 0;
@@ -1522,8 +1769,6 @@ static void frac_words(char *out, unsigned cap)
     if (pc < 100) fw_cat_u(out, pc, cap);
 }
 
-/* What a device is called on a row: its product string, else its port. */
-static const char *dev_title(const fdev_t *d) { return d->product[0] ? d->product : d->port; }
 
 /* "ESP32S3, 16 MB, v0.4.0" for a board. */
 static void board_words(const fboard_t *b, char *sub, unsigned cap)
@@ -1531,7 +1776,11 @@ static void board_words(const fboard_t *b, char *sub, unsigned cap)
     fw_cpy(sub, b->family, cap);
     for (char *p = sub; *p; p++) *p = fw_up(*p);
     if (b->mb) { fw_cat(sub, ", ", cap); fw_cat_u(sub, b->mb, cap); fw_cat(sub, " MB", cap); }
-    if (b->version[0]) { fw_cat(sub, ", v", cap); fw_cat(sub, b->version, cap); }
+    /* The newer of what the catalogue names and what is downloaded: the
+     * image's own manifest is the truth when a release left the catalogue
+     * behind. */
+    const char *v = b->local[0] && fw_ver_cmp(b->local, b->version) > 0 ? b->local : b->version;
+    if (v[0]) { fw_cat(sub, ", XPRS ", cap); fw_cat(sub, v, cap); }
 }
 
 /* The probe's facts are about g_dev. */
@@ -1550,120 +1799,220 @@ static int fits(const char *id)
     return 0;
 }
 
-static void push_flash(void)
+/* "ttyACM0" or "001/002": the part of a port a person can match to a cable. */
+static const char *port_short(const char *port)
 {
-    char n1[8] = "", n2[8] = "", prog[8] = "";
-    fw_cat_u(n1, (unsigned)g_fs.ndev, sizeof n1);
-    fw_cat_u(n2, (unsigned)g_fs.nbrd, sizeof n2);
-    if (phase_is("fetching") || phase_is("writing") || phase_is("verifying")) frac_words(prog, sizeof prog);
-    /* A people screen shows its stats strip and the list, nothing else: the
-     * one line of status rides the third tile. */
-    tiles_begin("flash_hub");
-    tile("ports", "Plugged in", n1, "", g_fs.ndev ? "tap one" : "over USB", "", 0);
-    tile("boards", "Firmwares", n2, "", g_fs.nbrd ? "on xprs.dev" : "Refresh from the menu", "", 0);
-    if (!g_fs.supported)
-        tile("status", "USB", "none", "", "not on this device", "", 1);
-    else if (g_fs.scanning && phase_is("idle") && !g_fs.error[0])
-        tile("status", "Status", "looking", "", "at the cable and the catalogue", "", 0);
-    else
-        tile("status", "Status", g_fs.error[0] ? "failed" : phase_is("idle") ? "ready" : g_fs.phase,
-             "", g_fs.error[0] ? g_fs.error : g_fs.message[0] ? g_fs.message : g_fs.note, prog, g_fs.error[0] != 0);
-    tiles_end();
+    return fw_starts(port, "/dev/bus/usb/") ? port + 13 : fw_starts(port, "/dev/") ? port + 5 : port;
+}
 
-    int have = probed() && g_fs.chip_label[0];
-    fw_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"flash\",\"sections\":[", sizeof g_out);
+/* The board a device is, as far as anyone knows: the firmware chosen for
+ * it, else the probe's one clear match. */
+static const fboard_t *board_for(const fdev_t *d)
+{
+    if (!d) return 0;
+    if (fw_eq(d->id, g_dev) && g_board[0]) return board_of(g_board);
+    if (fw_eq(d->id, g_fs.pid) && g_fs.suggested[0]) return board_of(g_fs.suggested);
+    return 0;
+}
+
+/* Whether the probe found XPRS on it: the image's project name says so
+ * (esp32c3_xprs, tdongle_xprs). */
+static int runs_xprs(void)
+{
+    for (const char *p = g_fs.runs; *p; p++) if (fw_starts(p, "xprs")) return 1;
+    return 0;
+}
+
+/* "Runs XPRS 0.5.1", "Runs other firmware", "No firmware read yet". */
+static void runs_words(char *out, unsigned cap)
+{
+    if (!g_fs.runs[0]) { fw_cpy(out, "no XPRS on it yet", cap); return; }
+    if (runs_xprs()) {
+        fw_cpy(out, "XPRS", cap);
+        if (g_fs.runs_version[0]) { fw_cat(out, " ", cap); fw_cat(out, g_fs.runs_version, cap); }
+        return;
+    }
+    fw_cpy(out, "other firmware (", cap);
+    fw_cat(out, g_fs.runs, cap);
+    fw_cat(out, ")", cap);
+}
+
+static void list_cable(int *any)
+{
     int first = 1;
     for (int i = 0; i < g_fs.ndev; i++) {
         const fdev_t *d = &g_fs.dev[i];
-        if (first) fw_cat(g_out, "{\"title\":\"Plugged in\",\"items\":[", sizeof g_out);
-        char sub[120], tags[120] = "";
-        if (have && fw_eq(d->id, g_dev)) {
-            fw_cpy(sub, g_fs.chip_label, sizeof sub);
-            if (g_fs.flash_bytes) { fw_cat(sub, ", ", sizeof sub); fw_cat_u(sub, (unsigned)(g_fs.flash_bytes / 1048576ULL), sizeof sub); fw_cat(sub, " MB", sizeof sub); }
-            if (g_fs.runs[0]) {
-                fw_cat(sub, ", runs ", sizeof sub); fw_cat(sub, g_fs.runs, sizeof sub);
-                if (g_fs.runs_version[0]) { fw_cat(sub, " ", sizeof sub); fw_cat(sub, g_fs.runs_version, sizeof sub); }
-            }
-        } else {
-            fw_cpy(sub, d->port, sizeof sub);
-            fw_cat(sub, d->native ? ", native USB" : ", USB bridge", sizeof sub);
-            fw_cat(sub, ". Tap to identify", sizeof sub);
+        if (first) {
+            if (*any) fw_cat(g_out, ",", sizeof g_out);
+            fw_cat(g_out, "{\"title\":\"Connected by cable\",\"items\":[", sizeof g_out);
+            *any = 1;
         }
+        const fboard_t *b = board_for(d);
+        int known = fw_eq(d->id, g_fs.pid) && g_fs.chip_label[0];
+        char title[64], sub[128] = "", tags[120] = "";
+        if (b) fw_cpy(title, b->name, sizeof title);
+        else if (known) { fw_cpy(title, g_fs.chip_label, sizeof title); fw_cat(title, " board", sizeof title); }
+        else fw_cpy(title, d->native ? "ESP32 board" : "Board on a USB adapter", sizeof title);
+        if (known) {
+            char r[64];
+            runs_words(r, sizeof r);
+            fw_cpy(sub, "Runs ", sizeof sub);
+            fw_cat(sub, r, sizeof sub);
+            fw_cat(sub, runs_xprs() && !behind(g_fs.runs_version) ? ". Tap to reinstall"
+                      : runs_xprs() ? ". Tap to update" : ". Tap to install XPRS", sizeof sub);
+        } else {
+            fw_cpy(sub, "Tap to see what it is and install XPRS", sizeof sub);
+        }
+        tag(tags, sizeof tags, "", port_short(d->port));
         if (!d->permitted) tag(tags, sizeof tags, "", "asks first");
-        item(d->id, dev_title(d), sub, tags, 0, &first);
+        item_full(d->id, title, sub, tags, 0, b && b->photo[0] ? "" : "usb", b ? b->photo : "", &first);
     }
     if (!first) fw_cat(g_out, "]}", sizeof g_out);
-    fw_cat(g_out, "]}", sizeof g_out);
-    say(g_out);
 }
 
-/* The Device screen: Flash on top, the firmware chosen, what the chip said. */
+/* Nothing on the cable: say once, at the bottom, how a board gets here. */
+static void list_cable_help(int *any)
+{
+    if (g_fs.ndev) return;
+    int first = 1;
+    if (*any) fw_cat(g_out, ",", sizeof g_out);
+    *any = 1;
+    fw_cat(g_out, "{\"title\":\"Install XPRS on a new board\",\"items\":[", sizeof g_out);
+    if (g_fs.supported)
+        item_full("_cable", "Connect a board with a USB cable",
+                  "It shows up here. On a phone, use a USB OTG adapter.", "", 0, "usb", "", &first);
+    else
+        item_full("_cable", "This device cannot flash over USB",
+                  "Use a phone or a computer with a USB port.", "", 1, "usb", "", &first);
+    fw_cat(g_out, "]}", sizeof g_out);
+}
+
+/* Advanced options shown, settings erased on the next write, and the
+ * callsign chosen for the next board (its key, held in memory only and
+ * zeroed once it is sent or dropped). */
+static int  g_adv, g_wipe;
+
+/* What the Flash panel is called: the board, once it is known (it is
+ * reopened under that name when the probe says, g_flash_shown). */
+static const char *flash_title(void)
+{
+    const fboard_t *b = g_board[0] ? board_of(g_board) : 0;
+    if (!b && probed() && g_fs.suggested[0]) b = board_of(g_fs.suggested);
+    return b ? b->name : "Install XPRS";
+}
+
+/* The Flash panel: the board's picture, one line saying what happens next,
+ * a progress bar while it works, what is known about the board, and one
+ * button. Everything else is under Advanced options. */
 static void push_device(void)
 {
     if (!g_dev[0]) return;
     const fdev_t *d = dev_of(g_dev);
     int have = probed();
-    const char *chip = have ? g_fs.chip_label : "";
+    const fboard_t *b = g_board[0] ? board_of(g_board) : 0;
+    int mine = b && fw_eq(g_fs.board, g_board);
+    int fetching = mine && phase_is("fetching");
+    int writing = mine && (phase_is("writing") || phase_is("verifying"));
+    /* A finished download is what gets flashed, whatever version the
+     * catalogue names: the image's own manifest is the truth, and a catalogue
+     * a release left behind must not hide Install behind "Downloading". */
+    int ready = b && b->local[0] && !fetching;
     int nfit = 0;
     if (have) {
         for (const char *p = g_fs.likely; *p; p++) if (*p == ' ') nfit++;
         if (g_fs.likely[0]) nfit++;
     }
-    const fboard_t *b = g_board[0] ? board_of(g_board) : 0;
-    int ready = b && b->local[0] && fw_eq(b->local, b->version);
-    int mine = b && fw_eq(g_fs.board, g_board);
-    int fetching = mine && phase_is("fetching");
-    int writing = mine && (phase_is("writing") || phase_is("verifying"));
-    char prog[8] = "";
-    if (fetching || writing) frac_words(prog, sizeof prog);
 
-    /* The one line that says what to do next. */
     char now[220] = "";
     if (g_fs.busy) fw_cpy(now, g_fs.message, sizeof now);
     else if (g_fs.error[0]) fw_cpy(now, g_fs.error, sizeof now);
     else if (mine && phase_is("done")) fw_cpy(now, g_fs.message, sizeof now);
-    else if (!d) fw_cpy(now, "Unplugged. Plug it back in and tap it on the Flash tab.", sizeof now);
-    else if (!chip[0]) fw_cpy(now, "Not identified yet. Identify it from the menu, or choose the firmware yourself.", sizeof now);
-    else if (!b) fw_cpy(now, nfit > 1 ? "Several boards fit this chip. Tap Choose firmware and pick yours by its picture."
-                        : nfit == 1 ? "One board fits. Tap Choose firmware."
-                        : "No published firmware fits this chip. Choose one anyway, or check xprs.dev.", sizeof now);
-    else if (ready) { fw_cpy(now, b->name, sizeof now); fw_cat(now, " ", sizeof now); fw_cat(now, b->version, sizeof now); fw_cat(now, " is downloaded. Tap Flash.", sizeof now); }
-    else if (!b->flashable) { fw_cpy(now, b->name, sizeof now); fw_cat(now, " is not flashed over USB. Choose another.", sizeof now); }
-    else fw_cpy(now, "Downloading the firmware...", sizeof now);
-    one_line("dev_now", "Next", now);
+    else if (!d) fw_cpy(now, "Unplugged. Plug it back in to go on.", sizeof now);
+    else if (!have && !g_board[0]) fw_cpy(now, "Identifying the board...", sizeof now);
+    else if (!g_board[0] && !g_fs.chip[0])
+        fw_cpy(now, "Could not tell what board this is. Open Advanced options and choose it by its picture.", sizeof now);
+    else if (!b) fw_cpy(now, nfit > 1 ? "Several boards use this chip. Open Advanced options and choose yours by its picture."
+                        : "No XPRS firmware fits this chip yet.", sizeof now);
+    else if (!b->flashable) { fw_cpy(now, b->name, sizeof now); fw_cat(now, " is not installed over USB. Choose another board.", sizeof now); }
+    else if (ready) {
+        fw_cpy(now, !runs_xprs() ? "Ready to install XPRS " : behind(g_fs.runs_version) ? "Ready to update to " : "Ready to reinstall XPRS ", sizeof now);
+        fw_cat(now, b->local, sizeof now);
+        fw_cat(now, ". Keep the cable in until it says done.", sizeof now);
+    }
+    else { fw_cpy(now, "Downloading XPRS ", sizeof now); fw_cat(now, b->version, sizeof now); fw_cat(now, "...", sizeof now); }
+    one_line("dev_now", "Now", now);
+
+    {
+        const fboard_t *pic = b ? b : (have && g_fs.suggested[0]) ? board_of(g_fs.suggested) : 0;
+        field_set("fl_pic", pic ? pic->photo : "");
+        flag_hidden("fl_pic", !(pic && pic->photo[0]));
+    }
 
     tiles_begin("dev_hub");
-    {
-        char hint[64] = "";
-        if (b) {
-            if (b->version[0]) { fw_cpy(hint, "v", sizeof hint); fw_cat(hint, b->version, sizeof hint); }
-            if (ready) fw_cat(hint, ", downloaded", sizeof hint);
-            else if (fetching) fw_cpy(hint, "downloading", sizeof hint);
-        }
+    if (fetching || writing) {
+        char prog[8] = "", pc[8] = "", hint[64] = "";
+        frac_words(prog, sizeof prog);
+        unsigned p = g_fs.total ? (unsigned)(g_fs.done * 100 / g_fs.total) : 0;
+        fw_cat_u(pc, p > 100 ? 100 : p, sizeof pc);
         if (writing) {
             fw_cpy(hint, g_fs.part, sizeof hint);
-            if (g_fs.part_count) { fw_cat(hint, " ", sizeof hint); fw_cat_u(hint, g_fs.part_index, sizeof hint); fw_cat(hint, "/", sizeof hint); fw_cat_u(hint, g_fs.part_count, sizeof hint); }
+            if (g_fs.part_count) { fw_cat(hint, ", part ", sizeof hint); fw_cat_u(hint, g_fs.part_index, sizeof hint); fw_cat(hint, " of ", sizeof hint); fw_cat_u(hint, g_fs.part_count, sizeof hint); }
+        } else {
+            fw_cpy(hint, "XPRS ", sizeof hint); fw_cat(hint, b->version, sizeof hint);
         }
-        tile("fw", "Firmware", b ? b->name : "", "", b ? hint : "tap Choose firmware", prog, 0);
-    }
-    tile("chip", "Chip", chip, "", chip[0] ? "" : g_fs.busy ? "asking..." : "unknown", "", !chip[0] && !g_fs.busy && g_fs.error[0] != 0);
-    {
-        char mb[16] = "";
-        if (have && g_fs.flash_bytes) fw_cat_u(mb, (unsigned)(g_fs.flash_bytes / 1048576ULL), sizeof mb);
-        tile("flash", "Flash", mb, mb[0] ? "MB" : "", "", "", 0);
-    }
-    tile("runs", "Runs", have && g_fs.runs[0] ? g_fs.runs : chip[0] ? "nothing known" : "", "", have && g_fs.runs[0] ? g_fs.runs_version : "", "", 0);
-    {
-        const char *port = d ? d->port : "";
-        const char *p = fw_starts(port, "/dev/bus/usb/") ? port + 13 : fw_starts(port, "/dev/") ? port + 5 : port;
-        tile("port", "Port", d ? p : "unplugged", "", d ? dev_title(d) : "", "", !d);
+        tile("progress", fetching ? "Downloading" : phase_is("verifying") ? "Checking" : "Installing",
+             pc, "%", hint, prog, 0);
     }
     tiles_end();
+    flag_hidden("dev_hub", !(fetching || writing));
+
+    det_begin("fl_info");
+    det_section("");
+    {
+        const fboard_t *bb = b ? b : (have && g_fs.suggested[0]) ? board_of(g_fs.suggested) : 0;
+        det_row("Board", bb ? bb->name : "not chosen yet");
+    }
+    if (have && g_fs.chip_label[0]) {
+        char c[48];
+        fw_cpy(c, g_fs.chip_label, sizeof c);
+        if (g_fs.flash_bytes) { fw_cat(c, ", ", sizeof c); fw_cat_u(c, (unsigned)(g_fs.flash_bytes / 1048576ULL), sizeof c); fw_cat(c, " MB", sizeof c); }
+        det_row("Chip", c);
+        char r[64];
+        runs_words(r, sizeof r);
+        det_row("Runs now", r);
+    } else {
+        det_row("Chip", g_fs.busy && phase_is("probing") ? "asking it..." : "not identified");
+    }
+    if (b && b->flashable) {
+        char v[64] = "XPRS ";
+        fw_cat(v, ready ? b->local : b->version, sizeof v);
+        fw_cat(v, ready ? ", downloaded" : fetching ? ", downloading" : "", sizeof v);
+        det_row("Installs", v);
+    }
+    det_row("Callsign", g_want_call[0] ? g_want_call
+                      : !(have && g_fs.chip[0]) ? ""
+                      : (g_wipe || !runs_xprs()) ? "a new one, made by the board" : "kept");
+    det_row("Settings", g_wipe ? "erased: key, owner and WiFi" : "kept");
+    {
+        const char *port = d ? port_short(d->port) : "unplugged";
+        det_row("Cable", port);
+    }
+    det_end();
 
     flag_hidden("flash_write", g_fs.busy || !ready || !d || !b->flashable);
+    if (ready) {
+        char l[48];
+        fw_cpy(l, !runs_xprs() ? "Install XPRS " : behind(g_fs.runs_version) ? "Update to " : "Reinstall XPRS ", sizeof l);
+        fw_cat(l, b->local, sizeof l);
+        field_set("flash_write__label", l);
+    }
+    flag_hidden("flash_cancel", !g_fs.busy);
     flag_hidden("flash_choose", g_fs.busy);
     flag_hidden("flash_identify", g_fs.busy || !d);
-    flag_hidden("flash_cancel", !g_fs.busy);
+    flag_hidden("fl_advanced", !g_adv);
+    flag_hidden("fl_callsign_clear", !g_want_call[0]);
+    /* Named after the board once the probe says what it is. */
+    if (fw_eq(g_screen, "Flash") && !fw_eq(g_flash_shown, flash_title())) screen_open("Flash", flash_title());
 }
 
 /* The Firmware screen: every published board with its picture, the ones
@@ -1688,7 +2037,7 @@ static void push_pick(void)
             board_words(b, sub, sizeof sub);
             if (have && fw_eq(b->id, g_fs.suggested)) tag(tags, sizeof tags, "", "best match");
             if (fw_eq(b->id, g_board)) tag(tags, sizeof tags, "", "chosen");
-            tag(tags, sizeof tags, "downloaded ", b->local);
+            if (b->local[0]) tag(tags, sizeof tags, "", "downloaded");
             if (!b->flashable) tag(tags, sizeof tags, "", "not over USB");
             if (!first) fw_cat(g_out, ",", sizeof g_out);
             first = 0;
@@ -1706,23 +2055,61 @@ static void push_pick(void)
     say(g_out);
 }
 
+/* The list changes when the cable or what is known about it does, not on
+ * every progress post (ten a second while writing): a key of what the
+ * cable rows show, compared before the list is drawn again. */
+static char g_cable_key[160];
+
 static void push_flash_all(void)
 {
-    push_flash();
+    char k[160] = "";
+    fw_cat(k, g_fs.phase, sizeof k);
+    fw_cat_u(k, (unsigned)g_fs.ndev, sizeof k);
+    for (int i = 0; i < g_fs.ndev; i++) fw_cat(k, port_short(g_fs.dev[i].port), sizeof k);
+    fw_cat(k, g_fs.pid, sizeof k);
+    fw_cat(k, g_fs.suggested, sizeof k);
+    fw_cat(k, g_board, sizeof k);
+    fw_cat(k, g_fs.runs_version, sizeof k);
+    fw_cat(k, g_latest, sizeof k);
+    if (!fw_eq(k, g_cable_key)) { fw_cpy(g_cable_key, k, sizeof g_cable_key); push_list(); }
     push_device();
     push_pick();
 }
 
-/* Choose [id] for g_dev and get it, once. */
-static void choose(const char *id)
+/* Choose [id] for g_dev and get it, once. 1 when a download was asked. */
+static int choose(const char *id)
 {
     fw_cpy(g_board, id, sizeof g_board);
     const fboard_t *b = board_of(id);
-    if (!b) return;
+    if (!b) return 0;
     if (b->flashable && !(b->local[0] && fw_eq(b->local, b->version)) && !g_fs.busy && !fw_eq(g_fetched, id)) {
-        fw_cpy(g_fetched, id, sizeof g_fetched);
-        hal_flash_fetch(g_board, fw_len(g_board));
+        /* Only once the core took it: one asked while a probe ran is asked
+         * again when the core is free (on_flash). */
+        if (hal_flash_fetch(g_board, fw_len(g_board))) { fw_cpy(g_fetched, id, sizeof g_fetched); return 1; }
     }
+    return 0;
+}
+
+/* Keep every published firmware on this device while the page is open:
+ * they are small (1 to 2 MB), and a board plugged in later flashes at once,
+ * with or without a network then. One download at a time, each board asked
+ * for once a session, so a failing one is not asked again in a loop. */
+static char g_tried[16][24];
+static int  g_ntried, g_prefetch;
+
+static int prefetch(void)
+{
+    if (!g_prefetch || g_fs.busy) return 0;
+    for (int i = 0; i < g_fs.nbrd; i++) {
+        const fboard_t *b = &g_fs.brd[i];
+        if (!b->flashable || (b->local[0] && fw_ver_cmp(b->local, b->version) >= 0)) continue;
+        int seen = 0;
+        for (int j = 0; j < g_ntried; j++) if (fw_eq(g_tried[j], b->id)) seen = 1;
+        if (seen || g_ntried >= 16) continue;
+        fw_cpy(g_tried[g_ntried++], b->id, sizeof g_tried[0]);
+        if (hal_flash_fetch(b->id, fw_len(b->id))) return 1;
+    }
+    return 0;
 }
 
 /* A board the core just made ours over the cable (XPRS.md 11.9): on the
@@ -1730,14 +2117,21 @@ static void choose(const char *id)
  * would only turn up when discover() heard it, and a board with no WiFi yet
  * is not heard by a desktop at all. Its key comes from the core once it is
  * heard (key_from_core); the policy ask confirms what the cable set. Once
- * per claim: the core numbers them. */
+ * per claim: the core numbers them. When a callsign was chosen for it, its
+ * key follows as soon as the station is heard (give_key). */
 static unsigned g_claim_seen;
 
 static void on_claim(void)
 {
     if (!g_fs.claim_seq || g_fs.claim_seq == g_claim_seen) return;
     g_claim_seen = g_fs.claim_seq;
-    if (!g_fs.claim_ok || !g_fs.claim_station[0]) return;
+    if (!g_fs.claim_ok || !g_fs.claim_station[0]) {
+        if (g_want_nsec[0]) {
+            log_line("", "Not made yours over the cable, so its callsign was not set. Claim it, then choose one on its Callsign screen.");
+            forget_wanted();
+        }
+        return;
+    }
     int i = add(g_fs.claim_station);
     if (i < 0) return;
     st_t *s = &g_st[i];
@@ -1746,22 +2140,60 @@ static void on_claim(void)
     key_from_core(s, host_facts(s));
     set_now(s, "Yours");
     log_line(s->call, "Made yours over the USB cable");
+    {
+        /* When this device installed it, for "Installed 3 days ago". */
+        char k[24] = "fl.", v[48] = "";
+        const fboard_t *b = board_of(g_fs.board);
+        fw_cat(k, s->call, sizeof k);
+        fw_cat_u(v, hal_time_epoch(), sizeof v);
+        fw_cat(v, "|", sizeof v);
+        if (b) fw_cat(v, b->local, sizeof v);
+        kv_put(k, v);
+        if (b && b->local[0]) fw_cpy(s->fw, b->local, sizeof s->fw);
+    }
+    if (g_want_nsec[0]) { fw_cpy(g_key_for, s->call, sizeof g_key_for); listen(); give_key(); }
     save();
-    /* The Stations tab shows it under Yours now, not "Tap to claim it". */
+    /* The list shows it under Your stations now, not "Tap to claim it". */
     push_list();
     if (g_sel == i) push_hub();
 }
 
-/* The core moved: after a probe with one clear match, choose and fetch it. */
+/* The core moved: after a probe with one clear match, choose and fetch it;
+ * otherwise, while nothing else runs, fetch the next published firmware. */
 static void on_flash(void)
 {
     flash_read();
     on_claim();
+    int asked = 0;
     if (g_dev[0] && !g_board[0] && !g_fs.busy && probed() && g_fs.suggested[0]) {
-        choose(g_fs.suggested);
+        asked = choose(g_fs.suggested);
+        flash_read();
+    } else if (g_board[0] && !g_fs.busy && !fw_eq(g_fetched, g_board)) {
+        /* Chosen while the core was busy: get it now. */
+        asked = choose(g_board);
         flash_read();
     }
+    if (!asked && prefetch()) flash_read();
+    give_key();
     push_flash_all();
+}
+
+/* Opening a board on the cable is asking what it is: the board goes into
+ * its loader for a moment and restarts. Not while something else is
+ * running, and not again for one that answered: a second tap asks again
+ * only after a probe that failed. */
+static void open_usb(const char *id)
+{
+    if (!fw_eq(id, g_dev)) { g_board[0] = 0; g_fetched[0] = 0; }
+    fw_cpy(g_dev, id, sizeof g_dev);
+    flash_read();
+    if (!g_fs.busy && (!probed() || !g_fs.chip[0] || g_fs.error[0]))
+        hal_flash_probe(g_dev, fw_len(g_dev));
+    else if (!g_fs.busy && !g_board[0] && g_fs.suggested[0])
+        choose(g_fs.suggested);         /* identified on an earlier visit */
+    flash_read();
+    push_device();
+    screen_open("Flash", flash_title());
 }
 
 static void on_flash_command(const char *cmd)
@@ -1772,25 +2204,12 @@ static void on_flash_command(const char *cmd)
     } else if (fw_eq(cmd, "flash_tap")) {
         char id[70] = "";
         fields("flash_id", id, sizeof id);
-        if (!id[0]) return;
-        if (!fw_eq(id, g_dev)) { g_board[0] = 0; g_fetched[0] = 0; }
-        fw_cpy(g_dev, id, sizeof g_dev);
-        flash_read();
-        const fdev_t *d = dev_of(g_dev);
-        /* Opening a device is asking what it is: the board goes into its
-         * loader for a moment and restarts. Not while something else is
-         * running, and not again for one that answered: a second tap asks
-         * again only after a probe that failed. */
-        if (!g_fs.busy && (!probed() || !g_fs.chip[0] || g_fs.error[0]))
-            hal_flash_probe(g_dev, fw_len(g_dev));
-        flash_read();
-        push_device();
-        screen_open("Device", d ? dev_title(d) : g_dev);
+        if (id[0]) open_usb(id);
         return;
     } else if (fw_eq(cmd, "flash_choose")) {
         flash_read();
         push_pick();
-        screen_open("Firmware", "Choose the firmware");
+        screen_open("Firmware", "Choose the board");
         return;
     } else if (fw_eq(cmd, "flash_pick_tap")) {
         char id[24] = "";
@@ -1799,25 +2218,55 @@ static void on_flash_command(const char *cmd)
         flash_read();
         g_fetched[0] = 0;
         choose(id);
-        say("{\"type\":\"ui.screen.close\"}");
+        flash_read();
+        push_flash_all();
+        /* Back to the board it was chosen for. */
+        screen_open("Flash", flash_title());
+        return;
     } else if (fw_eq(cmd, "flash_identify")) {
-        if (!g_dev[0]) log_line("", "Pick a board on the Flash tab first");
+        if (!g_dev[0]) log_line("", "Pick a board on the cable first");
         else if (!hal_flash_probe(g_dev, fw_len(g_dev))) log_line("", "Busy, wait for it to finish");
     } else if (fw_eq(cmd, "flash_write")) {
-        char w[8] = "";
-        fields("wipe", w, sizeof w);
-        if (!g_board[0]) log_line("", "Choose the firmware first");
-        else if (!g_dev[0]) log_line("", "Pick a board on the Flash tab first");
-        else if (!hal_flash_write(g_dev, fw_len(g_dev), g_board, fw_len(g_board), fw_eq(w, "true")))
+        if (!g_board[0]) log_line("", "Choose the board first");
+        else if (!g_dev[0]) log_line("", "Pick a board on the cable first");
+        else if (!hal_flash_write(g_dev, fw_len(g_dev), g_board, fw_len(g_board), g_wipe))
             log_line("", "Not now: busy, or not downloaded yet");
         else {
             char l[120] = "Writing ";
             fw_cat(l, g_board, sizeof l); fw_cat(l, " to ", sizeof l); fw_cat(l, g_dev, sizeof l);
-            if (fw_eq(w, "true")) fw_cat(l, ", settings wiped", sizeof l);
+            if (g_wipe) fw_cat(l, ", settings wiped", sizeof l);
             log_line("", l);
         }
     } else if (fw_eq(cmd, "flash_cancel")) {
         hal_flash_cancel();
+    } else if (fw_eq(cmd, "fl_adv")) {
+        char v[8] = "";
+        fields("fl_adv", v, sizeof v);
+        g_adv = fw_eq(v, "true");
+    } else if (fw_eq(cmd, "fl_wipe")) {
+        char v[8] = "";
+        fields("wipe", v, sizeof v);
+        g_wipe = fw_eq(v, "true");
+    } else if (fw_eq(cmd, "fl_callsign")) {
+        /* The app's own search screen, on its own thread: a station's
+         * callsign is X3 and the four characters its key starts with. */
+        say("{\"type\":\"ui.callsign.pick\",\"field\":\"vanity\",\"prefix\":\"X3\",\"length\":4}");
+        return;
+    } else if (fw_eq(cmd, "fl_callsign_clear")) {
+        forget_wanted();
+    } else if (fw_eq(cmd, "vanity_picked")) {
+        char c[16] = "", n[72] = "";
+        fields("vanity_call", c, sizeof c);
+        fields("vanity_nsec", n, sizeof n);
+        if (fw_starts(c, "X3") && fw_starts(n, "nsec1") && fw_len(n) == 63) {
+            forget_wanted();
+            fw_cpy(g_want_call, c, sizeof g_want_call);
+            fw_cpy(g_want_nsec, n, sizeof g_want_nsec);
+            char l[64] = "The next board flashed here becomes ";
+            fw_cat(l, c, sizeof l);
+            log_line("", l);
+        }
+        for (unsigned i = 0; n[i]; i++) n[i] = 0;
     }
     flash_read();
     push_flash_all();
@@ -1852,27 +2301,63 @@ static int fields(const char *key, char *out, unsigned cap)
     return fw_json(g_buf, key, out, cap);
 }
 
+static void fresh_visit(void);
+
 static void on_command(void)
 {
     char cmd[40] = "";
     if (!fw_json(g_buf, "command", cmd, sizeof cmd)) return;
     if (fw_eq(cmd, "ready") || fw_eq(cmd, "refresh")) {
         who_am_i();
+        if (fw_eq(cmd, "ready")) fresh_visit();
+        /* Look again: ask what is on the local network to say who it is
+         * now (rate-limited by the core), and read what has been heard. */
+        if (fw_eq(cmd, "refresh")) hal_xprs_discover();
         discover();
-        push_list();
-        if (g_sel >= 0) push_hub();
         /* The page is open: look at the cable (sysfs, or the USB host
          * list) and at the catalogue when it is stale. Cheap, and no
-         * network unless the catalogue is over an hour old. */
+         * network unless the catalogue is over an hour old. Then keep the
+         * published firmwares here, one after the other. */
         sub(&g_sub_flash, 1, "core.flash");
         hal_flash_scan();
         flash_read();
+        g_prefetch = 1;
+        if (prefetch()) flash_read();
+        give_key();
+        g_cable_key[0] = 0;              /* draw the list whatever changed */
         push_flash_all();
+        if (g_sel >= 0) push_hub();
         return;
     }
-    if (fw_eq(cmd, "stations_tap")) {
-        char id[16];
-        if (!fields("stations_id", id, sizeof id)) return;
+    if (fw_eq(cmd, "screen_closed")) {
+        /* The back arrow or the back gesture closed a panel: step back to
+         * the one it was opened from, not all the way to the list. */
+        char was[16];
+        fw_cpy(was, g_screen, sizeof was);
+        g_screen[0] = 0;
+        if ((fw_eq(was, "WiFi") || fw_eq(was, "Settings") || fw_eq(was, "Callsign") ||
+             fw_eq(was, "Statistics") || fw_eq(was, "History")) && g_sel >= 0 && g_sel < g_nst) {
+            push_hub();
+            screen_open("Station", g_st[g_sel].nick[0] ? g_st[g_sel].nick : g_st[g_sel].call);
+        } else if (fw_eq(was, "Firmware") && g_dev[0]) {
+            push_device();
+            screen_open("Flash", flash_title());
+        }
+        return;
+    }
+    if (fw_eq(cmd, "devices_tap")) {
+        char id[70];
+        if (!fields("devices_id", id, sizeof id)) return;
+        if (fw_eq(id, "_cable")) {
+            /* The help row: look at the cable again. */
+            sub(&g_sub_flash, 1, "core.flash");
+            if (!hal_flash_scan()) log_line("", "No USB here");
+            flash_read();
+            push_flash_all();
+            return;
+        }
+        flash_read();
+        if (dev_of(id)) { sub(&g_sub_flash, 1, "core.flash"); open_usb(id); return; }
         g_sel = find(id);
         if (g_sel < 0) return;
         st_t *st = &g_st[g_sel];
@@ -1888,7 +2373,10 @@ static void on_command(void)
     }
     if (fw_eq(cmd, "back")) { say("{\"type\":\"ui.screen.close\"}"); return; }
     if (fw_eq(cmd, "log_clear")) { say("{\"type\":\"ui.log.clear\",\"field\":\"log\"}"); return; }
-    if (fw_starts(cmd, "flash_")) { on_flash_command(cmd); return; }
+    if (fw_starts(cmd, "flash_") || fw_starts(cmd, "fl_") || fw_eq(cmd, "vanity_picked")) {
+        on_flash_command(cmd);
+        return;
+    }
 
     st_t *s = selected();
     if (!s) return;
@@ -1907,7 +2395,7 @@ static void on_command(void)
         field_set("lora", "same");
         /* A station reports lora: only when it has a radio (11.10). */
         flag_hidden("lora", !s->lora[0]);
-        screen_open("Name", s->call);
+        screen_open("Settings", s->call);
         return;
     }
     if (fw_eq(cmd, "open_identity")) {
@@ -1917,7 +2405,7 @@ static void on_command(void)
         int issued = !self_generated(s->call);
         field_set("call", issued ? s->call : "");
         flag_hidden("call_derived", !issued);
-        screen_open("Identity", s->call);
+        screen_open("Callsign", s->call);
         return;
     }
     if (fw_eq(cmd, "open_stats")) {
@@ -1930,10 +2418,10 @@ static void on_command(void)
             s->asking = 1;
         }
         push_stats();
-        screen_open("Stats", s->call);
+        screen_open("Statistics", s->call);
         return;
     }
-    if (fw_eq(cmd, "open_answers")) { screen_open("Answers", s->call); return; }
+    if (fw_eq(cmd, "open_answers")) { screen_open("History", s->call); return; }
     if (fw_eq(cmd, "forget")) {
         char was[12];
         fw_cpy(was, s->call, sizeof was);
@@ -1954,8 +2442,43 @@ static void on_command(void)
     if (s->pend_id[0] && !s->pend_final) { log_line(s->call, "Still waiting for its last answer"); return; }
     if (s->pend_id[0]) done_pending(s);
 
+    if (fw_eq(cmd, "pick_callsign")) {
+        if (!s->mine) { log_line(s->call, "Claim it first"); return; }
+        say("{\"type\":\"ui.callsign.pick\",\"field\":\"rekey\",\"prefix\":\"X3\",\"length\":4}");
+        return;
+    }
     if (fw_eq(cmd, "claim")) {
         do_claim(s);
+    } else if (fw_eq(cmd, "update")) {
+        /* 11.8: install the newest published version. The station checks
+         * the image's signature itself; a 202 now, a 200 or a 500 after it
+         * restarted. */
+        char fw[24];
+        fw_of(s, host_facts(s), fw, sizeof fw);
+        if (!s->mine) log_line(s->call, "Only its owner can update it");
+        else if (!g_latest[0]) log_line(s->call, "No published firmware known yet: look again in a moment");
+        else if (!behind(fw)) log_line(s->call, "It already runs the newest firmware");
+        else {
+            char c[40] = "cmd:update ver:";
+            fw_cat(c, g_latest, sizeof c);
+            do_cmd(s, c, "update");
+        }
+    } else if (fw_eq(cmd, "rekey_picked")) {
+        char c[16] = "", nsec[72] = "";
+        fields("rekey_call", c, sizeof c);
+        fields("rekey_nsec", nsec, sizeof nsec);
+        if (!s->mine) log_line(s->call, "Claim it first");
+        else if (!fw_starts(nsec, "nsec1") || fw_len(nsec) != 63) log_line(s->call, "That is not a key");
+        else {
+            char body[96], line[64] = "Giving it the callsign ";
+            fw_cat(line, c, sizeof line);
+            const char *kv[] = { "nsec", nsec, 0 };
+            if (fw_body(body, sizeof body, kv) > 0 && send_sealed(s, body, "key") == 0) {
+                log_line(s->call, line);
+                set_now(s, line);
+            }
+        }
+        for (unsigned i = 0; nsec[i]; i++) nsec[i] = 0;
     } else if (fw_eq(cmd, "wifi_apply")) {
         char ssid[40] = "", pass[72] = "";
         fields("ssid", ssid, sizeof ssid);
@@ -2069,6 +2592,17 @@ static void on_command(void)
 }
 
 /* ── Entry points ─────────────────────────────────────────────────────── */
+/* A page in front of a person. The host remembers switches between visits:
+ * both start off again, so Erase never carries over to the next board and
+ * Advanced options are folded away until asked for. */
+static void fresh_visit(void)
+{
+    g_adv = 0;
+    g_wipe = 0;
+    say("{\"type\":\"ui.field.set\",\"field\":\"wipe\",\"value\":false}");
+    say("{\"type\":\"ui.field.set\",\"field\":\"fl_adv\",\"value\":false}");
+}
+
 int32_t module_init(void)
 {
     /* The one thing an idle phone listens for: a station asking to be
@@ -2081,8 +2615,15 @@ int32_t module_init(void)
     /* A page in front of a person: look at the cable now (sysfs, or the
      * USB host list) and at the catalogue when it is stale. The background
      * engine on an idle phone only reads what the core already knows. */
-    if (hal_ui_attached()) { sub(&g_sub_flash, 1, "core.flash"); hal_flash_scan(); }
+    if (hal_ui_attached()) {
+        sub(&g_sub_flash, 1, "core.flash");
+        hal_flash_scan();
+        fresh_visit();
+        /* And keep the published firmwares here while it is open. */
+        g_prefetch = 1;
+    }
     flash_read();
+    if (prefetch()) flash_read();
     push_flash_all();
     return 0;
 }

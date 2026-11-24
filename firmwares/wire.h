@@ -66,6 +66,13 @@ int fw_ask(char *out, unsigned cap, const char *me, const char *station,
  * holds a newline, which the line format cannot carry. */
 int fw_body(char *out, unsigned cap, const char *const *kv);
 
+/* Order two firmware versions: <0 when [a] is older than [b], 0 equal, >0
+ * newer. Dotted numbers compare as numbers (0.10.0 is after 0.9.1), and a
+ * pre-release ranks below its release (0.6.0-beta.9 < 0.6.0); two
+ * pre-releases of one version compare by their last number. An empty
+ * version is older than any other. */
+int fw_ver_cmp(const char *a, const char *b);
+
 /* ── JSON, the little of it the host speaks ───────────────────────────── */
 /* Append [s] escaped for a JSON string. */
 void fw_jesc(char *d, const char *s, unsigned cap);

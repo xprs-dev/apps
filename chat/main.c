@@ -2725,7 +2725,7 @@ void module_handle_event(void) {
     s_cpy(pm, "{\"type\":\"ui.prompt\",\"id\":\"xgnew:\",\"title\":\"", sizeof(pm));
     jesc(pm, sizeof(pm), wtr("prompt.newgroup_title", "New group"));
     s_cat(pm, "\",\"body\":\"", sizeof(pm));
-    jesc(pm, sizeof(pm), wtr("prompt.newgroup_body", "Public: anyone can read it; only members post, and people ask to join. Private: only members read it, sealed. The name is a label; turn the arrows for another callsign."));
+    jesc(pm, sizeof(pm), wtr("prompt.newgroup_body", "Public: anyone can read it; only members post, and people ask to join. Private: only members read it, sealed. The name is a label; turn the arrows for another callsign, or search for letters you like."));
     s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
     jesc(pm, sizeof(pm), wtr("prompt.create", "Create"));
     s_cat(pm, "\",\"toggle\":{\"label\":\"", sizeof(pm));
@@ -2743,7 +2743,10 @@ void module_handle_event(void) {
       jesc(pm, sizeof(pm), wtr("prompt.group_call_next", "Another callsign"));
       s_cat(pm, "\",\"back\":\"", sizeof(pm));
       jesc(pm, sizeof(pm), wtr("prompt.group_call_back", "The previous one"));
-      s_cat(pm, "\",\"more\":true,\"values\":[", sizeof(pm));
+      /* search: the app's callsign picker beside the arrows, for letters
+       * the person likes; its keys come from the same core pool, so the
+       * one chosen is created like any other offered here. */
+      s_cat(pm, "\",\"more\":true,\"search\":\"X5\",\"values\":[", sizeof(pm));
       s_cat(pm, vals, sizeof(pm));
       s_cat(pm, "]}", sizeof(pm));
     }

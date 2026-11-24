@@ -59,7 +59,7 @@
   "prompt.reveal_body": "Saisissez la phrase secrète pour révéler ce message.",
   "prompt.reveal": "Révéler",
   "prompt.newgroup_title": "Nouveau groupe",
-  "prompt.newgroup_body": "Public : tout le monde peut le lire ; seuls les membres écrivent et les autres demandent à rejoindre. Privé : seuls les membres le lisent, scellé. Le nom est une étiquette ; tournez les flèches pour un autre indicatif.",
+  "prompt.newgroup_body": "Public : tout le monde peut le lire ; seuls les membres écrivent et les autres demandent à rejoindre. Privé : seuls les membres le lisent, scellé. Le nom est une étiquette ; tournez les flèches pour un autre indicatif, ou cherchez les lettres qui vous plaisent.",
   "prompt.create": "Créer",
   "prompt.group_call": "Indicatif",
   "prompt.group_call_next": "Un autre indicatif",

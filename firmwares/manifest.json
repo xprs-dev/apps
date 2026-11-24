@@ -1,10 +1,10 @@
 {
   "id":              "tools.xprs.firmwares",
-  "version":         "0.3.19",
+  "version":         "0.4.0",
   "kind":            "app",
   "title":           "Firmwares",
-  "description":     "Flash an XPRS board over USB and set it up.",
-  "summary":         "Plug a board in over USB. On a phone this needs an OTG cable. The app picks the right XPRS firmware and downloads it from xprs.dev. It then writes it to the board and checks the result. A board flashed here is made yours over the same cable before it asks anybody. A station flashed elsewhere asks over Bluetooth to be claimed, and the app claims it for you. Then it puts it on your WiFi. The WiFi password is sealed to the board's key so nobody nearby can read it. You can give the station a name and a time zone. You can also see its firmware version and uptime and memory. Boards without Bluetooth are set up through their own WiFi hotspot.",
+  "description":     "Install XPRS on a board, set it up and keep it updated.",
+  "summary":         "Plug a board into this phone or computer with a USB cable (a phone needs a USB OTG adapter). The app recognises the board, keeps the published XPRS firmwares on this device, installs the right one and checks it. A board flashed here is made yours over the same cable, and can get a callsign you choose. Stations nearby on WiFi or Bluetooth are listed too: see what firmware they run and how long, update yours over the air, put them on your WiFi, name them and read how they are doing. The WiFi password is sealed to the station's key.",
   "icon":            "media/icons/firmwares.svg",
   "color":           "#37474F",
   "tags":            ["xprs", "station", "firmware", "setup", "esp32"],

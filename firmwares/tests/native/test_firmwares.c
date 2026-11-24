@@ -135,10 +135,10 @@ static void test_a_callsign_is_its_key(void)
 static void test_claim(void)
 {
     char tap[200];
-    snprintf(tap, sizeof tap, "{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"%s\"}}", ST);
+    snprintf(tap, sizeof tap, "{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"%s\"}}", ST);
     command(tap);
     CHECK(cap_count("\"ui.screen.open\",\"name\":\"Station\"") == 1, "the Station screen opens");
-    CHECK(cap_last("\"field\":\"hub\"") != 0, "with the station's tiles in it");
+    CHECK(cap_last("\"field\":\"info\"") != 0, "with what is known about it, as rows");
     CHECK(cap_count("\"field\":\"claim__hidden\",\"value\":false") == 1, "Claim shows while nobody owns it");
     CHECK(cap_count("\"field\":\"open_wifi__hidden\",\"value\":true") == 1, "and WiFi does not");
 
@@ -160,7 +160,7 @@ static void test_claim(void)
     CHECK(cap_count("Claimed.") == 0, "an answer nobody can check is not believed");
     result(ST, id, "code:200 owner:X1ME77 use:all first:none serve:archive");
     CHECK(cap_count("Claimed.") == 1, "the person is told it is theirs");
-    CHECK(cap_last("\"title\":\"Yours\"") != 0, "and it moves to Yours");
+    CHECK(cap_last("\"title\":\"Your stations\"") != 0, "and it moves to Your stations");
     CHECK(cap_count("\"field\":\"claim__hidden\",\"value\":true") >= 1, "Claim goes");
     CHECK(cap_count("\"field\":\"open_wifi__hidden\",\"value\":false") >= 1, "WiFi, Name and Identity come");
     CHECK(!subscribed("xprs.result") && !subscribed("xprs.status.tx"), "and stops listening");
@@ -494,7 +494,7 @@ static void test_stats_from_the_core(void)
     CHECK(st && strstr(st, "\"label\":\"Lanes\",\"value\":\"2\",\"hint\":\"ble, lan\""), "every bearer it came in on");
     CHECK(cap_last("\"field\":\"st_hears\"") && strstr(cap_last("\"field\":\"st_hears\""), "X1WATT, X3MEAV"),
           "who it hears");
-    CHECK(cap_count("\"ui.screen.open\",\"name\":\"Stats\"") == 1, "the Stats screen opens");
+    CHECK(cap_count("\"ui.screen.open\",\"name\":\"Statistics\"") == 1, "the Statistics screen opens");
     {   /* close the open's zdiag so Refresh may send */
         char id[7]; last_id(id);
         result(g_st[g_sel].call, id, "code:200 fw:0.4.0 uptime:26h peers:4 zr:sw zm:60/40/30 zh:3/3 zn:0/0/0/0 zs:0/0/0 zp:ota_1/1");
@@ -536,21 +536,21 @@ static void test_somebody_elses_station(void)
     snprintf(mine, sizeof mine, "%s", g_st[g_sel].call);   /* renamed by the rekeys above */
     ask_owner("verified", "X3XYZ1", "npub1xyz1qpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jnqp");
     char tap[200];
-    snprintf(tap, sizeof tap, "{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"X3XYZ1\"}}");
+    snprintf(tap, sizeof tap, "{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"X3XYZ1\"}}");
     int aired = g_aired_n;
     command(tap);
     CHECK(g_aired_n == aired + 2 && strstr(g_aired[aired], " q:policy"), "opening it asks whose it is");
     g_station_json[0] = 0;
     deliver("xprs.observation", row_to("observation", "X3XYZ1", "verified", 1,
             "t:observation f:X3XYZ1 d:X1ME77 s:policy owner:X1OTHER use:listed first:none serve:relay ts:2026-09-10_12:06:00 sig:KKKK"));
-    CHECK(cap_last("\"title\":\"Others\"") != 0, "listed under Others");
+    CHECK(cap_last("\"title\":\"Other stations nearby\"") != 0, "listed under Other stations nearby");
     CHECK(cap_count("Somebody else's") >= 1, "and the Now line says so");
     CHECK(cap_count("\"field\":\"claim__hidden\",\"value\":true") >= 1, "no Claim");
     CHECK(cap_count("\"field\":\"open_wifi__hidden\",\"value\":true") >= 1, "no WiFi");
     command("{\"command\":\"forget\",\"fields\":{}}");
     CHECK(find("X3XYZ1") < 0, "forgotten on request");
     CHECK(cap_count("\"type\":\"ui.screen.close\"") >= 1, "and its screen closes");
-    snprintf(tap, sizeof tap, "{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"%s\"}}", mine);
+    snprintf(tap, sizeof tap, "{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"%s\"}}", mine);
     command(tap);
     CHECK(g_sel >= 0 && strcmp(g_st[g_sel].call, mine) == 0, "back to our own station");
 }
@@ -642,15 +642,13 @@ static void test_flash_tab_lists_the_cable(void)
     module_handle_event();
     CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "scan"), "Refresh asks the core to scan");
     CHECK(subscribed("core.flash"), "and listens for what it finds");
-    const char *tiles = cap_last("\"field\":\"flash_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Plugged in\",\"value\":\"2\",\"hint\":\"tap one\""), "two ports counted: %s", tiles ? tiles : "");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Firmwares\",\"value\":\"3\""), "three firmwares counted");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Status\",\"value\":\"ready\""), "and it stands ready");
-    const char *list = cap_last("\"field\":\"flash\",");
-    CHECK(list && strstr(list, "\"title\":\"Plugged in\""), "a section for the cable");
-    CHECK(list && strstr(list, "\"id\":\"/dev/ttyACM1\",\"title\":\"USB JTAG/serial debug unit\",\"subtitle\":\"/dev/ttyACM1, native USB. Tap to identify\""), "a device row says what to do: %s", list ? list : "");
-    CHECK(list && strstr(list, "\"asks first\""), "a device without permission says so");
-    CHECK(list && !strstr(list, "T-Deck"), "the tab lists boards on the cable, not the catalogue");
+    const char *list = cap_last("\"field\":\"devices\"");
+    CHECK(list && strstr(list, "{\"title\":\"Connected by cable\",\"items\":[{\"id\":\"/dev/ttyACM1\""), "the cable leads the one list: %s", list ? list : "");
+    CHECK(list && strstr(list, "\"id\":\"/dev/ttyACM1\",\"title\":\"ESP32 board\",\"subtitle\":\"Tap to see what it is and install XPRS\",\"tags\":[\"ttyACM1\"],\"icon\":\"usb\""),
+          "a board on the cable says what it is and what a tap does: %s", list ? list : "");
+    CHECK(list && strstr(list, "\"title\":\"Board on a USB adapter\"") && strstr(list, "\"asks first\""), "a board behind an adapter, which asks first, says so");
+    CHECK(list && !strstr(list, "T-Deck"), "the list shows boards on the cable, not the catalogue");
+    CHECK(list && !strstr(list, "Install XPRS on a new board"), "no how-to row while a board is plugged in");
 }
 
 static void test_device_is_identified_and_the_match_is_chosen(void)
@@ -658,15 +656,16 @@ static void test_device_is_identified_and_the_match_is_chosen(void)
     cap_clear();
     g_flash_calln = 0;
     flash_state(FLASH_IDLE);
-    inbox_set("{\"command\":\"flash_tap\",\"fields\":{\"flash_id\":\"/dev/ttyACM1\"}}");
+    inbox_set("{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"/dev/ttyACM1\"}}");
     module_handle_event();
     const char *open = cap_last("ui.screen.open");
-    CHECK(open && strstr(open, "\"name\":\"Device\"") && strstr(open, "USB JTAG/serial debug unit"), "tapping a device opens it by name");
+    CHECK(open && strstr(open, "\"name\":\"Flash\"") && strstr(open, "Install XPRS"), "tapping a board opens the Flash panel: %s", open ? open : "");
     CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "probe /dev/ttyACM1"), "opening a device identifies it: %s", g_flash_calls[0]);
     const char *now = cap_last("\"field\":\"dev_now\"");
-    CHECK(now && strstr(now, "Not identified yet"), "the Next line says so: %s", now ? now : "");
+    CHECK(now && strstr(now, "Identifying the board"), "the Now line says so: %s", now ? now : "");
     CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":true"), "Flash hidden until there is a firmware");
-    CHECK(cap_last("\"field\":\"flash_choose__hidden\",\"value\":false"), "Choose firmware offered");
+    CHECK(cap_last("\"field\":\"flash_choose__hidden\",\"value\":false"), "Choose the board offered");
+    CHECK(cap_last("\"field\":\"fl_advanced__hidden\",\"value\":true"), "under Advanced options, folded away");
 
     /* The core answers: an S3 running the dongle's own image. One match, so
      * it is chosen and fetched without a tap. */
@@ -678,14 +677,16 @@ static void test_device_is_identified_and_the_match_is_chosen(void)
     g_flash_calln = 0;
     flash_event();
     CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "fetch tdongle-s3"), "the match is downloaded on its own: %s", g_flash_calln ? g_flash_calls[0] : "");
-    const char *tiles = cap_last("\"field\":\"dev_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Firmware\",\"value\":\"T-Dongle-S3\",\"hint\":\"v0.4.0\""), "and named on the tile: %s", tiles ? tiles : "");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Chip\",\"value\":\"ESP32-S3\""), "chip named");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Flash\",\"value\":\"16\",\"unit\":\"MB\""), "flash in MB");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Runs\",\"value\":\"tdongle_xprs\",\"hint\":\"0.4.0\""), "what runs there");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Port\",\"value\":\"ttyACM1\",\"hint\":\"USB JTAG/serial debug unit\""), "the port and the product");
-    const char *l = cap_last("\"field\":\"flash\",");
-    CHECK(l && strstr(l, "\"subtitle\":\"ESP32-S3, 16 MB, runs tdongle_xprs 0.4.0\""), "the tab's row now says what it is: %s", l ? l : "");
+    const char *info = cap_last("\"field\":\"fl_info\"");
+    CHECK(info && strstr(info, "\"label\":\"Board\",\"value\":\"T-Dongle-S3\""), "the board, named: %s", info ? info : "");
+    CHECK(info && strstr(info, "\"label\":\"Chip\",\"value\":\"ESP32-S3, 16 MB\""), "chip and flash size");
+    CHECK(info && strstr(info, "\"label\":\"Runs now\",\"value\":\"XPRS 0.4.0\""), "what runs there, in words");
+    CHECK(info && strstr(info, "\"label\":\"Installs\",\"value\":\"XPRS 0.4.0"), "what will be installed");
+    CHECK(info && strstr(info, "\"label\":\"Cable\",\"value\":\"ttyACM1\""), "and the port");
+    CHECK(cap_last("\"field\":\"fl_pic\",\"value\":\"https://x/tdongle.jpg\""), "its picture, from the website");
+    const char *l = cap_last("\"field\":\"devices\"");
+    CHECK(l && strstr(l, "\"title\":\"T-Dongle-S3\",\"subtitle\":\"Runs XPRS 0.4.0. Tap to reinstall\"") && strstr(l, "\"picture\":\"https://x/tdongle.jpg\""),
+          "the list's row now says what it is, with its picture: %s", l ? l : "");
 
     /* Downloaded: Flash is offered and the line says so. */
     snprintf(st, sizeof st, "{\"phase\":\"idle\",\"busy\":false,\"message\":\"T-Dongle-S3 0.4.0 downloaded\",\"error\":\"\",\"supported\":true,"
@@ -694,12 +695,60 @@ static void test_device_is_identified_and_the_match_is_chosen(void)
     cap_clear();
     g_flash_calln = 0;
     flash_event();
-    CHECK(g_flash_calln == 0, "nothing more asked once it is here");
+    CHECK(g_flash_calln <= 1 && (g_flash_calln == 0 || strcmp(g_flash_calls[0], "fetch tdongle-s3")),
+          "nothing more asked for this board once it is here: %s", g_flash_calln ? g_flash_calls[0] : "");
     now = cap_last("\"field\":\"dev_now\"");
-    CHECK(now && strstr(now, "T-Dongle-S3 0.4.0 is downloaded. Tap Flash."), "the Next line: %s", now ? now : "");
-    tiles = cap_last("\"field\":\"dev_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Firmware\",\"value\":\"T-Dongle-S3\",\"hint\":\"v0.4.0, downloaded\""), "the tile says downloaded: %s", tiles ? tiles : "");
+    CHECK(now && strstr(now, "Ready to reinstall XPRS 0.4.0. Keep the cable in"), "the Now line: %s", now ? now : "");
+    CHECK(cap_last("\"field\":\"flash_write__label\",\"value\":\"Reinstall XPRS 0.4.0\""),
+          "the button says what it will do: it already runs the newest");
+    info = cap_last("\"field\":\"fl_info\"");
+    CHECK(info && strstr(info, "\"label\":\"Installs\",\"value\":\"XPRS 0.4.0, downloaded\""), "the panel says downloaded: %s", info ? info : "");
+    CHECK(cap_last("\"field\":\"dev_hub__hidden\",\"value\":true"), "no progress bar with nothing in progress");
     CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":false"), "Flash offered");
+
+    /* A catalogue a release left behind (it names 0.4.0, the image's own
+     * manifest said 0.6.0): what is downloaded is still flashed, not waited
+     * for, and not downloaded again. */
+    snprintf(st, sizeof st, "{\"phase\":\"idle\",\"busy\":false,\"message\":\"T-Dongle-S3 0.6.0 downloaded\",\"error\":\"\",\"supported\":true,"
+             DEVS "," BOARDS("0.6.0", "1498736") "," PROBED ",\"board\":\"tdongle-s3\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
+    flash_state(st);
+    cap_clear();
+    g_flash_calln = 0;
+    flash_event();
+    CHECK(g_flash_calln == 0, "a catalogue behind the download fetches nothing again");
+    info = cap_last("\"field\":\"fl_info\"");
+    CHECK(info && strstr(info, "\"label\":\"Installs\",\"value\":\"XPRS 0.6.0, downloaded\""), "the panel names what was downloaded: %s", info ? info : "");
+    CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":false"), "and Flash stays offered");
+}
+
+/* A firmware picked while the core was still identifying the chip is
+ * downloaded once the core is free, instead of waiting forever. */
+static void test_pick_while_busy_is_fetched_later(void)
+{
+    int was = g_prefetch;
+    g_prefetch = 0;                      /* the downloads in the background have their own test */
+    char st[4096];
+    snprintf(st, sizeof st, "{\"phase\":\"probing\",\"busy\":true,\"message\":\"Waiting for the board...\",\"error\":\"\",\"supported\":true,"
+             DEVS "," BOARDS("", "0") "," PROBED_TWO ",\"board\":\"\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
+    flash_state(st);
+    g_flash_rc = 0;                      /* the core refuses: busy */
+    cap_clear();
+    g_flash_calln = 0;
+    inbox_set("{\"command\":\"flash_pick_tap\",\"fields\":{\"flash_pick_id\":\"tdeck\"}}");
+    module_handle_event();
+    g_flash_rc = 1;
+    snprintf(st, sizeof st, "{\"phase\":\"idle\",\"busy\":false,\"message\":\"\",\"error\":\"\",\"supported\":true,"
+             DEVS "," BOARDS("", "0") "," PROBED_TWO ",\"board\":\"\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
+    flash_state(st);
+    cap_clear();
+    g_flash_calln = 0;
+    flash_event();
+    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "fetch tdeck"), "the pick is fetched once the core is free: %s", g_flash_calln ? g_flash_calls[0] : "");
+    cap_clear();
+    g_flash_calln = 0;
+    flash_event();
+    CHECK(g_flash_calln == 0, "and only once");
+    g_prefetch = was;
 }
 
 static void test_flash_writes_and_reports(void)
@@ -707,9 +756,13 @@ static void test_flash_writes_and_reports(void)
     /* Continues with the device identified and the firmware downloaded. */
     cap_clear();
     g_flash_calln = 0;
+    command("{\"command\":\"fl_wipe\",\"fields\":{\"wipe\":true}}");
+    const char *in = cap_last("\"field\":\"fl_info\"");
+    CHECK(in && strstr(in, "\"label\":\"Settings\",\"value\":\"erased: key, owner and WiFi\""), "the panel says what Erase will do: %s", in ? in : "");
+    g_flash_calln = 0;
     inbox_set("{\"command\":\"flash_write\",\"fields\":{\"wipe\":true}}");
     module_handle_event();
-    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "write /dev/ttyACM1 tdongle-s3 1"), "Flash writes that board to that device, wiped: %s", g_flash_calls[0]);
+    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "write /dev/ttyACM1 tdongle-s3 1"), "Install writes that board to that device, wiped: %s", g_flash_calls[0]);
     CHECK(cap_count("settings wiped") >= 1, "and says so in the log");
 
     char st[4096];
@@ -719,13 +772,14 @@ static void test_flash_writes_and_reports(void)
     cap_clear();
     flash_event();
     const char *tiles = cap_last("\"field\":\"dev_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Firmware\",\"value\":\"T-Dongle-S3\",\"hint\":\"firmware.bin 3/3\",\"progress\":0.67"),
-          "the firmware tile shows the part and its progress: %s", tiles ? tiles : "");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Installing\",\"value\":\"67\",\"unit\":\"%\",\"hint\":\"firmware.bin, part 3 of 3\",\"progress\":0.67"),
+          "a progress bar, in percent, with the part: %s", tiles ? tiles : "");
+    CHECK(cap_last("\"field\":\"dev_hub__hidden\",\"value\":false"), "shown while it works");
     CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":true"), "Flash hidden while writing");
     CHECK(cap_last("\"field\":\"flash_choose__hidden\",\"value\":true"), "Choose hidden while writing");
     CHECK(cap_last("\"field\":\"flash_cancel__hidden\",\"value\":false"), "Stop offered");
-    const char *hub = cap_last("\"field\":\"flash_hub\"");
-    CHECK(hub && strstr(hub, "\"label\":\"Status\",\"value\":\"writing\",\"hint\":\"Writing firmware.bin (1440 KB)...\",\"progress\":0.67"), "the tab's status tile follows: %s", hub ? hub : "");
+    const char *hub = cap_last("\"field\":\"dev_now\"");
+    CHECK(hub && strstr(hub, "Writing firmware.bin (1440 KB)..."), "the Now line follows the core: %s", hub ? hub : "");
 
     snprintf(st, sizeof st, "{\"phase\":\"done\",\"busy\":false,\"message\":\"T-Dongle-S3 0.4.0 written and verified. It is restarting.\",\"error\":\"\",\"supported\":true,"
              "\"devices\":[]," BOARDS("0.4.0", "1498736") "," PROBED ",\"board\":\"tdongle-s3\",\"part\":\"firmware.bin\",\"partIndex\":3,\"partCount\":3,\"done\":1474736,\"total\":1474736}");
@@ -735,8 +789,8 @@ static void test_flash_writes_and_reports(void)
     const char *now = cap_last("\"field\":\"dev_now\"");
     CHECK(now && strstr(now, "written and verified"), "done is the line, before anything else: %s", now ? now : "");
     CHECK(cap_last("\"field\":\"flash_cancel__hidden\",\"value\":true"), "Stop put away");
-    hub = cap_last("\"field\":\"flash_hub\"");
-    CHECK(hub && strstr(hub, "written and verified"), "the tab says done: %s", hub ? hub : "");
+    hub = cap_last("\"field\":\"devices\"");
+    CHECK(hub && strstr(hub, "Install XPRS on a new board"), "the restarting board left the cable list: %s", hub ? hub : "");
 
     snprintf(st, sizeof st, "{\"phase\":\"failed\",\"busy\":false,\"message\":\"Writing firmware.bin\",\"error\":\"firmware.bin at 0x20000 did not verify\",\"supported\":true,"
              DEVS "," BOARDS("0.4.0", "1498736") "," PROBED ",\"board\":\"tdongle-s3\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
@@ -745,9 +799,7 @@ static void test_flash_writes_and_reports(void)
     flash_event();
     now = cap_last("\"field\":\"dev_now\"");
     CHECK(now && strstr(now, "did not verify"), "the error is the line: %s", now ? now : "");
-    hub = cap_last("\"field\":\"flash_hub\"");
-    CHECK(hub && strstr(hub, "\"label\":\"Status\",\"value\":\"failed\",\"hint\":\"firmware.bin at 0x20000 did not verify\"") && strstr(hub, "\"alert\":true"),
-          "and the tab's Status tile carries it: %s", hub ? hub : "");
+    CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":false"), "and Install is offered again, to retry");
 
     cap_clear();
     g_flash_calln = 0;
@@ -772,9 +824,10 @@ static void test_flash_claims_over_the_cable(void)
     CHECK(i >= 0 && g_st[i].mine && !g_st[i].unowned, "the claimed board is listed as ours");
     CHECK(i >= 0 && !strcmp(g_st[i].pol_owner, "X1ME77"), "owned by this profile");
     CHECK(cap_count("Made yours over the USB cable") == 1, "and the log says how");
-    const char *list = cap_last("\"field\":\"stations\"");
-    CHECK(list && strstr(list, "\"title\":\"Yours\"") && strstr(list, "X3CABL") && !strstr(list, "X3CABL\",\"title\":\"X3CABL\",\"subtitle\":\"Tap"),
-          "the Stations tab is redrawn with it under Yours: %s", list ? list : "");
+    const char *list = cap_last("\"field\":\"devices\"");
+    CHECK(list && strstr(list, "{\"title\":\"Your stations\",\"items\":[{\"id\":\"X3CABL\""),
+          "the list is redrawn with it under Your stations: %s", list ? list : "");
+    CHECK(strstr(kv_dump(), "fl.X3CABL=") != 0, "when it was installed here is kept, for Installed N days ago");
     flash_event();
     CHECK(cap_count("Made yours over the USB cable") == 1, "once per claim, however often the state is read");
 
@@ -784,7 +837,7 @@ static void test_flash_claims_over_the_cable(void)
     flash_state(st);
     flash_event();
     CHECK(find("X3FAIL") < 0, "a claim that did not take adds nothing: it will ask to be claimed");
-    command("{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"X3CABL\"}}");
+    command("{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"X3CABL\"}}");
     command("{\"command\":\"forget\",\"fields\":{}}");
 }
 
@@ -796,11 +849,11 @@ static void test_two_boards_fit_and_the_picture_picker(void)
     g_flash_calln = 0;
     char st[4096];
     flash_state(FLASH_IDLE);
-    inbox_set("{\"command\":\"flash_tap\",\"fields\":{\"flash_id\":\"/dev/ttyUSB0\"}}");
+    inbox_set("{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"/dev/ttyUSB0\"}}");
     module_handle_event();
     cap_clear();
     g_flash_calln = 0;
-    inbox_set("{\"command\":\"flash_tap\",\"fields\":{\"flash_id\":\"/dev/ttyACM1\"}}");
+    inbox_set("{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"/dev/ttyACM1\"}}");
     module_handle_event();
     CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "probe /dev/ttyACM1"), "a device tapped after another is identified");
     snprintf(st, sizeof st, "{\"phase\":\"idle\",\"busy\":false,\"message\":\"2 boards fit\",\"error\":\"\",\"supported\":true,"
@@ -809,9 +862,11 @@ static void test_two_boards_fit_and_the_picture_picker(void)
     cap_clear();
     g_flash_calln = 0;
     flash_event();
-    CHECK(g_flash_calln == 0, "two fits: nothing chosen or fetched on its own");
+    CHECK(!g_board[0], "two fits: nothing chosen for the person");
+    for (int k = 0; k < g_flash_calln; k++)
+        CHECK(strncmp(g_flash_calls[k], "fetch ", 6) == 0, "only a download in the background: %s", g_flash_calls[k]);
     const char *now = cap_last("\"field\":\"dev_now\"");
-    CHECK(now && strstr(now, "Several boards fit this chip. Tap Choose firmware"), "the Next line says to choose: %s", now ? now : "");
+    CHECK(now && strstr(now, "Several boards use this chip. Open Advanced options"), "the Now line says to choose: %s", now ? now : "");
     CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":true"), "Flash hidden with nothing chosen");
 
     /* The picker: pictures, the fitting boards first. */
@@ -832,9 +887,10 @@ static void test_two_boards_fit_and_the_picture_picker(void)
     inbox_set("{\"command\":\"flash_pick_tap\",\"fields\":{\"flash_pick_id\":\"tdeck\"}}");
     module_handle_event();
     CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "fetch tdeck"), "the pick is downloaded: %s", g_flash_calln ? g_flash_calls[0] : "");
-    CHECK(cap_count("ui.screen.close") >= 1, "and the picker closes");
-    const char *tiles = cap_last("\"field\":\"dev_hub\"");
-    CHECK(tiles && strstr(tiles, "\"label\":\"Firmware\",\"value\":\"T-Deck\""), "the Device screen names it: %s", tiles ? tiles : "");
+    open = cap_last("ui.screen.open");
+    CHECK(open && strstr(open, "\"name\":\"Flash\"") && strstr(open, "T-Deck"), "and the Flash panel comes back, named after it: %s", open ? open : "");
+    const char *tiles = cap_last("\"field\":\"fl_info\"");
+    CHECK(tiles && strstr(tiles, "\"label\":\"Board\",\"value\":\"T-Deck\""), "the panel names it: %s", tiles ? tiles : "");
     pick = cap_last("\"field\":\"flash_pick\"");
     CHECK(pick && strstr(pick, "\"id\":\"tdeck\"") && strstr(pick, "\"chosen\""), "the picker marks the choice");
     now = cap_last("\"field\":\"dev_now\"");
@@ -856,13 +912,13 @@ static void test_flash_refusals(void)
     cap_clear();
     inbox_set("{\"command\":\"flash_write\",\"fields\":{\"wipe\":false}}");
     module_handle_event();
-    CHECK(cap_count("Choose the firmware first") >= 1, "no firmware, no write");
+    CHECK(cap_count("Choose the board first") >= 1, "no board, no write");
     CHECK(g_flash_calln == 1, "and the core was not asked");
     flash_state("{\"phase\":\"idle\",\"busy\":false,\"message\":\"\",\"error\":\"\",\"supported\":false,\"devices\":[],\"boards\":[],\"device\":{},\"board\":\"\"}");
     cap_clear();
     flash_event();
-    const char *hub = cap_last("\"field\":\"flash_hub\"");
-    CHECK(hub && strstr(hub, "\"label\":\"USB\",\"value\":\"none\",\"hint\":\"not on this device\",\"alert\":true"), "a platform without USB says so: %s", hub ? hub : "");
+    const char *hub = cap_last("\"field\":\"devices\"");
+    CHECK(hub && strstr(hub, "This device cannot flash over USB"), "a platform without USB says so: %s", hub ? hub : "");
 }
 
 
@@ -909,7 +965,7 @@ static void test_owned_station_is_found(void)
 
     deliver("xprs.observation", row_to("observation", "X3THEM", "verified", 1,
             "t:observation f:X3THEM d:X1ME77 s:policy owner:X1OTHER use:listed first:none serve:relay ts:2026-09-10_12:07:00 sig:KKKK"));
-    CHECK(find("X3THEM") < 0, "somebody else's: not kept");
+    CHECK(find("X3THEM") >= 0 && g_st[find("X3THEM")].theirs, "somebody else's: listed apart, as theirs");
     CHECK(!owner_is_me("X3ME7") && !owner_is_me("X1ME770") && owner_is_me("X1OTHER,X1ME77")
           && owner_is_me("X2ME77") && !owner_is_me("CT1ME77"), "owner: read by callsign or key suffix");
 
@@ -920,9 +976,13 @@ static void test_owned_station_is_found(void)
     int i = find("X3OWN1");
     CHECK(i >= 0 && g_st[i].mine, "ours: kept, and mine, though owned by cable it names us X3ME77");
     CHECK(i >= 0 && strcmp(g_st[i].npub, OWN_NPUB) == 0, "with the key the core holds for it");
-    const char *list = cap_last("\"field\":\"stations\"");
-    CHECK(list && strstr(list, "\"title\":\"Yours\"") && strstr(list, "X3OWN1"), "listed under Yours");
-    CHECK(list && !strstr(list, "X3THEM"), "and the other one is not listed at all");
+    const char *list = cap_last("\"field\":\"devices\"");
+    CHECK(list && strstr(list, "\"title\":\"Your stations\"") && strstr(list, "\"id\":\"X3OWN1\"") &&
+          strstr(list, "\"id\":\"X3OWN1\"") < strstr(list, "Other stations nearby"), "listed under Your stations: %s", list ? list : "");
+    CHECK(list && strstr(list, "Install XPRS on a new board") > strstr(list, "Other stations nearby"),
+          "and the how-to for a cable comes last");
+    CHECK(list && strstr(list, "\"title\":\"Other stations nearby\",\"items\":[{\"id\":\"X3THEM\""), "and the other one under Other stations nearby");
+    CHECK(list && strstr(list, "\"icon\":\"bluetooth\""), "each row says how it is heard, by its icon, not a pattern");
 
     aired = g_aired_n;
     command("{\"command\":\"refresh\",\"fields\":{}}");
@@ -931,7 +991,7 @@ static void test_owned_station_is_found(void)
     CHECK(again == 0, "a refresh asks nobody again: one is listed, one said no (%d)", again);
 
     g_sealed_n = 0;
-    command("{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"X3OWN1\"}}");
+    command("{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"X3OWN1\"}}");
     command("{\"command\":\"wifi_apply\",\"fields\":{\"ssid\":\"Casa do Mar\",\"wifi_pass\":\"sardinha na brasa 2026\"}}");
     CHECK(g_sealed_n == 1 && strcmp(g_sealed_to[0], OWN_NPUB) == 0, "its WiFi is sealed to that key");
     CHECK(strstr(last_aired(), " d:X3OWN1") && strstr(last_aired(), " x:"), "and goes to it: %s", last_aired());
@@ -943,9 +1003,177 @@ static void test_owned_station_is_found(void)
     g_stations_json[0] = 0;
     g_station_json[0] = 0;
     char tap[200];
-    snprintf(tap, sizeof tap, "{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"%s\"}}", before);
+    snprintf(tap, sizeof tap, "{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"%s\"}}", before);
     command(tap);
     CHECK(g_sel >= 0 && strcmp(g_st[g_sel].call, before) == 0, "back to the station before");
+}
+
+/* ── The redesign: one list, plain facts, one button per job ───────────── */
+static void claim_over_cable(const char *call, unsigned seq)
+{
+    char st[4096];
+    snprintf(st, sizeof st, "{\"phase\":\"done\",\"busy\":false,\"message\":\"written\",\"error\":\"\",\"supported\":true,"
+             "\"claim\":{\"station\":\"%s\",\"ok\":true,\"already\":false,\"why\":\"\",\"owner\":\"X1ME77\",\"seq\":%u},"
+             "\"devices\":[]," BOARDS("0.4.0", "1498736") "," PROBED ",\"board\":\"tdongle-s3\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}",
+             call, seq);
+    flash_state(st);
+    flash_event();
+}
+
+static void test_versions_are_ordered(void)
+{
+    CHECK(fw_ver_cmp("0.6.0-beta.9", "0.6.0") < 0, "a beta is older than its release");
+    CHECK(fw_ver_cmp("0.10.0", "0.9.1") > 0, "numbers, not letters");
+    CHECK(fw_ver_cmp("0.6.0-beta.9", "0.6.0-beta.10") < 0, "betas by their number");
+    CHECK(fw_ver_cmp("v0.6.0", "0.6.0") == 0 && fw_ver_cmp("0.6", "0.6.0") == 0, "a v and a missing .0 change nothing");
+    CHECK(fw_ver_cmp("", "0.1.0") < 0, "nothing is older than anything");
+}
+
+static void test_station_facts_and_update_over_the_air(void)
+{
+    int was = g_prefetch;
+    g_prefetch = 0;
+    snprintf(g_station_json, sizeof g_station_json,
+             "{\"call\":\"X3UPDT\",\"kind\":\"station\",\"bearer\":\"lan\",\"bearers\":[\"lan\"],\"rssi\":0,\"agoMs\":2000,"
+             "\"fw\":\"0.3.1\",\"uptime\":\"2h\",\"lifetime\":\"5day\",\"peers\":3,"
+             "\"npub\":\"npub1updtqpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jnqp\"}");
+    cap_clear();
+    claim_over_cable("X3UPDT", 21);
+    const char *list = cap_last("\"field\":\"devices\"");
+    CHECK(list && strstr(list, "\"id\":\"X3UPDT\",\"title\":\"X3UPDT\",\"subtitle\":\"WiFi network, 2 s ago\",\"tags\":[\"XPRS 0.3.1\",\"update available\"],\"icon\":\"wifi\""),
+          "a station of ours behind the catalogue says so on the list: %s", list ? list : "");
+
+    cap_clear();
+    command("{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"X3UPDT\"}}");
+    const char *info = cap_last("\"field\":\"info\"");
+    CHECK(info && strstr(info, "{\"title\":\"Firmware\",\"items\":[{\"label\":\"Version\",\"value\":\"XPRS 0.3.1\"},{\"label\":\"Newest\",\"value\":\"0.4.0 is available\"}"),
+          "what it runs and what is newer, first: %s", info ? info : "");
+    CHECK(info && strstr(info, "\"label\":\"Installed\",\"value\":\"today, from this device\""), "when this device installed it");
+    CHECK(info && strstr(info, "\"label\":\"Running\",\"value\":\"5day in total\""), "how long it has run");
+    CHECK(info && strstr(info, "\"label\":\"Heard over\",\"value\":\"WiFi network, 2 s ago\""), "how it is reached, in words");
+    CHECK(info && strstr(info, "\"label\":\"Owner\",\"value\":\"You\""), "whose it is");
+    CHECK(info && !strstr(info, "\"value\":\"?\""), "no row of question marks: a fact not known is left out");
+    CHECK(cap_last("\"field\":\"update__hidden\",\"value\":false") &&
+          cap_last("\"field\":\"update__label\",\"value\":\"Update to 0.4.0\""), "Update to 0.4.0 offered");
+
+    command("{\"command\":\"update\",\"fields\":{}}");
+    CHECK(strstr(last_aired(), " d:X3UPDT") && strstr(last_aired(), " cmd:update ver:0.4.0"), "11.8, pinned to the newest: %s", last_aired());
+    char id[7];
+    last_id(id);
+    result("X3UPDT", id, "code:202");
+    CHECK(cap_count("Updating to 0.4.0") >= 1, "202: it is on its way, and restarts");
+    snprintf(g_station_json, sizeof g_station_json,
+             "{\"call\":\"X3UPDT\",\"kind\":\"station\",\"bearer\":\"lan\",\"agoMs\":1000,\"fw\":\"0.4.0\","
+             "\"npub\":\"npub1updtqpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jnqp\"}");
+    result("X3UPDT", id, "code:200 fw:0.4.0");
+    CHECK(cap_count("Updated: now XPRS 0.4.0") >= 1, "200, aired by the new firmware: done");
+    CHECK(cap_last("\"field\":\"update__hidden\",\"value\":true"), "and nothing newer to offer");
+
+    /* Back from a task's screen lands on the station, not the list. */
+    cap_clear();
+    command("{\"command\":\"open_wifi\",\"fields\":{}}");
+    CHECK(cap_last("\"ui.screen.open\",\"name\":\"WiFi\""), "WiFi opens");
+    command("{\"command\":\"screen_closed\",\"fields\":{}}");
+    const char *open = cap_last("ui.screen.open");
+    CHECK(open && strstr(open, "\"name\":\"Station\""), "the back arrow steps back to the station: %s", open ? open : "");
+    cap_clear();
+    command("{\"command\":\"screen_closed\",\"fields\":{}}");
+    CHECK(cap_count("ui.screen.open") == 0, "and from the station, back to the list");
+    command("{\"command\":\"forget\",\"fields\":{}}");
+    g_station_json[0] = 0;
+    g_prefetch = was;
+}
+
+static void test_a_chosen_callsign_follows_the_flash(void)
+{
+    int was = g_prefetch;
+    g_prefetch = 0;
+    static const char *NSEC = "nsec1maxqqpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jnqp";
+    cap_clear();
+    command("{\"command\":\"fl_callsign\",\"fields\":{}}");
+    const char *pick = cap_last("ui.callsign.pick");
+    CHECK(pick && strstr(pick, "\"prefix\":\"X3\"") && strstr(pick, "\"length\":4"), "the app's own search screen is asked for, for a station: %s", pick ? pick : "");
+    char cmd[300];
+    snprintf(cmd, sizeof cmd, "{\"command\":\"vanity_picked\",\"fields\":{\"vanity_call\":\"X3MAXQ\",\"vanity_nsec\":\"%s\"}}", NSEC);
+    command(cmd);
+    CHECK(g_buf[0] == 0, "the key does not outlive the command that brought it");
+    CHECK(!strstr(kv_dump(), "nsec1"), "and is written nowhere");
+    flash_state(FLASH_IDLE);
+    command("{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"/dev/ttyACM1\"}}");
+    const char *info = cap_last("\"field\":\"fl_info\"");
+    CHECK(info && strstr(info, "\"label\":\"Callsign\",\"value\":\"X3MAXQ\""), "the panel says which callsign the board gets: %s", info ? info : "");
+
+    /* Flashed and made ours over the cable, but not heard yet: it waits. */
+    g_sealed_n = 0;
+    g_station_json[0] = 0;
+    claim_over_cable("X3NEWC", 22);
+    CHECK(g_sealed_n == 0, "nothing is sent before the station's own key is known");
+    CHECK(subscribed("xprs.identity"), "it listens for the board to say its key");
+    char w[300];
+    snprintf(w, sizeof w, "t:identity f:X3NEWC ts:2026-09-10_12:10:00 k:npub1newcqpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jnqp sig:KKKK");
+    deliver("xprs.identity", row("identity", "X3NEWC", "verified", w));
+    CHECK(g_sealed_n == 1 && strstr(g_sealed_plain[0], "nsec:nsec1maxq") &&
+          !strcmp(g_sealed_to[0], "npub1newcqpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jnqp"),
+          "then the key goes to it, sealed to its own key: %s", g_sealed_n ? g_sealed_plain[0] : "");
+    CHECK(cap_count("Giving it the callsign X3MAXQ") >= 1, "and the person is told");
+    CHECK(!strstr(last_aired(), "nsec1"), "no key on the air in the clear");
+    CHECK(!g_want_nsec[0] && !g_want_call[0], "the next board makes its own again");
+    command("{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"X3NEWC\"}}");
+    command("{\"command\":\"forget\",\"fields\":{}}");
+    g_prefetch = was;
+}
+
+static void test_erase_never_carries_over(void)
+{
+    g_wipe = 1;
+    cap_clear();
+    g_adv = 1;
+    module_init();
+    CHECK(!g_wipe && cap_last("\"field\":\"wipe\",\"value\":false"), "a new visit starts with Erase off");
+    CHECK(!g_adv && cap_last("\"field\":\"fl_adv\",\"value\":false"), "and Advanced options folded");
+}
+
+static void test_a_board_known_from_before_is_ready_at_once(void)
+{
+    /* The app identified the board on an earlier visit: opening it again
+     * does not restart it to ask again, and its board is chosen at once. */
+    char st[4096];
+    snprintf(st, sizeof st, "{\"phase\":\"idle\",\"busy\":false,\"message\":\"\",\"error\":\"\",\"supported\":true,"
+             DEVS "," BOARDS("0.4.0", "1498736") "," PROBED ",\"board\":\"\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
+    flash_state(st);
+    g_dev[0] = 0;
+    g_board[0] = 0;
+    g_flash_calln = 0;
+    cap_clear();
+    command("{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"/dev/ttyACM1\"}}");
+    CHECK(g_flash_calln == 0, "no second probe, nothing to download: %s", g_flash_calln ? g_flash_calls[0] : "");
+    CHECK(!strcmp(g_board, "tdongle-s3"), "its board chosen: %s", g_board);
+    CHECK(cap_last("\"field\":\"flash_write__hidden\",\"value\":false"), "and Install is there at once");
+    const char *open = cap_last("ui.screen.open");
+    CHECK(open && strstr(open, "T-Dongle-S3"), "named after it: %s", open ? open : "");
+}
+
+static void test_published_firmwares_are_kept_here(void)
+{
+    /* While the page is open every published firmware is downloaded, one
+     * at a time, each asked for once. */
+    g_prefetch = 1;
+    g_ntried = 0;
+    char st[4096];
+    snprintf(st, sizeof st, "{\"phase\":\"idle\",\"busy\":false,\"message\":\"\",\"error\":\"\",\"supported\":true,"
+             DEVS "," BOARDS("", "0") ",\"device\":{},\"board\":\"\",\"part\":\"\",\"partIndex\":0,\"partCount\":0,\"done\":0,\"total\":0}");
+    flash_state(st);
+    g_dev[0] = 0;
+    g_board[0] = 0;
+    g_flash_calln = 0;
+    flash_event();
+    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "fetch tdeck"), "the first: %s", g_flash_calln ? g_flash_calls[0] : "");
+    g_flash_calln = 0;
+    flash_event();
+    CHECK(g_flash_calln == 1 && !strcmp(g_flash_calls[0], "fetch tdongle-s3"), "then the next: %s", g_flash_calln ? g_flash_calls[0] : "");
+    g_flash_calln = 0;
+    flash_event();
+    CHECK(g_flash_calln == 0, "a board not flashed over USB is not fetched, and nothing twice");
 }
 
 int main(void)
@@ -975,9 +1203,16 @@ int main(void)
     test_flash_tab_lists_the_cable();
     test_device_is_identified_and_the_match_is_chosen();
     test_flash_writes_and_reports();
+    test_pick_while_busy_is_fetched_later();
     test_flash_claims_over_the_cable();
     test_two_boards_fit_and_the_picture_picker();
     test_flash_refusals();
+    test_versions_are_ordered();
+    test_station_facts_and_update_over_the_air();
+    test_a_chosen_callsign_follows_the_flash();
+    test_erase_never_carries_over();
+    test_a_board_known_from_before_is_ready_at_once();
+    test_published_firmwares_are_kept_here();
     printf("firmwares: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

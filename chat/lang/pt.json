@@ -59,7 +59,7 @@
   "prompt.reveal_body": "Escreva a frase-passe para revelar esta mensagem.",
   "prompt.reveal": "Revelar",
   "prompt.newgroup_title": "Novo grupo",
-  "prompt.newgroup_body": "Público: qualquer pessoa o pode ler; só os membros escrevem e os outros pedem para entrar. Privado: só os membros o leem, selado. O nome é uma etiqueta; rode as setas para outro indicativo.",
+  "prompt.newgroup_body": "Público: qualquer pessoa o pode ler; só os membros escrevem e os outros pedem para entrar. Privado: só os membros o leem, selado. O nome é uma etiqueta; rode as setas para outro indicativo ou procure as letras que quiser.",
   "prompt.create": "Criar",
   "prompt.group_call": "Indicativo",
   "prompt.group_call_next": "Outro indicativo",

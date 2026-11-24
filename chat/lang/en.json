@@ -59,7 +59,7 @@
   "prompt.reveal_body": "Enter the passphrase to reveal this message.",
   "prompt.reveal": "Reveal",
   "prompt.newgroup_title": "New group",
-  "prompt.newgroup_body": "Public: anyone can read it; only members post, and people ask to join. Private: only members read it, sealed. The name is a label; turn the arrows for another callsign.",
+  "prompt.newgroup_body": "Public: anyone can read it; only members post, and people ask to join. Private: only members read it, sealed. The name is a label; turn the arrows for another callsign, or search for letters you like.",
   "prompt.create": "Create",
   "prompt.group_call": "Callsign",
   "prompt.group_call_next": "Another callsign",

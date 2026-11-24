@@ -49,6 +49,10 @@ int32_t hal_xprs_station(const char *call, uint32_t cl, char *out, uint32_t cap)
     return (int32_t)n;
 }
 
+/* Look again: how many times the page asked the network to identify. */
+int g_discover_calls;
+int32_t hal_xprs_discover(void) { g_discover_calls++; return 1; }
+
 /* ── what the core has heard: hal_xprs_stations ───────────────────────── */
 char g_stations_json[2048];     /* the sections; empty = nothing heard */
 int32_t hal_xprs_stations(char *out, uint32_t cap)
