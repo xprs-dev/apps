@@ -1672,12 +1672,14 @@ TEST(the_admin_invites_from_the_member_panel_and_the_core_signs) {
   event_push("core.groups", "{}");
   module_handle_event();
   /* Only the admin is offered Invite, New folder and Picture; a member gets
-   * their own door out, Leave, and nothing else. */
+   * Share link, which anybody may use (chat 0.10.14), and their own door
+   * out, Leave, and nothing else. */
   cap_clear();
   inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5MEMB\"}");
   module_handle_event();
   { const char *m = cap_find("ui.members.set");
-    CHECK(m && strstr(m, "\"actions\":[{\"id\":\"leave\"") && !strstr(m, "\"id\":\"inv\"")); }
+    CHECK(m && strstr(m, "\"actions\":[{\"id\":\"share\"") && strstr(m, ",{\"id\":\"leave\"")
+          && !strstr(m, "\"id\":\"inv\"")); }
   cap_clear();
   inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#X5MINE\"}");
   module_handle_event();
@@ -2063,7 +2065,9 @@ TEST(a_bridged_meshtastic_message_carries_its_network_and_relay_path) {
   module_handle_event();
   const char *m = cap_find("ui.convo.msg");
   CHECK(m && strstr(m, "\"from\":\"MT66B7F06F\""));
-  CHECK(m && strstr(m, "\"via\":\"BLE\""));         /* the bearer, labelled */
+  /* A station carried it in, so the label names who handed it over rather
+   * than the bearer (chat 0.10.17). */
+  CHECK(m && strstr(m, "\"via\":\"via X3SEP2\""));
   CHECK(m && strstr(m, "\"net\":\"Meshtastic\""));  /* the tag beside it */
   CHECK(m && strstr(m, "\"path\":\"X3SEP2\""));      /* who carried it here */
   /* One of ours carries no net tag and (heard direct) no path. */
