@@ -4,7 +4,7 @@
     "name": "Map",
     "icon": "map",
     "toolbar": true,
-    "tip": "White: your check-ins. Green: stations. Amber: events.",
+    "tip": "Green: stations giving check-ins. Grey: other stations, or how many are in one area. White: your check-ins. Amber: events.",
     "children": [
       {
         "$": "group",
@@ -88,8 +88,9 @@
   },
   {
     "$": "screen",
-    "name": "My station",
-    "icon": "cell_tower",
+    "name": "Settings",
+    "icon": "settings",
+    "menu": true,
     "tip": "Let people near you check in here. Your station answers while XPRS runs; to answer with it closed, long-press Check-in on the home screen and turn on Run in background.",
     "children": [
       {

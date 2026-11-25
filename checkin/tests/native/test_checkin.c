@@ -24,7 +24,10 @@ extern char g_cmd[4096];
 extern char g_stations[4096];
 extern char g_history[8192];
 extern char g_shared[96];
-extern char g_followed_kind[24];
+extern char g_followed_kind[64];
+extern char g_identities[16384];
+extern char g_id_query[256];
+extern int g_id_queries;
 int mock_subscribed(const char *t);
 void mock_event(const char *topic, const char *json);
 void mock_clear(void);
@@ -142,6 +145,28 @@ static void test_rules(void)
     CHECK(!ci_pos_ok("38.7") && !ci_pos_ok("x,y") && !ci_pos_ok("12,190") && !ci_pos_ok("-90.5,0") && ci_pos_ok("-33,151.2"),
           "and nonsense does not");
     CHECK(ci_pos_norm("38.722345678,-9.13", pn, sizeof pn) && !strcmp(pn, "38.7223,-9.1300"), "four decimals: eleven metres");
+    {
+        /* Where a station says it is, bars and all (6.2.1), as the map
+         * places it: the middle of the square its readable digits name. */
+        char mid[40];
+        long half = -1;
+        CHECK(ci_pos_square("38\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88,-9\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88",
+                            mid, sizeof mid, &half) && !strcmp(mid, "38.5000,-9.5000") && half == 55660,
+              "a square of one degree: its middle, half of 111 km");
+        CHECK(ci_pos_square("38.7\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88,-9.1\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88",
+                            mid, sizeof mid, &half) && !strcmp(mid, "38.7500,-9.1500") && half == 5566,
+              "a tenth of a degree: 11 km");
+        CHECK(ci_pos_square("-0\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88,0\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88",
+                            mid, sizeof mid, &half) && !strcmp(mid, "-0.5000,0.5000"),
+              "south of the equator by its sign, even at zero");
+        CHECK(ci_pos_square("38.7223,-9.1393", mid, sizeof mid, &half) && !strcmp(mid, "38.7223,-9.1393") && half == 0,
+              "a plain point is itself");
+        CHECK(!ci_pos_square("-", mid, sizeof mid, &half) && !ci_pos_square("38,x", mid, sizeof mid, &half) &&
+              !ci_pos_square("91\xE2\x96\x88,0", mid, sizeof mid, &half), "nothing else is a place");
+        CHECK(ci_xprs_call("X1ABCD") && ci_xprs_call("X3AB-7") && !ci_xprs_call("MT1234") &&
+              !ci_xprs_call("X6ABC") && !ci_xprs_call("X1A") && !ci_xprs_call("X1ABCDEFG"),
+              "XPRS callsigns only");
+    }
     {
         long d = ci_dist_m("38.7071,-9.1393", "38.7161,-9.1393");
         CHECK(d > 990 && d < 1010, "a hundredth of a degree north is a kilometre");
@@ -448,7 +473,7 @@ static void test_chaser(void)
                        g_now - 60, g_now + 7200, "", "Rooftop station, ask at the bar");
         /* From a stranger: the core keeps it because this wapp follows the
          * type (heard here or replayed by an archiver), and the wapp reads it. */
-        CHECK(!strcmp(g_followed_kind, "event") && mock_subscribed("xprs.event"),
+        CHECK(strstr(g_followed_kind, "event") && mock_subscribed("xprs.event"),
               "check-in events are followed, and listened for to redraw");
         char evrow[600];
         snprintf(g_history, sizeof g_history, "[{\"id\":\"aa11bb\",\"wire\":\"%s\"}]", ev);
@@ -541,11 +566,108 @@ static void test_chaser(void)
     }
 }
 
+
+/* Every station that says where it is, on the map: the copy kept here is
+ * drawn at once, says when it was brought up to date, and catches up with
+ * the archive behind it. */
+static const char *BAR5 = "\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88";
+static void id_row(char *out, unsigned cap, const char *call, unsigned long long ts,
+                   const char *nick, const char *pos)
+{
+    char st[24], w[300];
+    al_stamp(st, sizeof st, ts);
+    snprintf(w, sizeof w, "t:identity f:%s ts:%s%s%s%s%s k:npub1test", call, st,
+             nick ? " nick:" : "", nick ? nick : "", pos ? " pos:" : "", pos ? pos : "");
+    snprintf(out, cap, "{\"id\":\"%.6s\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"}", call + 1, w);
+}
+
+static void test_places(void)
+{
+    as("X1CHSR");
+    mock_clear();
+    module_init();
+    CHECK(strstr(g_followed_kind, "identity") != 0, "identities are followed, from anyone");
+
+    char sq[64], r1[400], r2[400], r3[400], r4[400], r5[400];
+    snprintf(sq, sizeof sq, "38%s,-9%s", BAR5, BAR5);
+    id_row(r1, sizeof r1, "X3AAA1", g_now - 600, "Hill", sq);
+    id_row(r2, sizeof r2, "X3AAA2-1", g_now - 500, 0, sq);
+    id_row(r3, sizeof r3, "X3BBB1", g_now - 400, "Plaza", "40.4168,-3.7038");
+    id_row(r4, sizeof r4, "MT0001", g_now - 300, 0, "41.0000,2.0000");     /* another network */
+    id_row(r5, sizeof r5, "X1CHSR", g_now - 200, 0, "37.0000,-8.0000");    /* this station */
+    snprintf(g_identities, sizeof g_identities, "[%s,%s,%s,%s,%s]", r5, r4, r3, r2, r1);
+
+    mock_clear();
+    cmd("{\"command\":\"ready\"}");
+    CHECK(said("\"id\":\"pl_at\"") && !said("sq:38.5000"), "the map says how fresh its copy is, before the archive is read");
+    mock_clear();
+    module_tick();   /* the walk goes on behind the page */
+    CHECK(said("\"id\":\"sq:38.5000,-9.5000\"") && said("\"label\":\"2 stations\"") && said("within 111 km"),
+          "two stations in one square: one marker with how many, and how big the square is");
+    CHECK(said("\"id\":\"pl:X3BBB1\"") && said("\"lat\":40.4168,\"lon\":-3.7038") && said("Plaza"),
+          "a station at its point, with its name");
+    CHECK(!said("MT0001") && !said("pl:X1CHSR"), "not other networks' nodes, not this station");
+    CHECK(said("\"label\":\"3 stations\"") && said("\"label\":\"Updated "), "how many, and when it was updated");
+
+    /* The page opens again: the copy is drawn before the archive is read. */
+    int q0 = g_id_queries;
+    strcpy(g_identities, "[]");
+    mock_clear();
+    cmd("{\"command\":\"ready\"}");
+    CHECK(said("\"id\":\"pl:X3BBB1\"") && said("\"id\":\"sq:38.5000,-9.5000\"") && said("\"label\":\"Updated "),
+          "the map opens on the kept copy, saying how old it is");
+    CHECK(g_id_queries == q0, "and nothing was read from the archive to draw it");
+    module_tick();
+    CHECK(g_id_queries > q0 && strstr(g_id_query, "\"since\":"), "then the last hour is read, not everything");
+
+    /* Taps: a square lists who is in it; Show on map goes there. */
+    mock_clear();
+    cmd("{\"command\":\"marker_tap\",\"id\":\"sq:38.5000,-9.5000\"}");
+    CHECK(said("\"type\":\"ui.prompt\"") && said("\"title\":\"2 stations\"") && said("X3AAA1 Hill") &&
+          said("X3AAA2") && said("Somewhere in this 111 km square") && said("\"copy\":\"38.5000,-9.5000\""),
+          "a square's sheet: who is there, how approximate, the point to copy");
+    mock_clear();
+    cmd("{\"command\":\"prompt\",\"prompt_id\":\"sq:38.5000,-9.5000\",\"prompt_value\":\"map\"}");
+    CHECK(said("\"type\":\"ui.map.locate\",\"lat\":38.5000,\"lon\":-9.5000"), "Show on map");
+    mock_clear();
+    cmd("{\"command\":\"marker_tap\",\"id\":\"pl:X3BBB1\"}");
+    CHECK(said("\"title\":\"X3BBB1\"") && said("Plaza") && said("Heard 6 min ago"), "a station's sheet");
+
+    /* A station that stops saying where it is leaves the map. */
+    char gone[400];
+    g_now += 200;
+    id_row(gone, sizeof gone, "X3BBB1", g_now - 10, 0, "-");
+    snprintf(g_identities, sizeof g_identities, "[%s]", gone);
+    mock_clear();
+    module_tick();
+    CHECK(said("ui.map.markers.clear") && !said("pl:X3BBB1") && said("\"label\":\"2 stations\""),
+          "pos:- takes a station off the map");
+
+    /* A station giving check-ins is the green marker, not a grey one too. */
+    {
+        char ev[400], one[400];
+        ci_build_event(ev, sizeof ev, "X3AAA1", g_now - 60, "38.7161,-9.1393", CI_POINT_TITLE,
+                       g_now - 60, g_now + 7200, "", "");
+        snprintf(g_history, sizeof g_history, "[{\"id\":\"ab12cd\",\"wire\":\"%s\"}]", ev);
+        id_row(one, sizeof one, "X3AAA2", g_now - 5, 0, sq);
+        snprintf(g_identities, sizeof g_identities, "[%s]", one);
+        g_now += 200;
+        mock_clear();
+        cmd("{\"command\":\"ready\"}");
+        CHECK(said("\"id\":\"st:X3AAA1\"") && said("#43A047"), "its check-in point is green");
+        CHECK(said("\"id\":\"pl:X3AAA2\"") && !said("sq:38.5000,-9.5000"),
+              "and its square holds only the other station");
+        strcpy(g_history, "[]");
+        strcpy(g_identities, "[]");
+    }
+}
+
 int main(void)
 {
     test_rules();
     test_station();
     test_chaser();
+    test_places();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

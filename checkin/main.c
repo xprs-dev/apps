@@ -9,14 +9,17 @@
  * two packets together are the evidence. Nothing here is new to XPRS
  * (ci.h).
  *
- *   Map         check-ins, stations and events
+ *   Map         check-ins, check-in points (green), events, and every
+ *               XPRS station that says where it is, drawn at once from the
+ *               last copy kept here and brought up to date behind it
  *   Nearby      stations in reach now, a Check in button on each; under
  *               them every station and event heard (t:event tag:checkin)
  *   Logbook     every check-in, counted, and the badges earned (a filter
  *               chip each); tap a check-in for the evidence
- *   My station  where it is (a link to the setting), check-ins on or off,
- *               greeting, badge, events, and a Visitors page. Every input
- *               saves as it is changed: there is no Save button.
+ *   Settings    (the top-right menu, not a tab) this station: where it
+ *               is (a link to the setting), check-ins on or off, greeting,
+ *               badge, events, and a Visitors page. Every input saves as it
+ *               is changed: there is no Save button.
  *
  * The wapp decides what a check-in means; the core does everything else
  * (docs/architecture.md). hal_xprs_send hands the ask to the core's command
@@ -73,6 +76,7 @@ static char g_sel[8];
 static struct { char badge[80]; } g_draft;
 
 static void say(const char *json) { hal_msg_send(json, al_len(json)); }
+static int g_page_seen;           /* a page is open: there is a screen to draw */
 static unsigned long long now_s(void) { return hal_time_epoch(); }
 static int zone(void) { return (int)hal_time_utc_offset(); }
 
@@ -249,6 +253,10 @@ static void db_init(void)
     db_exec("CREATE TABLE IF NOT EXISTS events (title TEXT PRIMARY KEY,"
             " since INTEGER, until INTEGER, badge TEXT, m TEXT)", 0);
     db_exec("CREATE TABLE IF NOT EXISTS stations (call TEXT PRIMARY KEY, last INTEGER)", 0);
+    /* Every XPRS station that says where it is, as the map draws it: the
+     * copy the map opens on (see "Stations everywhere"). */
+    db_exec("CREATE TABLE IF NOT EXISTS places (call TEXT PRIMARY KEY, nick TEXT,"
+            " pos TEXT, half INTEGER, pts INTEGER, seen INTEGER)", 0);
     /* Check-in events are kept by the core now (hal_xprs_follow_kind), the
      * ones heard here and the ones archivers replay, in one archive. */
     db_exec("DROP TABLE IF EXISTS heard", 0);
@@ -1329,8 +1337,370 @@ static void event_row(const char *id, const char *wire, void *ctx)
     row(rid, nice, m[0] ? m : from, tag, until_tag, tok, from, "", "");
 }
 
+
+/* ── Stations everywhere ──────────────────────────────────────────────── */
+/* Every XPRS station that says where it is, from its identity (6.3.2 pos:,
+ * aired on a change and once a day), the way xprs.dev/in maps them. The
+ * core keeps identities from anyone (hal_xprs_follow_kind "identity") and
+ * asks the archivers for new ones on its own schedule. This wapp copies
+ * what the map needs into `places`, one row per station with its position
+ * already read, so the map opens on that copy at once (one query, no wire
+ * parsed) and says how old it is; the copy then catches up with the archive
+ * a few pages at a time, never in one long call. */
+#define PL_RECENT_S   (7ULL * 86400ULL)  /* on the map: an identity this week */
+#define PL_PAGE       100                /* identity rows per archive read */
+#define PL_STEP_PAGES 2                  /* archive reads per step */
+#define PL_EVERY_S    120ULL             /* a catch-up at most this often */
+#define PL_FULL_S     (6ULL * 3600ULL)   /* a whole walk this often ... */
+#define PL_MARGIN_S   3600ULL            /* ... else from an hour before the newest held */
+#define PL_DRAW_MAX   1500
+
+static char g_idrows[65536];     /* one page of identity rows */
+static char g_plrows[196608];    /* the places the map draws */
+static struct {
+    int on, full, changed, limit;
+    unsigned long long until, floor, top;
+} g_walk;
+
+static unsigned long long u_of(const char *s)
+{
+    unsigned long long v = 0;
+    for (; *s >= '0' && *s <= '9'; s++) v = v * 10 + (unsigned)(*s - '0');
+    return v;
+}
+static unsigned long long kv_u(const char *k)
+{
+    char v[24];
+    kv_str(k, v, sizeof v);
+    return u_of(v);
+}
+static void kv_put_u(const char *k, unsigned long long v)
+{
+    char t[24] = "";
+    al_cat_u(t, v, sizeof t);
+    hal_kv_set(k, al_len(k), t, al_len(t));
+}
+
+/* "just now", "12 min ago", "5 h ago", "3 d ago". */
+static void ago(char *out, unsigned cap, unsigned long long ts)
+{
+    unsigned long long n = now_s(), s = n > ts ? n - ts : 0;
+    out[0] = 0;
+    if (s < 120) { al_cpy(out, "just now", cap); return; }
+    al_cat_u(out, s < 7200 ? s / 60 : s < 172800 ? s / 3600 : s / 86400, cap);
+    al_cat(out, s < 7200 ? " min ago" : s < 172800 ? " h ago" : " d ago", cap);
+}
+
+/* A callsign without its -SSID. */
+static void base_call(char *out, unsigned cap, const char *call)
+{
+    unsigned k = 0;
+    while (call[k] && call[k] != '-' && k + 1 < cap) { out[k] = call[k]; k++; }
+    out[k] = 0;
+}
+
+/* The two lines the map shows over itself: how many stations it holds and
+ * when the copy was last brought up to date. */
+static void places_status(void)
+{
+    char n[16] = "0", m[300], up[48];
+    p_begin(); p_int(now_s() > PL_RECENT_S ? now_s() - PL_RECENT_S : 0); p_end();
+    db_one("SELECT COUNT(*) AS n FROM places WHERE pos != '' AND seen >= ?", 1, "n", n, sizeof n);
+    unsigned long long at = kv_u("pl_at");
+    if (at) { al_cpy(up, "Updated ", sizeof up); char w[24]; when(w, sizeof w, at); al_cat(up, w, sizeof up); }
+    else al_cpy(up, "Looking for stations...", sizeof up);
+    al_cpy(m, "{\"type\":\"ui.map.status\",\"items\":[{\"id\":\"pl_n\",\"label\":\"", sizeof m);
+    al_cat(m, n, sizeof m);
+    al_cat(m, al_eq(n, "1") ? " station" : " stations", sizeof m);
+    al_cat(m, "\",\"on\":false},{\"id\":\"pl_at\",\"label\":\"", sizeof m);
+    al_jesc(m, up, sizeof m);
+    al_cat(m, "\",\"on\":false}]}", sizeof m);
+    say(m);
+}
+
+/* One identity row into the copy. The newest word on a station's place
+ * wins (pos:- takes it off the map); the newest name is kept beside it. */
+static void place_take(const char *row_)
+{
+    static char wire[1200];
+    char f[16], call[16], ts[24], pos[80], nick[48], sig[12], mid[40] = "";
+    if (!al_json(row_, "wire", wire, sizeof wire)) return;
+    if (al_json(row_, "sig", sig, sizeof sig) && al_eq(sig, "forged")) return;
+    al_field(wire, "f", f, sizeof f);
+    base_call(call, sizeof call, f);
+    if (!ci_xprs_call(call)) return;
+    char me[16];
+    base_call(me, sizeof me, g_me);
+    if (al_eq(call, me)) return;
+    al_field(wire, "ts", ts, sizeof ts);
+    unsigned long long t = al_epoch(ts);
+    if (!t) return;
+    if (t > g_walk.top) g_walk.top = t;
+    int has_pos = al_field(wire, "pos", pos, sizeof pos) && pos[0];
+    int has_nick = al_field(wire, "nick", nick, sizeof nick) && nick[0] && !al_eq(nick, "-");
+    long half = 0;
+    if (has_pos && !al_eq(pos, "-") && !ci_pos_square(pos, mid, sizeof mid, &half)) has_pos = 0;
+    if (has_pos && al_eq(pos, "-")) mid[0] = 0;
+
+    char opos[40] = "", onick[48] = "", v[24];
+    unsigned long long opts = 0, oseen = 0;
+    long ohalf = 0;
+    int had = 0;
+    p_begin(); p_str(call); p_end();
+    if (db_query("SELECT nick, pos, half, pts, seen FROM places WHERE call = ?", 1)) {
+        const char *p = g_rows;
+        while (*p && *p != '[') p++;
+        if (*p == '[') p++;
+        if (al_json_next(p, g_obj, sizeof g_obj)) {
+            had = 1;
+            al_json(g_obj, "nick", onick, sizeof onick);
+            al_json(g_obj, "pos", opos, sizeof opos);
+            if (al_json(g_obj, "half", v, sizeof v)) ohalf = (long)u_of(v);
+            if (al_json(g_obj, "pts", v, sizeof v)) opts = u_of(v);
+            if (al_json(g_obj, "seen", v, sizeof v)) oseen = u_of(v);
+        }
+    }
+    /* A station never placed is not kept until it says where it is. */
+    if (!had && (!has_pos || !mid[0])) return;
+    char npos[40], nnick[48];
+    al_cpy(npos, opos, sizeof npos);
+    al_cpy(nnick, onick, sizeof nnick);
+    long nhalf = ohalf;
+    unsigned long long npts = opts, nseen = oseen > t ? oseen : t;
+    if (has_pos && t >= opts) { al_cpy(npos, mid, sizeof npos); nhalf = half; npts = t; }
+    if (has_nick && (t >= opts || !onick[0])) al_cpy(nnick, nick, sizeof nnick);
+    if (had && al_eq(npos, opos) && al_eq(nnick, onick) && nhalf == ohalf &&
+        npts == opts && nseen == oseen) return;
+    p_begin(); p_str(call); p_str(nnick); p_str(npos);
+    p_int((unsigned long long)nhalf); p_int(npts); p_int(nseen); p_end();
+    db_exec("INSERT OR REPLACE INTO places (call, nick, pos, half, pts, seen)"
+            " VALUES (?, ?, ?, ?, ?, ?)", 1);
+    g_walk.changed = 1;
+}
+
+/* Start bringing the copy up to date, unless it is already or was a moment
+ * ago. A whole walk of the archive's identities every few hours (one an
+ * archiver replayed late may be older than the newest held), else only the
+ * last hour's. [now_] skips the wait: a page just opened. */
+static void places_begin(int now_)
+{
+    if (g_walk.on) return;
+    unsigned long long n = now_s(), at = kv_u("pl_at"), cur = kv_u("pl_cur");
+    if (!now_ && at && n < at + PL_EVERY_S) return;
+    g_walk.on = 1;
+    g_walk.until = 0;
+    g_walk.top = cur;
+    g_walk.changed = 0;
+    g_walk.limit = PL_PAGE;
+    g_walk.full = !cur || n >= kv_u("pl_full") + PL_FULL_S;
+    g_walk.floor = g_walk.full || cur < PL_MARGIN_S ? 0 : cur - PL_MARGIN_S;
+}
+
+static void push_map(void);
+static void places_done(void)
+{
+    g_walk.on = 0;
+    unsigned long long n = now_s();
+    kv_put_u("pl_cur", g_walk.top);
+    if (g_walk.full) kv_put_u("pl_full", n);
+    kv_put_u("pl_at", n);
+    if (!g_page_seen) return;
+    if (g_walk.changed) push_map();
+    else places_status();
+}
+
+/* A few pages of the walk, newest first, down to its floor. */
+static void places_step(void)
+{
+    for (int pg = 0; g_walk.on && pg < PL_STEP_PAGES; pg++) {
+        char q[200] = "{\"types\":[\"identity\"],\"limit\":", st[24];
+        al_cat_u(q, (unsigned long long)g_walk.limit, sizeof q);
+        if (g_walk.floor) {
+            al_stamp(st, sizeof st, g_walk.floor);
+            al_cat(q, ",\"since\":\"", sizeof q); al_cat(q, st, sizeof q); al_cat(q, "\"", sizeof q);
+        }
+        if (g_walk.until) {
+            al_stamp(st, sizeof st, g_walk.until);
+            al_cat(q, ",\"until\":\"", sizeof q); al_cat(q, st, sizeof q); al_cat(q, "\"", sizeof q);
+        }
+        al_cat(q, "}", sizeof q);
+        int32_t n = hal_xprs_history(q, al_len(q), g_idrows, sizeof g_idrows - 1);
+        if (n < 0 && g_walk.limit > 10) { g_walk.limit /= 2; continue; }   /* rows too long: smaller pages */
+        if (n <= 0) { places_done(); return; }
+        g_idrows[n] = 0;
+        const char *p = g_idrows;
+        while (*p && *p != '[') p++;
+        if (*p == '[') p++;
+        static char obj[2048];
+        int rows = 0;
+        unsigned long long oldest = 0;
+        db_exec("BEGIN", 0);
+        while ((p = al_json_next(p, obj, sizeof obj)) != 0) {
+            char w[1200], ts[24];
+            rows++;
+            if (al_json(obj, "wire", w, sizeof w) && al_field(w, "ts", ts, sizeof ts)) {
+                unsigned long long t = al_epoch(ts);
+                if (t && (!oldest || t < oldest)) oldest = t;
+            }
+            place_take(obj);
+        }
+        db_exec("COMMIT", 0);
+        if (rows < g_walk.limit || !oldest || (g_walk.floor && oldest <= g_walk.floor)) { places_done(); return; }
+        /* The next page ends where this one did; a second full of one
+         * second's rows steps past it rather than reading it again. */
+        g_walk.until = oldest == g_walk.until ? oldest - 1 : oldest;
+    }
+}
+
+/* The stations on the map: one marker per station that says its point,
+ * one per square for those that say only their square (with how many are
+ * in it), never a pile of markers on one spot. Check-in points are drawn
+ * green already (load_points), so they are not drawn again. */
+static void fit_put(const char *pos);
+static int point_find(const char *call);
+static void places_draw(void)
+{
+    static const char sql[] = "SELECT call, nick, pos, half, seen FROM places"
+                              " WHERE pos != '' AND seen >= ? ORDER BY pos LIMIT 1500";
+    if (g_db < 0) return;
+    p_begin(); p_int(now_s() > PL_RECENT_S ? now_s() - PL_RECENT_S : 0); p_end();
+    int32_t n = hal_db_query(g_db, sql, sizeof sql - 1, g_params, al_len(g_params),
+                             g_plrows, sizeof g_plrows - 1);
+    if (n <= 0) return;
+    g_plrows[n] = 0;
+    const char *p = g_plrows;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    char me[16];
+    base_call(me, sizeof me, g_me);
+    /* Rows come ordered by place: a square's stations are neighbours. */
+    char gpos[40] = "", gcall[16] = "", gnick[48] = "", detail[160];
+    long ghalf = 0;
+    int gn = 0;
+    unsigned long long gseen = 0;
+    for (;;) {
+        char call[16] = "", nick[48] = "", pos[40] = "", v[24];
+        long half = 0;
+        unsigned long long seen = 0;
+        int more = (p = al_json_next(p, g_obj, sizeof g_obj)) != 0;
+        if (more) {
+            al_json(g_obj, "call", call, sizeof call);
+            al_json(g_obj, "nick", nick, sizeof nick);
+            al_json(g_obj, "pos", pos, sizeof pos);
+            if (al_json(g_obj, "half", v, sizeof v)) half = (long)u_of(v);
+            if (al_json(g_obj, "seen", v, sizeof v)) seen = u_of(v);
+            if (al_eq(call, me) || point_find(call) >= 0 || !ci_pos_ok(pos)) continue;
+            if (gn && al_eq(pos, gpos) && half && half == ghalf) {
+                gn++;
+                if (seen > gseen) gseen = seen;
+                continue;
+            }
+        }
+        if (gn) {
+            /* Draw the group just closed. */
+            char id[64], label[32] = "", sq[24] = "", a[24];
+            detail[0] = 0;
+            if (gn == 1) {
+                al_cpy(id, "pl:", sizeof id);
+                al_cat(id, gcall, sizeof id);
+                al_cpy(label, gcall, sizeof label);
+                if (gnick[0]) al_cpy(detail, gnick, sizeof detail);
+            } else {
+                al_cpy(id, "sq:", sizeof id);
+                al_cat(id, gpos, sizeof id);
+                al_cat_u(label, (unsigned long long)gn, sizeof label);
+                al_cat(label, " stations", sizeof label);
+            }
+            if (ghalf) {
+                ci_dist_text(ghalf * 2, sq, sizeof sq);
+                if (detail[0]) al_cat(detail, " \xC2\xB7 ", sizeof detail);
+                al_cat(detail, "within ", sizeof detail);
+                al_cat(detail, sq, sizeof detail);
+            }
+            ago(a, sizeof a, gseen);
+            if (detail[0]) al_cat(detail, " \xC2\xB7 ", sizeof detail);
+            al_cat(detail, a, sizeof detail);
+            marker(id, gpos, label, "#90A4AE", detail);
+            fit_put(gpos);
+        }
+        if (!more) break;
+        al_cpy(gpos, pos, sizeof gpos);
+        al_cpy(gcall, call, sizeof gcall);
+        al_cpy(gnick, nick, sizeof gnick);
+        ghalf = half;
+        gseen = seen;
+        gn = 1;
+    }
+}
+
+/* A station's sheet, or a square's: who is there, how approximate the
+ * place is, when it was last heard, and its point to copy. */
+static void place_sheet_of(const char *id)
+{
+    char intro[400] = "", extra[120] = "", title[40] = "", pos[40] = "", v[24], a[24], sq[24];
+    long half = 0;
+    unsigned long long seen = 0;
+    int n = 0, total = 0;
+    p_begin();
+    if (al_starts(id, "pl:")) {
+        p_str(id + 3); p_end();
+        db_query("SELECT call, nick, pos, half, seen FROM places WHERE call = ? LIMIT 1", 1);
+    } else {
+        p_str(id + 3); p_int(now_s() > PL_RECENT_S ? now_s() - PL_RECENT_S : 0); p_end();
+        db_query("SELECT call, nick, pos, half, seen FROM places WHERE pos = ? AND seen >= ?"
+                 " ORDER BY seen DESC LIMIT 60", 1);
+    }
+    const char *p = g_rows;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+        char call[16], nick[48];
+        al_json(g_obj, "call", call, sizeof call);
+        al_json(g_obj, "nick", nick, sizeof nick);
+        if (point_find(call) >= 0) continue;
+        total++;
+        if (!pos[0]) {
+            al_json(g_obj, "pos", pos, sizeof pos);
+            if (al_json(g_obj, "half", v, sizeof v)) half = (long)u_of(v);
+            if (al_json(g_obj, "seen", v, sizeof v)) seen = u_of(v);
+            al_cpy(title, call, sizeof title);
+        }
+        if (al_starts(id, "pl:")) { al_cpy(intro, nick, sizeof intro); continue; }
+        if (n < 12) {
+            if (intro[0]) al_cat(intro, "\n", sizeof intro);
+            al_cat(intro, call, sizeof intro);
+            if (nick[0]) { al_cat(intro, " ", sizeof intro); al_cat(intro, nick, sizeof intro); }
+            n++;
+        }
+    }
+    if (!total || !ci_pos_ok(pos)) { toast("info", "No longer on the map."); return; }
+    if (total > n && al_starts(id, "sq:")) {
+        al_cat(intro, "\n+", sizeof intro);
+        al_cat_u(intro, (unsigned long long)(total - n), sizeof intro);
+    }
+    if (al_starts(id, "sq:")) {
+        title[0] = 0;
+        al_cat_u(title, (unsigned long long)total, sizeof title);
+        al_cat(title, total == 1 ? " station" : " stations", sizeof title);
+    }
+    if (half) {
+        ci_dist_text(half * 2, sq, sizeof sq);
+        al_cpy(extra, "Somewhere in this ", sizeof extra);
+        al_cat(extra, sq, sizeof extra);
+        al_cat(extra, " square\n", sizeof extra);
+    }
+    if (al_starts(id, "pl:")) {
+        ago(a, sizeof a, seen);
+        al_cat(extra, "Heard ", sizeof extra);
+        al_cat(extra, a, sizeof extra);
+    }
+    here_pos(g_here, sizeof g_here);
+    place_sheet(id, title, intro, pos, g_here[0] ? ci_dist_m(g_here, pos) : -1, extra);
+}
+
 static void push_map(void)
 {
+    uint64_t t0 = hal_time_ms();
     say("{\"type\":\"ui.map.markers.clear\"}");
     g_box.on = g_fit_all.on = g_fit_near.on = 0;
     who_am_i();
@@ -1372,6 +1742,11 @@ static void push_map(void)
         marker(mid, g_pts[i].pos, g_pts[i].call, been ? "#A5D6A7" : "#43A047", detail);
         fit_put(g_pts[i].pos);
     }
+    /* Every other station that says where it is, from the copy kept here. */
+    uint64_t t1 = hal_time_ms();
+    places_draw();
+    places_status();
+    uint64_t t2 = hal_time_ms();
     char me[40];
     my_pos(me, sizeof me);
     if (me[0] && g_bot_on) { marker("me", me, "My station", "#4FC3F7", ""); fit_put(me); }
@@ -1385,6 +1760,20 @@ static void push_map(void)
         g_fit_here = g_here[0] != 0;
     }
     save_overview();
+    /* Name the slow part when the map is slow (performance.md 8.29). */
+    uint64_t t3 = hal_time_ms();
+    if (t3 - t0 >= 100) {
+        char l[120] = "perf: map took ";
+        al_cat_u(l, t3 - t0, sizeof l);
+        al_cat(l, "ms (before stations=", sizeof l);
+        al_cat_u(l, t1 - t0, sizeof l);
+        al_cat(l, "ms stations=", sizeof l);
+        al_cat_u(l, t2 - t1, sizeof l);
+        al_cat(l, "ms after=", sizeof l);
+        al_cat_u(l, t3 - t2, sizeof l);
+        al_cat(l, "ms)", sizeof l);
+        log_host(l);
+    }
 }
 
 /* ── Badges ───────────────────────────────────────────────────────────── */
@@ -1484,7 +1873,7 @@ static void push_events(void)
     push_nearby();
 }
 
-/* ── My station ───────────────────────────────────────────────────────── */
+/* ── Settings (this station) ───────────────────────────────────────────────────── */
 /* A details card: label/value pairs. */
 static void details(const char *field, const char *const *pairs, int n)
 {
@@ -1701,7 +2090,6 @@ static void push_all(void)
 
 /* A page is open: follow the station table (core.monitor) so Nearby shows
  * who walks into reach, at most once every ten seconds. */
-static int g_page_seen;
 static unsigned long long g_nearby_at, g_explore_at;
 static void page_seen(void)
 {
@@ -1746,7 +2134,12 @@ static void on_command(void)
     }
     if (!al_json(g_buf, "command", cmd, sizeof cmd) &&
         !al_json(g_buf, "action", cmd, sizeof cmd)) return;
-    if (al_eq(cmd, "ready") || al_eq(cmd, "refresh")) { who_am_i(); push_all(); return; }
+    if (al_eq(cmd, "ready") || al_eq(cmd, "refresh")) {
+        who_am_i();
+        push_all();          /* the map from the copy kept here, at once */
+        places_begin(1);     /* then brought up to date, a step per event or tick */
+        return;
+    }
     if (al_eq(cmd, "nearby_refresh")) { push_events(); push_map(); return; }
     if (al_eq(cmd, "nearby_asking")) {
         toast("info", "Still waiting for an answer.");
@@ -1816,7 +2209,8 @@ static void on_command(void)
         char pid[32], v[12];
         al_json(g_buf, "prompt_id", pid, sizeof pid);
         al_json(g_buf, "prompt_value", v, sizeof v);
-        if ((al_starts(pid, "pt:") || al_starts(pid, "ev:")) && al_eq(v, "map") && ci_pos_ok(g_sheet_pos)) {
+        if ((al_starts(pid, "pt:") || al_starts(pid, "ev:") || al_starts(pid, "pl:") || al_starts(pid, "sq:")) &&
+            al_eq(v, "map") && ci_pos_ok(g_sheet_pos)) {
             char lat[24], m[120] = "{\"type\":\"ui.map.locate\",\"lat\":";
             unsigned k = 0;
             while (g_sheet_pos[k] && g_sheet_pos[k] != ',' && k + 1 < sizeof lat) { lat[k] = g_sheet_pos[k]; k++; }
@@ -1833,6 +2227,7 @@ static void on_command(void)
         if (!al_json(g_buf, "id", id, sizeof id)) return;
         if (al_starts(id, "st:")) { point_sheet(id + 3); return; }
         if (al_starts(id, "ev:")) { event_sheet(id + 3); return; }
+        if (al_starts(id, "pl:") || al_starts(id, "sq:")) { load_points(); place_sheet_of(id); return; }
         if (al_starts(id, "log:")) {
             al_cpy(g_sel, id + 4, sizeof g_sel);
             push_entry();
@@ -1962,6 +2357,9 @@ int32_t module_init(void)
     /* Check-in events from anyone, heard here or replayed by the archivers:
      * the core keeps them and fetches what is new; this wapp reads them. */
     hal_xprs_follow_kind("event", 5, 1);
+    /* Every station's identity, from anyone, the same way: where stations
+     * say they are, for the map (see "Stations everywhere"). */
+    hal_xprs_follow_kind("identity", 8, 1);
     sub("xprs.event", 1);
     load_settings();
     pend_load();
@@ -1990,12 +2388,17 @@ int32_t module_tick(void)
     drain_events();
     point_due();
     frame_when_known();
+    places_begin(0);
+    places_step();
     return 0;
 }
 
 int32_t module_handle_event(void)
 {
     drain_events();
+    /* A walk under way goes on with whatever wakes this engine: while a page
+     * is open that is often, so a first fill takes seconds, not minutes. */
+    if (g_walk.on) places_step();
     uint32_t n = hal_msg_recv(g_buf, sizeof g_buf - 1);
     if (n == 0) return 0;
     g_buf[n < sizeof g_buf ? n : sizeof g_buf - 1] = 0;

@@ -31,3 +31,21 @@
 - **`screen_closed`**: the host sends it when the back arrow or the back
   gesture closes a panel. A wapp with nested panels reopens the parent there
   (Firmwares: WiFi -> Station -> list) instead of adding a Back button.
+- **`ci_pos_square` in `checkin/ci.c`**: a `pos:` with redaction bars
+  (6.2.1, `38█████,-9█████`) placed in the MIDDLE of the square its readable
+  digits name, with the square's half-width in metres; a plain value is its
+  own point. The C twin of the core's `xprsPosCell` and the xprs.dev map's
+  `parsePos`. Any wapp that maps stations uses it (lift it into the SDK the
+  second time). Beside it `ci_xprs_call`: an XPRS callsign, not another
+  network's node.
+- **Map from a kept copy, brought up to date behind it** (Check-in's
+  "Stations everywhere" in `checkin/main.c`): follow a packet type with
+  `hal_xprs_follow_kind` so the core keeps it and asks the archivers;
+  copy what the screen needs into a small table of the wapp's own; draw from
+  that table at once with an "Updated <when>" `ui.map.status` pill; walk the
+  archive newest first a couple of pages per wake (`since:` an hour before
+  the newest held, a whole walk every few hours). The shape for any screen
+  built from a type that arrives from everywhere.
+- **`ui.map.status` items with `"on": false`**: a plain label pill on the
+  map (a count, a time) that stays off the app bar's channel chips, which
+  show only items that are on.

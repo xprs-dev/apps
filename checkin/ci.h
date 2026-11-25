@@ -149,6 +149,18 @@ int ci_pos_ok(const char *pos);
  * what a station claims about where it stands. 0 when [in] is not one. */
 int ci_pos_norm(const char *in, char *out, unsigned cap);
 
+/* Where a station says it is (an identity's pos:, XPRS.md 15.1), bars and
+ * all (6.2.1): a plain value is its point; a value whose last digits are
+ * hidden (`38█████,-9█████`) is placed in the MIDDLE of the square its
+ * readable digits name (38.5000,-9.5000), not on the corner the stripped
+ * digits spell. [mid] gets "lat,lon" with four decimals, [half_m] the
+ * square's half-width in metres, 0 for a plain value. 1 when it is one. */
+int ci_pos_square(const char *pos, char *mid, unsigned cap, long *half_m);
+
+/* An XPRS station's callsign (X, a digit 1-5, then 2 to 6 of A-Z 0-9), with
+ * or without a -SSID: what the map lists. Other networks' nodes are not. */
+int ci_xprs_call(const char *call);
+
 /* Fold free text to a label: lowercase, spaces to -, anything else dropped,
  * at most cap-1. Empty when nothing is left. */
 void ci_label(char *out, unsigned cap, const char *text);

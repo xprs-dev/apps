@@ -5,6 +5,7 @@
  * callsign is switchable, so one process plays the station and the chaser.
  * hal_db_* is the real database: sdk/hal_db_zx.c, a zx store, as in the app.
  */
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,7 @@ void hal_log(int32_t level, const char *m, uint32_t n) { (void)level; (void)m; (
 
 uint64_t g_now = 1786960000ULL;          /* 2026-08-17_09:46:40 */
 uint64_t hal_time_epoch(void) { return g_now; }
+uint64_t hal_time_ms(void) { return g_now * 1000ULL; }
 int32_t g_offset = 60;
 int32_t hal_time_utc_offset(void) { return g_offset; }
 int32_t g_lat = (int32_t)0x80000000, g_lon = (int32_t)0x80000000;
@@ -170,21 +172,37 @@ int32_t hal_xprs_position(char *out, uint32_t cap)
     memcpy(out, g_shared, n);
     return (int32_t)n;
 }
-char g_followed_kind[24] = "";
+/* The types followed, comma-separated, in the order asked. */
+char g_followed_kind[64] = "";
 int32_t hal_xprs_follow_kind(const char *k, uint32_t kl, int32_t on)
 {
-    if (!kl || kl >= sizeof g_followed_kind) return -1;
-    if (on) { memcpy(g_followed_kind, k, kl); g_followed_kind[kl] = 0; }
-    else g_followed_kind[0] = 0;
+    if (!kl || kl >= 24) return -1;
+    char w[24];
+    memcpy(w, k, kl); w[kl] = 0;
+    if (on && !strstr(g_followed_kind, w)) {
+        if (g_followed_kind[0]) strcat(g_followed_kind, ",");
+        strcat(g_followed_kind, w);
+    }
     return 0;
 }
+/* The archive's answer: identity rows for a query that asks for them
+ * (g_identities; the last query is kept to check its window), everything
+ * else from g_history. */
 char g_history[8192] = "[]";
+char g_identities[16384] = "[]";
+char g_id_query[256];
+int g_id_queries;
 int32_t hal_xprs_history(const char *q, uint32_t ql, char *out, uint32_t cap)
 {
-    (void)q; (void)ql;
-    uint32_t n = strlen(g_history);
+    const char *src = g_history;
+    if (ql < sizeof g_id_query && memmem(q, ql, "identity", 8)) {
+        memcpy(g_id_query, q, ql); g_id_query[ql] = 0;
+        g_id_queries++;
+        src = g_identities;
+    }
+    uint32_t n = strlen(src);
     if (n > cap) return -(int32_t)n;
-    memcpy(out, g_history, n);
+    memcpy(out, src, n);
     return (int32_t)n;
 }
 

@@ -401,3 +401,78 @@ int ci_pos_norm(const char *in, char *out, unsigned cap)
     deg4(out, cap, lo);
     return 1;
 }
+
+/* ── where a station says it is ───────────────────────────────────────── */
+/* One coordinate of a pos: value with its redaction bars (U+2588, UTF-8
+ * E2 96 88) dropped: the readable digits into [shown], and whether any bar
+ * was there. 0 when a byte other than a digit, '-', '.' or a bar appears. */
+static int unbar(const char *s, unsigned n, char *shown, unsigned cap, int *barred)
+{
+    unsigned k = 0;
+    *barred = 0;
+    for (unsigned i = 0; i < n; i++) {
+        if ((unsigned char)s[i] == 0xE2 && i + 2 < n &&
+            (unsigned char)s[i + 1] == 0x96 && (unsigned char)s[i + 2] == 0x88) {
+            *barred = 1;
+            i += 2;
+            continue;
+        }
+        char c = s[i];
+        if (!((c >= '0' && c <= '9') || c == '-' || c == '.')) return 0;
+        if (k + 1 >= cap) return 0;
+        shown[k++] = c;
+    }
+    shown[k] = 0;
+    return k > 0;
+}
+
+/* The middle of the square [shown] names when its last digits are hidden,
+ * times 1e7: 38 is anywhere from 38 to 39, so 38.5; -9 is -9.5. [half7]
+ * gets the square's half-width. Unchanged when nothing was hidden. */
+static int coord(const char *s, unsigned n, int maxint, long *v7, long *half7)
+{
+    char shown[24];
+    int barred;
+    if (!unbar(s, n, shown, sizeof shown, &barred)) return 0;
+    const char *p = shown;
+    if (!dec7(&p, v7, maxint) || *p) return 0;
+    if (!barred) return 1;
+    int dec = 0;
+    for (const char *q = shown; *q; q++) if (*q == '.') { dec = al_len(q + 1); break; }
+    long unit = 10000000L;
+    for (int i = 0; i < dec && unit > 1; i++) unit /= 10;
+    long h = unit / 2;
+    *v7 += shown[0] == '-' ? -h : h;
+    if (h > *half7) *half7 = h;
+    return 1;
+}
+
+int ci_pos_square(const char *pos, char *mid, unsigned cap, long *half_m)
+{
+    mid[0] = 0;
+    *half_m = 0;
+    if (!pos) return 0;
+    const char *comma = pos;
+    while (*comma && *comma != ',') comma++;
+    if (*comma != ',') return 0;
+    long la, lo, h7 = 0;
+    if (!coord(pos, (unsigned)(comma - pos), 2, &la, &h7) ||
+        !coord(comma + 1, al_len(comma + 1), 3, &lo, &h7)) return 0;
+    if (la < -900000000L || la > 900000000L || lo < -1800000000L || lo > 1800000000L) return 0;
+    deg4(mid, cap, la);
+    al_cat(mid, ",", cap);
+    deg4(mid, cap, lo);
+    /* A degree of latitude is 111.32 km. */
+    *half_m = (long)((long long)h7 * 111320LL / 10000000LL);
+    return 1;
+}
+
+int ci_xprs_call(const char *call)
+{
+    if (!call || call[0] != 'X' || call[1] < '1' || call[1] > '5') return 0;
+    int n = 0;
+    const char *p = call + 2;
+    for (; *p && *p != '-'; p++, n++)
+        if (!((*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9'))) return 0;
+    return n >= 2 && n <= 6;
+}
