@@ -68,7 +68,7 @@
   },
   {
     "$": "screen",
-    "name": "Logbook",
+    "name": "Score",
     "icon": "history",
     "children": [
       {

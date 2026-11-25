@@ -14,7 +14,7 @@
  *               last copy kept here and brought up to date behind it
  *   Nearby      stations in reach now, a Check in button on each; under
  *               them every station and event heard (t:event tag:checkin)
- *   Logbook     every check-in, counted, and the badges earned (a filter
+ *   Score       every check-in, counted, and the badges earned (a filter
  *               chip each); tap a check-in for the evidence
  *   Settings    (the top-right menu, not a tab) this station: where it
  *               is (a link to the setting), check-ins on or off, greeting,
@@ -838,7 +838,7 @@ static void on_command_packet(const char *row_)
     push_station();
 }
 
-/* ── Logbook ──────────────────────────────────────────────────────────── */
+/* ── Score ────────────────────────────────────────────────────────────── */
 static void tile(int *first, const char *id, const char *label, const char *value, const char *hint)
 {
     if (!*first) al_cat(g_out, ",", sizeof g_out);
