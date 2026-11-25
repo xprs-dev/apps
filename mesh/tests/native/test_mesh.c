@@ -178,20 +178,22 @@ int main(void) {
     module_handle_event();
     check(cap_contains("\"type\":\"ui.graph.set\""), "ready streams a graph frame");
 
-    /* ── The stations as a list, by scope and by page ── */
+    /* ── The stations as a list: every one known, freshest first ── */
     extern char g_station_req[8][256];
     extern int g_station_reqn;
     void module_tick(void);
     cap_clear();
-    inbox_set("{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"more:global\"}}");
+    inbox_set("{\"command\":\"ready\"}");
     module_handle_event();
-    check(cap_contains("\"tab\":\"Local\",\"title\":\"Local\""), "the list has a Local section with its count");
-    check(cap_contains("\"title\":\"X3PTZM\",\"subtitle\":\"Station \\u00b7 LAN, Bluetooth \\u00b7 420 m\""),
-          "a row says what it is, how it is heard and how far");
-    check(cap_contains("\"now\",\"Browse\""), "a station with an API is marked to browse");
-    check(cap_contains("\"tab\":\"Global\",\"title\":\"Global\""), "300 global stations are counted");
-    check(cap_contains("X1PAGE2") && !cap_contains("X1FAR"), "Show the next ones turns the page");
-    check(cap_contains("61 to 61 of 300"), "the page says where it is");
+    check(cap_contains("\"field\":\"stations\",\"sections\":[{\"title\":\"3 stations\""),
+          "the list says how many stations are known");
+    check(cap_contains("\"title\":\"X3PTZM\",\"subtitle\":\"Station \xc2\xb7 LAN, Bluetooth \xc2\xb7 420 m\""),
+          "a station heard here says what it is, how it is heard and how far");
+    check(cap_contains("\"just now\",\"Browse\""), "a station with an API is marked to browse");
+    check(cap_contains("\"type\":\"ui.map.markers.clear\"") && cap_contains("\"type\":\"ui.map.status\""),
+          "the map is drawn when the page opens");
+    check(cap_contains("\"type\":\"ui.map.viewport\",\"lat\":38.7077,\"lon\":-9.1365"),
+          "and starts where this phone says it is");
 
     /* ── One station: how it is reached, and what it shares ── */
     cap_clear();
@@ -322,6 +324,115 @@ int main(void) {
         inbox_set("{\"command\":\"prompt\",\"fields\":{\"prompt_id\":\"own:add\",\"prompt_input\":\"X1NEW\"}}");
         module_handle_event();
         check(cap_contains("\"action\":\"add\",\"member\":\"X1NEW\""), "a person is added by callsign");
+    }
+
+    /* ── The map of every station, and the drawer's search and chips ── */
+    {
+        extern unsigned long long g_now;
+        extern char g_archive[16384], g_names[2048], g_names_q[256], g_followed_kind[64];
+        void al_stamp(char *out, unsigned cap, unsigned long long epoch);
+        char st[24], w1[300], w2[300], w3[300], w4[300], w5[300];
+        const char *bar = "\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88";
+        al_stamp(st, sizeof st, g_now - 3600);
+        snprintf(w1, sizeof w1, "t:identity f:X3ARCH ts:%s nick:Hill pos:38.7200,-9.1400 k:npub1arch sig:x", st);
+        snprintf(w2, sizeof w2, "t:service f:X3ARCH ts:%s serve:archive,relay source:solar sig:x", st);
+        snprintf(w3, sizeof w3, "t:identity f:X3SQR1 ts:%s pos:38%s,-9%s sig:x", st, bar, bar);
+        snprintf(w4, sizeof w4, "t:identity f:X3SQR2-1 ts:%s nick:Twin pos:38%s,-9%s sig:x", st, bar, bar);
+        snprintf(w5, sizeof w5, "t:identity f:X1KEYD ts:%s nick:Ana k:npub1keyd sig:x", st);
+        snprintf(g_archive, sizeof g_archive,
+                 "[{\"id\":\"a1\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"},"
+                 "{\"id\":\"a2\",\"type\":\"service\",\"sig\":\"verified\",\"wire\":\"%s\"},"
+                 "{\"id\":\"a3\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"},"
+                 "{\"id\":\"a4\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"},"
+                 "{\"id\":\"a5\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"}]",
+                 w1, w2, w3, w4, w5);
+        check(strstr(g_followed_kind, "identity") && strstr(g_followed_kind, "service"),
+              "identities and service announcements are followed, from anyone");
+
+        /* Two minutes on, the copy is brought up to date behind the page. */
+        g_now += 300;
+        cap_clear();
+        module_tick();
+        module_tick();
+        module_tick();
+        check(cap_contains("\"id\":\"pl:X3ARCH\"") && cap_contains("\"lat\":38.7200,\"lon\":-9.1400") &&
+              cap_contains("{\"id\":\"message\",\"label\":\"Message\"}"),
+              "a station at its point, offering Open and Message (it published a key)");
+        check(cap_contains("\"id\":\"sq:38.5000,-9.5000\"") && cap_contains("\"label\":\"2 stations\"") &&
+              cap_contains("Show all 2 here") && cap_contains("X3SQR2 Twin"),
+              "two in one square: one marker naming them, Show all 2 here");
+        check(cap_contains("Hill \\u00b7 Archivers \\u00b7 Relays \\u00b7 Solar") ||
+              cap_contains("Hill \xc2\xb7 Archivers \xc2\xb7 Relays \xc2\xb7 Solar"),
+              "a row says what the station serves and runs on");
+        check(cap_contains("\"title\":\"X1KEYD\"") && cap_contains("\"action\":\"st_msg\",\"actionLabel\":\"Message\""),
+              "a station never placed is listed, with Message when it can be messaged");
+        check(cap_contains("\"id\":\"serve:archive\",\"label\":\"Archivers\",\"count\":1") &&
+              cap_contains("\"id\":\"reach:local\",\"label\":\"Nearby\",\"count\":2") &&
+              cap_contains("\"id\":\"source:solar\",\"label\":\"Solar\",\"count\":1"),
+              "the chips: how stations are heard, what they serve and run on, with how many");
+
+        cap_clear();
+        inbox_set("{\"command\":\"st_tags_tap\",\"fields\":{\"st_tags_id\":\"serve:archive\"}}");
+        module_handle_event();
+        check(cap_contains("\"title\":\"1 of 7 stations\"") && cap_contains("\"title\":\"X3ARCH\"") &&
+              !cap_contains("\"title\":\"X3SQR1\"") && cap_contains("\"id\":\"serve:archive\",\"label\":\"Archivers\",\"count\":1,\"on\":true"),
+              "Archivers: only the archivers, the chip on");
+        cap_clear();
+        inbox_set("{\"command\":\"st_tags_tap\",\"fields\":{\"st_tags_id\":\"serve:archive\"}}");
+        module_handle_event();
+        check(cap_contains("\"title\":\"7 stations\""), "tapped again, every station");
+
+        cap_clear();
+        inbox_set("{\"command\":\"stations_search\",\"fields\":{\"stations_query\":\"sqr\"}}");
+        module_handle_event();
+        check(cap_contains("\"title\":\"2 of 7 stations\"") && cap_contains("\"title\":\"X3SQR1\"") &&
+              cap_contains("\"title\":\"X3SQR2\"") && !cap_contains("\"title\":\"X3ARCH\""),
+              "a search finds by part of a callsign, any case");
+        cap_clear();
+        inbox_set("{\"command\":\"stations_search\",\"fields\":{\"stations_query\":\"twin\"}}");
+        module_handle_event();
+        check(cap_contains("\"title\":\"X3SQR2\"") && !cap_contains("\"title\":\"X3SQR1\""), "and by name");
+
+        snprintf(g_names, sizeof g_names, "[{\"call\":\"X3ZZZZ\",\"nick\":\"Zed\",\"kind\":\"station\",\"ts\":%llu}]", g_now - 100);
+        cap_clear();
+        inbox_set("{\"command\":\"stations_search\",\"fields\":{\"stations_query\":\"zed\"}}");
+        module_handle_event();
+        check(strstr(g_names_q, "\"q\":\"zed\"") && strstr(g_names_q, "\"ask\":true") && cap_contains("\"title\":\"X3ZZZZ\""),
+              "what is known nowhere here is asked of the archivers by name");
+        cap_clear();
+        inbox_set("{\"command\":\"stations_search\",\"fields\":{\"stations_query\":\"\"}}");
+        module_handle_event();
+
+        cap_clear();
+        inbox_set("{\"command\":\"marker_action\",\"id\":\"sq:38.5000,-9.5000\",\"action\":\"area\"}");
+        module_handle_event();
+        check(cap_contains("\"title\":\"2 of 8 stations\"") && cap_contains("\"id\":\"area\"") &&
+              cap_contains("\"type\":\"ui.drawer\",\"state\":\"half\""),
+              "Show all here: the drawer opens on the square's stations");
+        cap_clear();
+        inbox_set("{\"command\":\"st_tags_tap\",\"fields\":{\"st_tags_id\":\"area\"}}");
+        module_handle_event();
+        check(cap_contains("\"title\":\"8 stations\"") && !cap_contains("\"id\":\"area\""), "its chip lets go of the square");
+
+        cap_clear();
+        inbox_set("{\"command\":\"marker_action\",\"id\":\"pl:X3ARCH\",\"action\":\"message\"}");
+        module_handle_event();
+        check(cap_contains("\"type\":\"mesh.message\",\"callsign\":\"X3ARCH\""), "Message opens Chat with it");
+        cap_clear();
+        inbox_set("{\"command\":\"marker_action\",\"id\":\"pl:X3ARCH\",\"action\":\"open\"}");
+        module_handle_event();
+        check(cap_contains("\"name\":\"Station\",\"title\":\"X3ARCH\"") && cap_contains("\"id\":\"msg\"") &&
+              cap_contains("\"title\":\"Show on map\""),
+              "Open: its panel, with Message and Show on map");
+        cap_clear();
+        inbox_set("{\"command\":\"s_offers_tap\",\"fields\":{\"s_offers_id\":\"map\"}}");
+        module_handle_event();
+        check(cap_contains("\"type\":\"ui.map.locate\",\"lat\":38.7200,\"lon\":-9.1400,\"zoom\":14"),
+              "Show on map goes to it");
+        cap_clear();
+        inbox_set("{\"command\":\"st_msg\",\"fields\":{\"stations_id\":\"X1KEYD\"}}");
+        module_handle_event();
+        check(cap_contains("\"type\":\"mesh.message\",\"callsign\":\"X1KEYD\""), "a row's Message button too");
     }
 
     printf(g_fail ? "\nRESULT: FAIL\n" : "\nRESULT: PASS\n");

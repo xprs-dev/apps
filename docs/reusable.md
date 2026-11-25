@@ -31,21 +31,37 @@
 - **`screen_closed`**: the host sends it when the back arrow or the back
   gesture closes a panel. A wapp with nested panels reopens the parent there
   (Firmwares: WiFi -> Station -> list) instead of adding a Back button.
-- **`ci_pos_square` in `checkin/ci.c`**: a `pos:` with redaction bars
-  (6.2.1, `38█████,-9█████`) placed in the MIDDLE of the square its readable
-  digits name, with the square's half-width in metres; a plain value is its
-  own point. The C twin of the core's `xprsPosCell` and the xprs.dev map's
-  `parsePos`. Any wapp that maps stations uses it (lift it into the SDK the
-  second time). Beside it `ci_xprs_call`: an XPRS callsign, not another
-  network's node.
-- **Map from a kept copy, brought up to date behind it** (Check-in's
-  "Stations everywhere" in `checkin/main.c`): follow a packet type with
-  `hal_xprs_follow_kind` so the core keeps it and asks the archivers;
-  copy what the screen needs into a small table of the wapp's own; draw from
-  that table at once with an "Updated <when>" `ui.map.status` pill; walk the
-  archive newest first a couple of pages per wake (`since:` an hour before
-  the newest held, a whole walk every few hours). The shape for any screen
-  built from a type that arrives from everywhere.
+- **`sdk/wapp_stations.c` / `.h` (`wst_*`): every XPRS station on a map and
+  in a list**, the portal's map (portal/page/chat_page.html `mapStations`,
+  `mapPos`, `mapDraw`, `mapList`, `mapChips`) for wapps. Check-in and Mesh
+  link it (`MODULE_SRCS += ../sdk/wapp_stations.c`, `-I../sdk`). Pure
+  helpers: `wst_pos_square` (a `pos:` with redaction bars placed in the
+  MIDDLE of its square, 6.2.1), `wst_pos_parse`, `wst_dist_m`,
+  `wst_dist_text`, `wst_xprs_call`, `wst_base_call`, `wst_ago`,
+  `wst_tag_name`. The table `places` in the wapp's own store: `wst_init`
+  (options: keep stations with no place, how recent is on the map, marker
+  colour, popup actions, skip/placed/done hooks), `wst_follow` (identities and
+  service announcements from anyone), `wst_begin`/`wst_step` (the archive
+  walked a few pages a tick, newest first, `since:` an hour before the newest
+  held, a whole walk every six hours), `wst_heard` (what this device hears
+  now), `wst_named` (what `hal_xprs_names` found). The map: `wst_draw` (one
+  marker per point, one per square with how many, the freshest 1500) and
+  `wst_status`. The list: `wst_filter_t` with `q`, `area` and tags
+  (`serve:archive`, `source:solar`, `reach:local`, `placed`, `key`),
+  `wst_list`, `wst_count`, `wst_chips` (the tags with their counts, as a
+  `$type:"chips"` value), `wst_row`, `wst_row_tags`. Any wapp that maps or
+  lists stations uses it; a new kind of station is a new tag, no code.
+- **A map with its list in a drawer** (`"drawer": true` on the map group, a
+  `$type:"people"` field on the same screen, `"search": true` on the screen
+  for the search box, a `$type:"chips"` field for filters): the host draws
+  the portal's layout, a bottom drawer on a phone and a side panel on a wide
+  screen. Mesh's Stations tab is the example. The wapp moves it with
+  `ui.drawer` {state: peek|half|full}; `ui.map.locate` folds it and takes
+  an optional `zoom`.
+- **Marker `actions`** (`[{"id":"open","label":"Open"}]` on a
+  `ui.map.marker`): buttons in the marker's popup; a press sends
+  `marker_action` {id, action}. Mesh: Open and Message on a station, Show
+  all N here on a square.
 - **`ui.map.status` items with `"on": false`**: a plain label pill on the
   map (a count, a time) that stays off the app bar's channel chips, which
   show only items that are on. Shown on a map with `"chat": false` too

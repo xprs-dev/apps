@@ -12,6 +12,11 @@
 #ifndef CHECKIN_CI_H
 #define CHECKIN_CI_H
 
+/* Positions, distances and callsigns are the SDK's (sdk/wapp_stations.h:
+ * wst_pos_parse, wst_pos_square, wst_dist_m, wst_xprs_call...), shared with
+ * every wapp that maps stations. */
+#include "wapp_stations.h"
+
 #define CI_WIRE_MAX       250
 /* An event may run past one packet: its m: is split by the core (6.6). */
 #define CI_EVENT_MAX      600
@@ -116,12 +121,6 @@ unsigned long long ci_day(unsigned long long epoch, int offset_min);
  * pos: and m: go in that order as far as they fit signed, m: cut to the room
  * left. [title] is folded to a label (a-z 0-9 -). Length, or -1 when the
  * head does not fit. */
-/* Metres between two "lat,lon" positions (good to a fraction of a percent
- * at walking and driving distances), or -1 when either is not a position. */
-long ci_dist_m(const char *a, const char *b);
-/* "450 m", "2.3 km", "18 km"; empty for a negative distance. */
-void ci_dist_text(long m, char *out, unsigned cap);
-
 /* The title a station's standing check-in point is announced under: a
  * t:event tag:checkin that says "this station gives check-ins here", renewed
  * while it does. A person's own event may not take this name. */
@@ -138,28 +137,6 @@ int ci_build_event(char *out, unsigned cap, const char *me,
 int ci_build_badge(char *out, unsigned cap, const char *me,
                    unsigned long long now, const char *ref,
                    unsigned long long size);
-
-/* "lat,lon" in decimal degrees, latitude first (XPRS.md 15.1): 1 when it is
- * one and in range, with both times 1e7 into [lat7] and [lon7] (either may
- * be NULL). */
-int ci_pos_parse(const char *pos, long *lat7, long *lon7);
-int ci_pos_ok(const char *pos);
-
-/* The same position written with four decimals (eleven metres), which is
- * what a station claims about where it stands. 0 when [in] is not one. */
-int ci_pos_norm(const char *in, char *out, unsigned cap);
-
-/* Where a station says it is (an identity's pos:, XPRS.md 15.1), bars and
- * all (6.2.1): a plain value is its point; a value whose last digits are
- * hidden (`38█████,-9█████`) is placed in the MIDDLE of the square its
- * readable digits name (38.5000,-9.5000), not on the corner the stripped
- * digits spell. [mid] gets "lat,lon" with four decimals, [half_m] the
- * square's half-width in metres, 0 for a plain value. 1 when it is one. */
-int ci_pos_square(const char *pos, char *mid, unsigned cap, long *half_m);
-
-/* An XPRS station's callsign (X, a digit 1-5, then 2 to 6 of A-Z 0-9), with
- * or without a -SSID: what the map lists. Other networks' nodes are not. */
-int ci_xprs_call(const char *call);
 
 /* Fold free text to a label: lowercase, spaces to -, anything else dropped,
  * at most cap-1. Empty when nothing is left. */

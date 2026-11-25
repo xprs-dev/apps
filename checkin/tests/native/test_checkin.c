@@ -141,44 +141,44 @@ static void test_rules(void)
 
     char pn[40];
     long la = 0, lo = 0;
-    CHECK(ci_pos_parse("38.7071,-9.1393", &la, &lo) && la == 387071000L && lo == -91393000L, "a position reads");
-    CHECK(!ci_pos_ok("38.7") && !ci_pos_ok("x,y") && !ci_pos_ok("12,190") && !ci_pos_ok("-90.5,0") && ci_pos_ok("-33,151.2"),
+    CHECK(wst_pos_parse("38.7071,-9.1393", &la, &lo) && la == 387071000L && lo == -91393000L, "a position reads");
+    CHECK(!wst_pos_ok("38.7") && !wst_pos_ok("x,y") && !wst_pos_ok("12,190") && !wst_pos_ok("-90.5,0") && wst_pos_ok("-33,151.2"),
           "and nonsense does not");
-    CHECK(ci_pos_norm("38.722345678,-9.13", pn, sizeof pn) && !strcmp(pn, "38.7223,-9.1300"), "four decimals: eleven metres");
+    CHECK(wst_pos_norm("38.722345678,-9.13", pn, sizeof pn) && !strcmp(pn, "38.7223,-9.1300"), "four decimals: eleven metres");
     {
         /* Where a station says it is, bars and all (6.2.1), as the map
          * places it: the middle of the square its readable digits name. */
         char mid[40];
         long half = -1;
-        CHECK(ci_pos_square("38\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88,-9\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88",
+        CHECK(wst_pos_square("38\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88,-9\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88",
                             mid, sizeof mid, &half) && !strcmp(mid, "38.5000,-9.5000") && half == 55660,
               "a square of one degree: its middle, half of 111 km");
-        CHECK(ci_pos_square("38.7\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88,-9.1\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88",
+        CHECK(wst_pos_square("38.7\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88,-9.1\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88",
                             mid, sizeof mid, &half) && !strcmp(mid, "38.7500,-9.1500") && half == 5566,
               "a tenth of a degree: 11 km");
-        CHECK(ci_pos_square("-0\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88,0\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88",
+        CHECK(wst_pos_square("-0\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88,0\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88",
                             mid, sizeof mid, &half) && !strcmp(mid, "-0.5000,0.5000"),
               "south of the equator by its sign, even at zero");
-        CHECK(ci_pos_square("38.7223,-9.1393", mid, sizeof mid, &half) && !strcmp(mid, "38.7223,-9.1393") && half == 0,
+        CHECK(wst_pos_square("38.7223,-9.1393", mid, sizeof mid, &half) && !strcmp(mid, "38.7223,-9.1393") && half == 0,
               "a plain point is itself");
-        CHECK(!ci_pos_square("-", mid, sizeof mid, &half) && !ci_pos_square("38,x", mid, sizeof mid, &half) &&
-              !ci_pos_square("91\xE2\x96\x88,0", mid, sizeof mid, &half), "nothing else is a place");
-        CHECK(ci_xprs_call("X1ABCD") && ci_xprs_call("X3AB-7") && !ci_xprs_call("MT1234") &&
-              !ci_xprs_call("X6ABC") && !ci_xprs_call("X1A") && !ci_xprs_call("X1ABCDEFG"),
+        CHECK(!wst_pos_square("-", mid, sizeof mid, &half) && !wst_pos_square("38,x", mid, sizeof mid, &half) &&
+              !wst_pos_square("91\xE2\x96\x88,0", mid, sizeof mid, &half), "nothing else is a place");
+        CHECK(wst_xprs_call("X1ABCD") && wst_xprs_call("X3AB-7") && !wst_xprs_call("MT1234") &&
+              !wst_xprs_call("X6ABC") && !wst_xprs_call("X1A") && !wst_xprs_call("X1ABCDEFG"),
               "XPRS callsigns only");
     }
     {
-        long d = ci_dist_m("38.7071,-9.1393", "38.7161,-9.1393");
+        long d = wst_dist_m("38.7071,-9.1393", "38.7161,-9.1393");
         CHECK(d > 990 && d < 1010, "a hundredth of a degree north is a kilometre");
-        d = ci_dist_m("38.7071,-9.1393", "38.7071,-9.1278");
+        d = wst_dist_m("38.7071,-9.1393", "38.7071,-9.1278");
         CHECK(d > 985 && d < 1010, "and east, shortened by the latitude");
-        CHECK(ci_dist_m("38.7", "1,1") == -1, "no distance without two places");
+        CHECK(wst_dist_m("38.7", "1,1") == -1, "no distance without two places");
         char dt[24];
-        ci_dist_text(447, dt, sizeof dt);
+        wst_dist_text(447, dt, sizeof dt);
         CHECK(!strcmp(dt, "450 m"), "metres, to ten");
-        ci_dist_text(2349, dt, sizeof dt);
+        wst_dist_text(2349, dt, sizeof dt);
         CHECK(!strcmp(dt, "2.3 km"), "kilometres, to a tenth");
-        ci_dist_text(18400, dt, sizeof dt);
+        wst_dist_text(18400, dt, sizeof dt);
         CHECK(!strcmp(dt, "18 km"), "and whole kilometres further out");
     }
     char l[32];

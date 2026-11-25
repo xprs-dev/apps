@@ -3,6 +3,7 @@
  */
 #include "ci.h"
 #include "util.h"
+#include "wapp_stations.h"
 
 static int is_true(const char *row, const char *key)
 {
@@ -158,7 +159,7 @@ int ci_build_result(char *out, unsigned cap, const char *me, const ci_ask_t *a,
          * then the badge, the event, the relays and the signal while they
          * still fit signed. */
         char rssi[16] = "", ref[64];
-        if (!ci_pos_ok(pos)) return -1;
+        if (!wst_pos_ok(pos)) return -1;
         ci_link_of(a->bearer, link, sizeof link);
         ci_ref_of(file ? file : "", ref, sizeof ref);
         opt(out, cap, "link", link);
@@ -296,183 +297,4 @@ int ci_build_badge(char *out, unsigned cap, const char *me,
     al_cat(out, " m:Check-in badge", cap);
     unsigned n = al_len(out);
     return n > CI_WIRE_UNSIGNED ? -1 : (int)n;
-}
-
-/* One decimal number with at most [maxint] integer digits; its value into
- * [v] times 1e7 (truncated past seven decimals). */
-static int dec7(const char **pp, long *v, int maxint)
-{
-    const char *p = *pp;
-    int neg = 0, nint = 0, nfrac = 0;
-    long iv = 0, fv = 0;
-    if (*p == '-') { neg = 1; p++; }
-    while (*p >= '0' && *p <= '9') { if (++nint > maxint) return 0; iv = iv * 10 + (*p++ - '0'); }
-    if (!nint) return 0;
-    if (*p == '.') {
-        p++;
-        while (*p >= '0' && *p <= '9') {
-            if (nfrac < 7) { fv = fv * 10 + (*p - '0'); nfrac++; }
-            p++;
-        }
-        if (!nfrac) return 0;
-    }
-    while (nfrac < 7) { fv *= 10; nfrac++; }
-    *v = (iv * 10000000L + fv) * (neg ? -1 : 1);
-    *pp = p;
-    return 1;
-}
-
-int ci_pos_parse(const char *pos, long *lat7, long *lon7)
-{
-    const char *p = pos;
-    long la, lo;
-    if (!p || !*p || !dec7(&p, &la, 2) || *p != ',') return 0;
-    p++;
-    if (!dec7(&p, &lo, 3) || *p) return 0;
-    if (la < -900000000L || la > 900000000L || lo < -1800000000L || lo > 1800000000L) return 0;
-    if (lat7) *lat7 = la;
-    if (lon7) *lon7 = lo;
-    return 1;
-}
-
-int ci_pos_ok(const char *pos) { return ci_pos_parse(pos, 0, 0); }
-
-/* cos(x) for |x| <= pi/2 (a latitude), by its series: no libm in a wapp. */
-static double cos_lat(double x)
-{
-    double x2 = x * x;
-    return 1 - x2 / 2 + x2 * x2 / 24 - x2 * x2 * x2 / 720 + x2 * x2 * x2 * x2 / 40320;
-}
-
-long ci_dist_m(const char *a, const char *b)
-{
-    long la1, lo1, la2, lo2;
-    if (!ci_pos_parse(a, &la1, &lo1) || !ci_pos_parse(b, &la2, &lo2)) return -1;
-    const double rad = 3.14159265358979 / 180.0 / 1e7;
-    double dlat = (double)(la2 - la1) * rad;
-    long dl = lo2 - lo1;
-    if (dl > 1800000000L) dl -= 3600000000L;
-    if (dl < -1800000000L) dl += 3600000000L;
-    double dlon = (double)dl * rad * cos_lat((double)(la1 + la2) / 2 * rad);
-    double d2 = dlat * dlat + dlon * dlon, r = d2;
-    if (d2 <= 0) return 0;
-    for (int i = 0; i < 30; i++) r = (r + d2 / r) / 2;   /* sqrt, Newton */
-    return (long)(r * 6371000.0 + 0.5);
-}
-
-void ci_dist_text(long m, char *out, unsigned cap)
-{
-    out[0] = 0;
-    if (m < 0) return;
-    if (m < 1000) {
-        al_cat_u(out, (unsigned long long)((m + 5) / 10 * 10), cap);
-        al_cat(out, " m", cap);
-    } else if (m < 10000) {
-        long d = (m + 50) / 100;
-        al_cat_u(out, (unsigned long long)(d / 10), cap);
-        al_cat(out, ".", cap);
-        al_cat_u(out, (unsigned long long)(d % 10), cap);
-        al_cat(out, " km", cap);
-    } else {
-        al_cat_u(out, (unsigned long long)((m + 500) / 1000), cap);
-        al_cat(out, " km", cap);
-    }
-}
-
-/* Degrees times 1e7 as text with four decimals (eleven metres). */
-static void deg4(char *d, unsigned cap, long v)
-{
-    if (v < 0) { al_cat(d, "-", cap); v = -v; }
-    al_cat_u(d, (unsigned long long)(v / 10000000L), cap);
-    al_cat(d, ".", cap);
-    long f = (v % 10000000L) / 1000L;
-    char t[5] = { (char)('0' + f / 1000), (char)('0' + f / 100 % 10),
-                  (char)('0' + f / 10 % 10), (char)('0' + f % 10), 0 };
-    al_cat(d, t, cap);
-}
-
-int ci_pos_norm(const char *in, char *out, unsigned cap)
-{
-    long la, lo;
-    out[0] = 0;
-    if (!ci_pos_parse(in, &la, &lo)) return 0;
-    deg4(out, cap, la);
-    al_cat(out, ",", cap);
-    deg4(out, cap, lo);
-    return 1;
-}
-
-/* ── where a station says it is ───────────────────────────────────────── */
-/* One coordinate of a pos: value with its redaction bars (U+2588, UTF-8
- * E2 96 88) dropped: the readable digits into [shown], and whether any bar
- * was there. 0 when a byte other than a digit, '-', '.' or a bar appears. */
-static int unbar(const char *s, unsigned n, char *shown, unsigned cap, int *barred)
-{
-    unsigned k = 0;
-    *barred = 0;
-    for (unsigned i = 0; i < n; i++) {
-        if ((unsigned char)s[i] == 0xE2 && i + 2 < n &&
-            (unsigned char)s[i + 1] == 0x96 && (unsigned char)s[i + 2] == 0x88) {
-            *barred = 1;
-            i += 2;
-            continue;
-        }
-        char c = s[i];
-        if (!((c >= '0' && c <= '9') || c == '-' || c == '.')) return 0;
-        if (k + 1 >= cap) return 0;
-        shown[k++] = c;
-    }
-    shown[k] = 0;
-    return k > 0;
-}
-
-/* The middle of the square [shown] names when its last digits are hidden,
- * times 1e7: 38 is anywhere from 38 to 39, so 38.5; -9 is -9.5. [half7]
- * gets the square's half-width. Unchanged when nothing was hidden. */
-static int coord(const char *s, unsigned n, int maxint, long *v7, long *half7)
-{
-    char shown[24];
-    int barred;
-    if (!unbar(s, n, shown, sizeof shown, &barred)) return 0;
-    const char *p = shown;
-    if (!dec7(&p, v7, maxint) || *p) return 0;
-    if (!barred) return 1;
-    int dec = 0;
-    for (const char *q = shown; *q; q++) if (*q == '.') { dec = al_len(q + 1); break; }
-    long unit = 10000000L;
-    for (int i = 0; i < dec && unit > 1; i++) unit /= 10;
-    long h = unit / 2;
-    *v7 += shown[0] == '-' ? -h : h;
-    if (h > *half7) *half7 = h;
-    return 1;
-}
-
-int ci_pos_square(const char *pos, char *mid, unsigned cap, long *half_m)
-{
-    mid[0] = 0;
-    *half_m = 0;
-    if (!pos) return 0;
-    const char *comma = pos;
-    while (*comma && *comma != ',') comma++;
-    if (*comma != ',') return 0;
-    long la, lo, h7 = 0;
-    if (!coord(pos, (unsigned)(comma - pos), 2, &la, &h7) ||
-        !coord(comma + 1, al_len(comma + 1), 3, &lo, &h7)) return 0;
-    if (la < -900000000L || la > 900000000L || lo < -1800000000L || lo > 1800000000L) return 0;
-    deg4(mid, cap, la);
-    al_cat(mid, ",", cap);
-    deg4(mid, cap, lo);
-    /* A degree of latitude is 111.32 km. */
-    *half_m = (long)((long long)h7 * 111320LL / 10000000LL);
-    return 1;
-}
-
-int ci_xprs_call(const char *call)
-{
-    if (!call || call[0] != 'X' || call[1] < '1' || call[1] > '5') return 0;
-    int n = 0;
-    const char *p = call + 2;
-    for (; *p && *p != '-'; p++, n++)
-        if (!((*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9'))) return 0;
-    return n >= 2 && n <= 6;
 }

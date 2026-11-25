@@ -873,11 +873,20 @@ their children as standard fields/actions.
 
 - A screen with a `$type:"map"` group IS the map: it shows the map full
   bleed and nothing else from the screen, except its actions (in the options
-  menu, and as a row over the map with `"toolbar": true`).
+  menu, and as a row over the map with `"toolbar": true`). With
+  `"drawer": true` on the map group and a `$type:"people"` field on the
+  screen, that list is drawn as a people screen (below) in a drawer over the
+  map: pulled up from the bottom on a phone (folded to its search box, half,
+  full; Back folds it), a panel on the left that folds away on a screen wider
+  than tall. `ui.drawer` moves it.
 - A screen with a `$type:"people"` field shows, in this order: its `stats`
   fields as a strip, its `bool` fields as switches, its actions as a row when
-  `"toolbar": true` (always in the options menu), and the FIRST people field
-  full height. Text fields, details and any further list on that screen are
+  `"toolbar": true` (always in the options menu), the search box when the
+  screen says `"search": true` (it sends `<field>_search` with
+  `<field>_query`), its `$type:"chips"` fields (a row of filter chips: the
+  value is `[{"id","label","count"?,"on"?}]` by `ui.field.set`, a tap sends
+  `<chips>_tap` with `<chips>_id`; the wapp decides what a chip means), and
+  the FIRST people field full height. Text fields, details and any further list on that screen are
   not shown: put settings on a screen without a list.
 - Icon names come from a fixed list (`geoUiResolveIcon` in the app); an
   unknown name draws a generic glyph.
@@ -906,8 +915,10 @@ Wapp to host:
 |---|---|
 | `{"type":"ui.map.viewport","lat","lon","zoom"}` | move the map |
 | `{"type":"ui.map.locate","lat","lon"}` | show one place: switch to the map's screen, close any open panel, centre on it and zoom in (a list's "Show on map") |
-| `{"type":"ui.map.marker","id","lat","lon","label","color"?,"detail"?}` | add or move a pin (`color` as `#RRGGBB`) |
+| `{"type":"ui.map.marker","id","lat","lon","label","color"?,"detail"?,"actions"?}` | add or move a pin (`color` as `#RRGGBB`); `actions` `[{"id","label"}]` are buttons in its popup, a press sends `{"command":"marker_action","id","action"}` |
 | `{"type":"ui.map.markers.clear"}` | remove every pin |
+| `{"type":"ui.map.locate","lat","lon","zoom"?}` | show one place: the map's tab, centred, zoomed in (`zoom` when the wapp knows how big the place is); folds a drawer |
+| `{"type":"ui.drawer","state":"peek\|half\|full"}` | move the drawer of a map screen whose map group says `"drawer": true`: its `$type:"people"` field, with the screen's search box and `$type:"chips"` fields, in a drawer over the map (a side panel on a wide screen) |
 | `{"type":"ui.map.prefetch","bbox"?:[s,w,n,e],"minZoom","maxZoom","max"?}` | save an area's tiles for off-grid use; without `bbox`, the area on screen. At most 1500 tiles, two at a time, one save at a time: a tile server is shared and OpenStreetMap's refuses bulk downloads, so save what a person asked for, not the world |
 
 Host to wapp: `{"type":"setViewport","lat","lon","zoom"}` after every pan,

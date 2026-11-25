@@ -6,13 +6,35 @@
     "tip": "@screen.stations_tip",
     "children": [
       {
+        "$": "group",
+        "name": "stations-map",
+        "$type": "map",
+        "drawer": true,
+        "tile-url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "tile-style": "dark",
+        "default-lat": 30,
+        "default-lon": 0,
+        "default-zoom": 2,
+        "min-zoom": 2,
+        "max-zoom": 18,
+        "radius": false,
+        "chat": false,
+        "search": false
+      },
+      {
+        "$": "field",
+        "name": "st_tags",
+        "$type": "chips"
+      },
+      {
         "$": "field",
         "name": "stations",
         "$type": "people",
         "empty_title": "@stations.empty_title",
         "empty": "@stations.empty"
       }
-    ]
+    ],
+    "search": true
   },
   {
     "$": "screen",

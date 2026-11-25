@@ -10,7 +10,7 @@
 #include <stdio.h>
 
 /* ── outbox capture (hal_msg_send) ─────────────────────────────────────── */
-#define CAP_MAX 64
+#define CAP_MAX 4096
 static char *g_cap[CAP_MAX];
 static int   g_capn = 0;
 void cap_clear(void) { for (int i = 0; i < g_capn; i++) free(g_cap[i]); g_capn = 0; }
@@ -175,7 +175,14 @@ int32_t hal_station_read(const char *req, uint32_t len, char *out, uint32_t cap)
         a = g_host_serving ? "{\"call\":\"X1MINE\",\"serving\":true,\"share\":{\"busy\":false,\"done\":0,\"total\":0,\"failed\":0}}"
                            : "{\"call\":\"X1MINE\",\"serving\":false,\"share\":{\"busy\":false,\"done\":0,\"total\":0,\"failed\":0}}";
     } else if (strstr(r, "\"get\":\"list\"")) {
-        if (strstr(r, "\"scope\":\"local\""))
+        if (strstr(r, "\"scope\":\"all\"") && strstr(r, "\"offset\":0"))
+            a = "{\"counts\":{\"local\":2,\"regional\":0,\"global\":1,\"all\":3},\"scope\":\"all\",\"total\":3,\"offset\":0,"
+                "\"rows\":[{\"call\":\"X3PTZM\",\"kind\":\"station\",\"reach\":\"local\",\"bearers\":[\"lan\",\"ble\"],\"age_s\":12,\"api\":true,\"dist_m\":420},"
+                "{\"call\":\"X1NEAR\",\"kind\":\"user\",\"reach\":\"local\",\"bearers\":[\"ble\"],\"age_s\":200,\"api\":false},"
+                "{\"call\":\"X1FAR\",\"kind\":\"user\",\"reach\":\"global\",\"bearers\":[\"rns\"],\"age_s\":7200,\"api\":false,\"hops\":4}]}";
+        else if (strstr(r, "\"scope\":\"all\""))
+            a = "{\"counts\":{},\"scope\":\"all\",\"total\":3,\"offset\":60,\"rows\":[]}";
+        else if (strstr(r, "\"scope\":\"local\""))
             a = "{\"counts\":{\"local\":2,\"regional\":0,\"global\":300,\"all\":302},\"scope\":\"local\",\"total\":2,\"offset\":0,"
                 "\"rows\":[{\"call\":\"X3PTZM\",\"kind\":\"station\",\"reach\":\"local\",\"bearers\":[\"lan\",\"ble\"],\"age_s\":12,\"api\":true,\"dist_m\":420},"
                 "{\"call\":\"X1NEAR\",\"kind\":\"user\",\"reach\":\"local\",\"bearers\":[\"ble\"],\"age_s\":200,\"api\":false}]}";
@@ -206,4 +213,46 @@ int32_t hal_station_read(const char *req, uint32_t len, char *out, uint32_t cap)
     if (l > cap) return -(int32_t)l;
     memcpy(out, a, l);
     return (int32_t)l;
+}
+
+/* ── the stations map (sdk/wapp_stations.c) ───────────────────────────── */
+/* hal.db is not mocked: sdk/hal_db_zx.c runs it on zx, the host's engine. */
+unsigned long long g_now = 1795600000ULL;
+uint64_t hal_time_epoch(void) { return g_now; }
+int32_t hal_time_utc_offset(void) { return 0; }
+char g_followed_kind[64];
+int32_t hal_xprs_follow_kind(const char *k, uint32_t kl, int32_t on) {
+    if (on && kl < 20 && strlen(g_followed_kind) + kl + 2 < sizeof g_followed_kind) {
+        strncat(g_followed_kind, k, kl); strcat(g_followed_kind, ",");
+    }
+    return 0;
+}
+/* What the archive holds of identities and services (the walk stops on a
+ * short page). */
+char g_archive[16384] = "[]";
+int g_history_reads;
+int32_t hal_xprs_history(const char *q, uint32_t ql, char *out, uint32_t cap) {
+    (void)q; (void)ql;
+    g_history_reads++;
+    uint32_t n = (uint32_t)strlen(g_archive);
+    if (n > cap) return -(int32_t)n;
+    memcpy(out, g_archive, n);
+    return (int32_t)n;
+}
+char g_names[2048] = "[]";
+char g_names_q[256];
+int32_t hal_xprs_names(const char *q, uint32_t ql, char *out, uint32_t cap) {
+    uint32_t m = ql < sizeof g_names_q - 1 ? ql : sizeof g_names_q - 1;
+    memcpy(g_names_q, q, m); g_names_q[m] = 0;
+    uint32_t n = (uint32_t)strlen(g_names);
+    if (n > cap) return -(int32_t)n;
+    memcpy(out, g_names, n);
+    return (int32_t)n;
+}
+int32_t hal_xprs_position(char *out, uint32_t cap) {
+    const char *a = "{\"pos\":\"38.7077,-9.1365\",\"acc\":10}";
+    uint32_t n = (uint32_t)strlen(a);
+    if (n > cap) return -(int32_t)n;
+    memcpy(out, a, n);
+    return (int32_t)n;
 }

@@ -6,7 +6,7 @@
   "screen.mesh": "Maillage",
   "screen.mesh_tip": "Le maillage en image : stations, hubs et leurs liens",
   "screen.stations": "Stations",
-  "screen.stations_tip": "Toutes les stations entendues, les plus proches d'abord. Local : Bluetooth, WiFi, LAN. Régional : LoRa et radio. Global : par Reticulum. Touchez-en une pour voir comment elle est jointe et ce qu'elle partage.",
+  "screen.stations_tip": "Toutes les stations sur la carte. Remontez la liste pour chercher et filtrer selon ce qu'elles offrent ; touchez-en une pour lui écrire, voir comment la joindre ou parcourir ce qu'elle partage.",
   "stations.empty_title": "Aucune station entendue pour l'instant",
   "stations.empty": "Les stations apparaissent ici dès qu'elles sont entendues à proximité ou par Reticulum.",
   "folder.more": "Afficher les suivantes",

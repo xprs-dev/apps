@@ -1,10 +1,10 @@
 {
   "id": "tools.xprs.mesh",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "kind": "app",
   "title": "Mesh",
-  "description": "See every station around you and across the mesh, how each is reached, and what it shares.",
-  "summary": "Every XPRS station this device hears, as a list that scales to hundreds: local ones over Bluetooth, WiFi and LAN, regional ones over LoRa and radio, global ones over Reticulum. Open a station to see how a message gets to it, hop by hop and bearer by bearer, with anything not confirmed marked as a guess. Browse what the station shares through its own page: galleries, music and files, including private rooms you are a member of. The Mesh tab keeps the live picture of nodes, hubs and links, and the hub settings.",
+  "description": "Every station on a map and in a list you can search: message it, browse what it shares, see how it is reached.",
+  "summary": "Every XPRS station known, on a map like the xprs.dev portal's: those heard nearby over Bluetooth, WiFi and LAN, regionally over LoRa and radio, globally over Reticulum, and those the archivers know of. Pull up the drawer for the whole list, freshest first, with a search box and chips to find archivers, solar stations or the ones that can be messaged, even among thousands in one area. Tap a station to message it, see how a message gets to it hop by hop, or browse what it shares: galleries, music and files, including private rooms you are a member of. The Mesh tab keeps the live picture of nodes, hubs and links.",
   "icon": "media/icons/mesh.svg",
   "tags": [
     "mesh",
@@ -30,12 +30,15 @@
       "msg",
       "rns",
       "event",
-      "xprs"
+      "xprs",
+      "time",
+      "db"
     ],
     "events": [
       "core.rns.graph",
       "core.monitor",
-      "core.station"
+      "core.station",
+      "core.names"
     ],
     "libraries": [],
     "variables": []

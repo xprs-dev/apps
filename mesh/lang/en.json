@@ -6,7 +6,7 @@
   "screen.mesh": "Mesh",
   "screen.mesh_tip": "The mesh as a picture: stations, hubs and the links between them",
   "screen.stations": "Stations",
-  "screen.stations_tip": "Every station heard, nearest first. Local: Bluetooth, WiFi, LAN. Regional: LoRa and radio. Global: over Reticulum. Tap one to see how it is reached and what it shares.",
+  "screen.stations_tip": "Every station on the map. Pull up the list to search it and filter by what stations serve; tap one to message it, see how it is reached or browse what it shares.",
   "stations.empty_title": "No stations heard yet",
   "stations.empty": "Stations appear here as they are heard nearby or over Reticulum.",
   "folder.more": "Show the next ones",

@@ -6,7 +6,7 @@
   "screen.mesh": "Malla",
   "screen.mesh_tip": "La malla en una imagen: estaciones, hubs y sus enlaces",
   "screen.stations": "Estaciones",
-  "screen.stations_tip": "Todas las estaciones oídas, primero las más cercanas. Local: Bluetooth, WiFi, LAN. Regional: LoRa y radio. Global: por Reticulum. Toca una para ver cómo se llega a ella y qué comparte.",
+  "screen.stations_tip": "Todas las estaciones en el mapa. Sube la lista para buscar y filtrar por lo que ofrecen; toca una para escribirle, ver cómo se llega a ella o ver lo que comparte.",
   "stations.empty_title": "Aún no se ha oído ninguna estación",
   "stations.empty": "Las estaciones aparecen aquí cuando se oyen cerca o por Reticulum.",
   "folder.more": "Mostrar las siguientes",

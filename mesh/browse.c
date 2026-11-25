@@ -17,6 +17,7 @@
 #include "../hal/xprs_wasm_hal.h"
 #include "util.h"
 #include "browse.h"
+#include "wapp_stations.h"
 
 static char g_out[65536];   /* one outbound message          */
 static char g_in[49152];    /* one hal_station_read answer   */
@@ -42,11 +43,8 @@ static char g_room_kind[12];
 static char g_folder[16];   /* that room's folder opened     */
 static char g_folder_name[64];
 static int  g_folder_off;
-static int  g_off[3];       /* the page of each scope        */
 static int  g_list_dirty = 1;
 
-static const char *const SCOPE[3] = { "local", "regional", "global" };
-static const char *const SCOPE_TAB[3] = { "Local", "Regional", "Global" };
 
 static unsigned num(const char *json, const char *key)
 {
@@ -55,14 +53,6 @@ static unsigned num(const char *json, const char *key)
     if (!al_json(json, key, v, sizeof v)) return 0;
     for (const char *p = v; *p >= '0' && *p <= '9'; p++) n = n * 10 + (unsigned)(*p - '0');
     return n;
-}
-
-static void cat_ago(char *d, unsigned s, unsigned cap)
-{
-    if (s < 90) al_cat(d, "now", cap);
-    else if (s < 5400) { al_cat_u(d, s / 60, cap); al_cat(d, " min ago", cap); }
-    else if (s < 172800) { al_cat_u(d, s / 3600, cap); al_cat(d, " h ago", cap); }
-    else { al_cat_u(d, s / 86400, cap); al_cat(d, " days ago", cap); }
 }
 
 static void cat_dist(char *d, unsigned m, unsigned cap)
@@ -120,98 +110,278 @@ static const char *kind_name(const char *k)
     return "XPRS";
 }
 
-/* ── The list ─────────────────────────────────────────────────────────── */
+/* ── The list and the map ─────────────────────────────────────────────── */
+/* Every station known, the way the xprs.dev portal's map page shows them
+ * (portal/page/chat_page.html: mapDraw, mapList, mapChips): on the map those
+ * that say where they are, in the drawer under it the whole list, freshest
+ * first, 50 at a time, with a search box and chips to filter by what a
+ * station serves, runs on and how it is heard. The table is the SDK's
+ * (sdk/wapp_stations.c, shared with Check-in): identities and service
+ * announcements from the archive, and the stations this device hears now,
+ * which hal_station_read lists with their bearers. */
 static void read_host(void);
 static char g_me[16];
 static int g_serving;
+static wst_filter_t g_f;
+static int g_shown = 50;
+static int g_map_dirty, g_fitted;
+static int g_page;                   /* the page said ready: there is a map to draw */
+static unsigned long long g_heard_at, g_names_q;
+static char g_rows[49152];
+
+/* What hal_station_read says of the stations heard now, kept for the list's
+ * lines (how each is reached, how far, whether it can be browsed). */
+#define HEARD_MAX 256
+static struct { char call[12]; char how[48]; unsigned dist; char api; char kind[10]; } g_heard[HEARD_MAX];
+static int g_nheard;
+
+static int heard_find(const char *call)
+{
+    for (int i = 0; i < g_nheard; i++) if (al_eq(g_heard[i].call, call)) return i;
+    return -1;
+}
+
+/* The heard list into the table, a page at a time, at most every 20 s (or
+ * at once when the core said the room moved and 5 s have passed). */
+static void heard_sync(int moved)
+{
+    unsigned long long now = hal_time_epoch();
+    if (g_heard_at && now < g_heard_at + (moved ? 5 : 20)) return;
+    g_heard_at = now;
+    g_nheard = 0;
+    for (int off = 0; off < 600; off += 60) {
+        al_cpy(g_req, "{\"get\":\"list\",\"scope\":\"all\",\"offset\":", sizeof g_req);
+        al_cat_u(g_req, (unsigned)off, sizeof g_req);
+        al_cat(g_req, "}", sizeof g_req);
+        if (!sread()) break;
+        const char *p = al_json_arr(g_in, "rows");
+        int rows = 0;
+        while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+            char call[16], reach[12], api[8], base[12];
+            rows++;
+            if (!al_json(g_obj, "call", call, sizeof call) || !call[0]) continue;
+            al_json(g_obj, "reach", reach, sizeof reach);
+            wst_base_call(base, sizeof base, call);
+            /* A word every minute is enough: the table is not rewritten for
+             * every few seconds of a station's age. */
+            unsigned age = num(g_obj, "age_s");
+            wst_heard(base, reach, (now > age ? now - age : now) / 60 * 60);
+            if (g_nheard < HEARD_MAX) {
+                int i = g_nheard++;
+                al_cpy(g_heard[i].call, base, sizeof g_heard[i].call);
+                g_heard[i].how[0] = 0;
+                cat_bearers(g_heard[i].how, g_obj, sizeof g_heard[i].how);
+                g_heard[i].dist = 0;
+                char dm[16];
+                if (al_json(g_obj, "dist_m", dm, sizeof dm) && dm[0]) g_heard[i].dist = num(g_obj, "dist_m") + 1;
+                g_heard[i].api = al_json(g_obj, "api", api, sizeof api) && al_eq(api, "true");
+                al_json(g_obj, "kind", g_heard[i].kind, sizeof g_heard[i].kind);
+            }
+        }
+        if (rows < 60) break;
+    }
+}
+
+/* The chips over the list: how stations are heard, what they serve and run
+ * on, which say where they are and which can be messaged; and the square a
+ * marker's "Show all here" chose. */
+static void push_chips(void)
+{
+    static char chips[6144];
+    wst_chips(&g_f, chips, sizeof chips);
+    al_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"st_tags\",\"value\":", sizeof g_out);
+    if (g_f.area[0]) {
+        al_cat(g_out, "[{\"id\":\"area\",\"label\":\"This area \xc3\x97\",\"on\":true}", sizeof g_out);
+        if (chips[1] != ']') { al_cat(g_out, ",", sizeof g_out); al_cat(g_out, chips + 1, sizeof g_out); }
+        else al_cat(g_out, "]", sizeof g_out);
+    } else al_cat(g_out, chips, sizeof g_out);
+    al_cat(g_out, "}", sizeof g_out);
+    say(g_out);
+}
 
 static void push_list(void)
 {
     g_list_dirty = 0;
     read_host();
-    al_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"stations\",\"sections\":[", sizeof g_out);
-    for (int s = 0; s < 3; s++) {
-        al_cpy(g_req, "{\"get\":\"list\",\"scope\":\"", sizeof g_req);
-        al_cat(g_req, SCOPE[s], sizeof g_req);
-        al_cat(g_req, "\",\"offset\":", sizeof g_req);
-        al_cat_u(g_req, (unsigned)g_off[s], sizeof g_req);
-        al_cat(g_req, "}", sizeof g_req);
-        unsigned total = 0, shown = 0;
-        if (sread()) total = num(g_in, "total");
-        if (s) al_cat(g_out, ",", sizeof g_out);
-        al_cat(g_out, "{\"tab\":\"", sizeof g_out);
-        al_cat(g_out, SCOPE_TAB[s], sizeof g_out);
-        al_cat(g_out, "\",\"title\":\"", sizeof g_out);
-        al_cat(g_out, SCOPE_TAB[s], sizeof g_out);
-        al_cat(g_out, "\",\"items\":[", sizeof g_out);
-        const char *p = al_json_arr(g_in, "rows");
-        /* The phone in the hand comes first: it is a station too. */
-        if (s == 0 && g_me[0]) {
-            shown++;
-            al_cat(g_out, "{\"id\":\"", sizeof g_out);
-            al_cat(g_out, g_me, sizeof g_out);
-            al_cat(g_out, "\",\"icon\":\"smartphone\",\"title\":\"This phone\",\"subtitle\":\"", sizeof g_out);
-            al_cat(g_out, g_me, sizeof g_out);
-            al_cat(g_out, g_serving ? " \\u00b7 others can browse what you share"
-                                    : " \\u00b7 what you share, and with whom", sizeof g_out);
-            al_cat(g_out, "\",\"tags\":[\"", sizeof g_out);
-            al_cat(g_out, g_serving ? "Sharing" : "Private", sizeof g_out);
-            al_cat(g_out, "\"]}", sizeof g_out);
-        }
-        while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
-            char call[16], kind[12], api[8];
-            if (!al_json(g_obj, "call", call, sizeof call) || !call[0]) continue;
-            /* Room for this row and the closing of the message, or stop. */
-            if (al_len(g_out) > sizeof g_out - 700) break;
-            al_json(g_obj, "kind", kind, sizeof kind);
-            al_json(g_obj, "api", api, sizeof api);
-            if (shown++) al_cat(g_out, ",", sizeof g_out);
-            al_cat(g_out, "{\"id\":\"", sizeof g_out);
-            al_cat(g_out, call, sizeof g_out);
-            al_cat(g_out, "\",\"call\":\"", sizeof g_out);
-            al_cat(g_out, call, sizeof g_out);
-            al_cat(g_out, "\",\"title\":\"", sizeof g_out);
-            al_cat(g_out, call, sizeof g_out);
-            al_cat(g_out, "\",\"subtitle\":\"", sizeof g_out);
-            al_cat(g_out, kind_name(kind), sizeof g_out);
-            al_cat(g_out, " \\u00b7 ", sizeof g_out);
-            cat_bearers(g_out, g_obj, sizeof g_out);
-            unsigned hops = num(g_obj, "hops");
-            if (hops > 1) {
-                al_cat(g_out, " \\u00b7 ", sizeof g_out);
-                al_cat_u(g_out, hops, sizeof g_out);
-                al_cat(g_out, " hops", sizeof g_out);
-            }
-            char dm[16];
-            if (al_json(g_obj, "dist_m", dm, sizeof dm) && dm[0]) {
-                al_cat(g_out, " \\u00b7 ", sizeof g_out);
-                cat_dist(g_out, num(g_obj, "dist_m"), sizeof g_out);
-            }
-            al_cat(g_out, "\",\"tags\":[\"", sizeof g_out);
-            cat_ago(g_out, num(g_obj, "age_s"), sizeof g_out);
-            al_cat(g_out, "\"", sizeof g_out);
-            if (al_eq(api, "true")) al_cat(g_out, ",\"Browse\"", sizeof g_out);
-            al_cat(g_out, "]}", sizeof g_out);
-        }
-        unsigned upto = (unsigned)g_off[s] + shown;
-        if (g_off[s] > 0 || upto < total) {
-            if (shown) al_cat(g_out, ",", sizeof g_out);
-            al_cat(g_out, "{\"id\":\"more:", sizeof g_out);
-            al_cat(g_out, SCOPE[s], sizeof g_out);
-            al_cat(g_out, "\",\"icon\":\"more_horiz\",\"title\":\"", sizeof g_out);
-            al_cat(g_out, upto < total ? "Show the next ones" : "Back to the first", sizeof g_out);
-            al_cat(g_out, "\",\"subtitle\":\"", sizeof g_out);
-            al_cat_u(g_out, (unsigned)g_off[s] + (shown ? 1 : 0), sizeof g_out);
-            al_cat(g_out, " to ", sizeof g_out);
-            al_cat_u(g_out, upto, sizeof g_out);
-            al_cat(g_out, " of ", sizeof g_out);
-            al_cat_u(g_out, total, sizeof g_out);
-            al_cat(g_out, "\"}", sizeof g_out);
-        }
-        al_cat(g_out, "]}", sizeof g_out);
+    unsigned long long now = hal_time_epoch();
+    int total = wst_total(), hits = wst_count(&g_f);
+    int filtered = g_f.q[0] || g_f.area[0] || g_f.ntags;
+    al_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"stations\",\"sections\":[{\"title\":\"", sizeof g_out);
+    if (filtered) {
+        al_cat_u(g_out, (unsigned)hits, sizeof g_out);
+        al_cat(g_out, " of ", sizeof g_out);
     }
-    al_cat(g_out, "]}", sizeof g_out);
+    al_cat_u(g_out, (unsigned)total, sizeof g_out);
+    al_cat(g_out, total == 1 && !filtered ? " station" : " stations", sizeof g_out);
+    al_cat(g_out, "\",\"items\":[", sizeof g_out);
+    int shown = 0;
+    /* The phone in the hand comes first: it is a station too. */
+    if (!filtered && g_me[0]) {
+        shown++;
+        al_cat(g_out, "{\"id\":\"", sizeof g_out);
+        al_cat(g_out, g_me, sizeof g_out);
+        al_cat(g_out, "\",\"icon\":\"smartphone\",\"title\":\"This phone\",\"subtitle\":\"", sizeof g_out);
+        al_cat(g_out, g_me, sizeof g_out);
+        al_cat(g_out, g_serving ? " \\u00b7 others can browse what you share"
+                                : " \\u00b7 what you share, and with whom", sizeof g_out);
+        al_cat(g_out, "\",\"tags\":[\"", sizeof g_out);
+        al_cat(g_out, g_serving ? "Sharing" : "Private", sizeof g_out);
+        al_cat(g_out, "\"]}", sizeof g_out);
+    }
+    wst_list(&g_f, 0, g_shown, g_rows, sizeof g_rows);
+    const char *p = g_rows;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    int listed = 0;
+    while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+        char call[16], nick[48], pos[40], key[80], sub[200] = "", tags[120], a[24];
+        if (!al_json(g_obj, "call", call, sizeof call) || !call[0]) continue;
+        /* Room for this row and the closing of the message, or stop. */
+        if (al_len(g_out) > sizeof g_out - 900) break;
+        al_json(g_obj, "nick", nick, sizeof nick);
+        al_json(g_obj, "pos", pos, sizeof pos);
+        al_json(g_obj, "key", key, sizeof key);
+        unsigned long long last = 0;
+        {
+            char v[24];
+            if (al_json(g_obj, "last", v, sizeof v)) for (const char *q = v; *q >= '0' && *q <= '9'; q++) last = last * 10 + (unsigned)(*q - '0');
+        }
+        int h = heard_find(call);
+        /* Its name, then what it is and how it is reached when heard here,
+         * then what it serves and runs on. */
+        if (nick[0]) al_cpy(sub, nick, sizeof sub);
+        if (h >= 0) {
+            if (sub[0]) al_cat(sub, " \xc2\xb7 ", sizeof sub);
+            al_cat(sub, kind_name(g_heard[h].kind), sizeof sub);
+            if (g_heard[h].how[0]) { al_cat(sub, " \xc2\xb7 ", sizeof sub); al_cat(sub, g_heard[h].how, sizeof sub); }
+            if (g_heard[h].dist) { al_cat(sub, " \xc2\xb7 ", sizeof sub); cat_dist(sub, g_heard[h].dist - 1, sizeof sub); }
+        }
+        wst_row_tags(g_obj, tags, sizeof tags);
+        if (tags[0]) { if (sub[0]) al_cat(sub, " \xc2\xb7 ", sizeof sub); al_cat(sub, tags, sizeof sub); }
+        if (shown++) al_cat(g_out, ",", sizeof g_out);
+        al_cat(g_out, "{\"id\":\"", sizeof g_out);
+        al_cat(g_out, call, sizeof g_out);
+        al_cat(g_out, "\",\"call\":\"", sizeof g_out);
+        al_cat(g_out, call, sizeof g_out);
+        al_cat(g_out, "\",\"title\":\"", sizeof g_out);
+        al_cat(g_out, call, sizeof g_out);
+        al_cat(g_out, "\",\"subtitle\":\"", sizeof g_out);
+        al_jesc(g_out, sub, sizeof g_out);
+        al_cat(g_out, "\",\"tags\":[\"", sizeof g_out);
+        wst_ago(a, sizeof a, last, now);
+        al_cat(g_out, last ? a : "heard of", sizeof g_out);
+        al_cat(g_out, "\"", sizeof g_out);
+        if (pos[0]) al_cat(g_out, ",\"On the map\"", sizeof g_out);
+        if (h >= 0 && g_heard[h].api) al_cat(g_out, ",\"Browse\"", sizeof g_out);
+        al_cat(g_out, "]", sizeof g_out);
+        if (key[0]) al_cat(g_out, ",\"action\":\"st_msg\",\"actionLabel\":\"Message\"", sizeof g_out);
+        al_cat(g_out, "}", sizeof g_out);
+        listed++;
+    }
+    if (hits > listed) {
+        if (shown) al_cat(g_out, ",", sizeof g_out);
+        al_cat(g_out, "{\"id\":\"more\",\"icon\":\"expand_more\",\"title\":\"Show more\",\"subtitle\":\"", sizeof g_out);
+        al_cat_u(g_out, (unsigned)(hits - listed), sizeof g_out);
+        al_cat(g_out, " more\"}", sizeof g_out);
+        shown++;
+    }
+    if (!listed && g_f.q[0]) {
+        if (shown) al_cat(g_out, ",", sizeof g_out);
+        al_cat(g_out, "{\"id\":\"none\",\"icon\":\"travel_explore\",\"title\":\"No station matches\",\"subtitle\":\"", sizeof g_out);
+        al_cat(g_out, g_names_q ? "Asking the archivers\xe2\x80\xa6" : "Enter asks the archivers", sizeof g_out);
+        al_cat(g_out, "\"}", sizeof g_out);
+    }
+    al_cat(g_out, "]}]}", sizeof g_out);
     say(g_out);
+    push_chips();
+}
+
+/* The map: the markers anew (the SDK's), and the first time where this
+ * phone says it is, else the whole world. */
+static void push_map(void)
+{
+    g_map_dirty = 0;
+    say("{\"type\":\"ui.map.markers.clear\"}");
+    wst_draw();
+    wst_status();
+    if (g_fitted) return;
+    g_fitted = 1;
+    char p[96], pos[48];
+    int n = hal_xprs_position(p, sizeof p - 1);
+    if (n > 0) {
+        p[n] = 0;
+        if (al_json(p, "pos", pos, sizeof pos) && wst_pos_ok(pos)) {
+            char m[160] = "{\"type\":\"ui.map.viewport\",\"lat\":";
+            unsigned i = 0;
+            char lat[24];
+            while (pos[i] && pos[i] != ',' && i + 1 < sizeof lat) { lat[i] = pos[i]; i++; }
+            lat[i] = 0;
+            al_cat(m, lat, sizeof m);
+            al_cat(m, ",\"lon\":", sizeof m);
+            al_cat(m, pos + i + 1, sizeof m);
+            al_cat(m, ",\"zoom\":8}", sizeof m);
+            say(m);
+        }
+    }
+}
+
+/* A walk of the archive finished: redraw what it changed. */
+static void walked(int changed)
+{
+    if (!g_page) return;             /* drawn from the table when it opens */
+    if (!changed) { wst_status(); return; }
+    g_map_dirty = 1;
+    g_list_dirty = 1;
+}
+
+/* Show one station or square on the map: the drawer folds (the host does)
+ * and the map goes there, closer for a point than for a square. */
+static void locate(const char *pos, long half)
+{
+    char m[160] = "{\"type\":\"ui.map.locate\",\"lat\":";
+    unsigned i = 0;
+    char lat[24];
+    while (pos[i] && pos[i] != ',' && i + 1 < sizeof lat) { lat[i] = pos[i]; i++; }
+    lat[i] = 0;
+    if (pos[i] != ',') return;
+    al_cat(m, lat, sizeof m);
+    al_cat(m, ",\"lon\":", sizeof m);
+    al_cat(m, pos + i + 1, sizeof m);
+    al_cat(m, ",\"zoom\":", sizeof m);
+    /* A square a degree wide fits at zoom 7, a tenth at 10; a point, 14. */
+    al_cat_u(m, !half ? 14 : half > 30000 ? 7 : half > 3000 ? 10 : 12, sizeof m);
+    al_cat(m, "}", sizeof m);
+    say(m);
+}
+
+static void message(const char *call)
+{
+    char m[96] = "{\"type\":\"mesh.message\",\"callsign\":\"";
+    al_cat(m, call, sizeof m);
+    al_cat(m, "\"}", sizeof m);
+    say(m);
+}
+
+/* What a search finds nowhere here is asked of the archivers by name
+ * (hal_xprs_names, 12.9.4); core.names says when they answered. */
+static void ask_names(int ask)
+{
+    char q[120] = "{\"q\":\"", out[49152 / 4];
+    al_jesc(q, g_f.q, sizeof q);
+    al_cat(q, "\",\"limit\":40,\"ask\":", sizeof q);
+    al_cat(q, ask ? "true}" : "false}", sizeof q);
+    int n = hal_xprs_names(q, al_len(q), out, sizeof out - 1);
+    if (n <= 0) return;
+    out[n] = 0;
+    const char *p = out;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+        char call[16], nick[48];
+        if (!al_json(g_obj, "call", call, sizeof call)) continue;
+        al_json(g_obj, "nick", nick, sizeof nick);
+        wst_named(call, nick, num(g_obj, "ts"));
+    }
 }
 
 /* ── This phone as a station ──────────────────────────────────────────── */
@@ -342,6 +512,24 @@ static void push_station(void)
         }
     } else {
         al_cat(g_out, "{\"title\":\"This station\",\"items\":[", sizeof g_out);
+        /* What the map knows of it: a key to message it, a place to show. */
+        static char row[1024];
+        char key[80] = "", pos[40] = "", tags[120] = "";
+        if (wst_row(g_call, row, sizeof row)) {
+            al_json(row, "key", key, sizeof key);
+            al_json(row, "pos", pos, sizeof pos);
+            wst_row_tags(row, tags, sizeof tags);
+        }
+        if (key[0]) {
+            one_row("msg", "chat", "Message", "A private conversation in Chat");
+            al_cat(g_out, ",", sizeof g_out);
+        }
+        if (pos[0]) {
+            char sub[160] = "Where it says it is";
+            if (tags[0]) { al_cat(sub, " \xc2\xb7 ", sizeof sub); al_cat(sub, tags, sizeof sub); }
+            one_row("map", "map", "Show on map", sub);
+            al_cat(g_out, ",", sizeof g_out);
+        }
         one_row("profile", "person", "Profile and messages", "Message, mail and who this is");
     }
     al_cat(g_out, ",", sizeof g_out);
@@ -568,9 +756,24 @@ static void push_folder(void)
 /* ── Entry points (main.c) ────────────────────────────────────────────── */
 void browse_init(void)
 {
-    static const char t[] = "core.station";
+    static const char t[] = "core.station", t2[] = "core.names";
     hal_event_subscribe(t, sizeof t - 1);
+    hal_event_subscribe(t2, sizeof t2 - 1);
+    static const char path[] = "mesh.db";
+    int32_t db = hal_db_open(path, sizeof path - 1);
+    wst_opts_t o = {0};
+    o.keep_unplaced = 1;                 /* the list wants every station */
+    o.recent_s = 30ULL * 86400ULL;       /* on the map: heard of this month */
+    o.color = "#43A047";
+    o.actions = 1;                       /* Open, Message, Show all N here */
+    o.done = walked;
+    wst_init(db, &o);
+    read_host();
+    wst_me(g_me);
+    wst_follow();
+    heard_sync(0);
     push_list();
+    wst_begin(1);
 }
 
 void browse_changed(const char *topic)
@@ -581,40 +784,109 @@ void browse_changed(const char *topic)
         else if (g_view == V_FOLDER) push_folder();
         return;
     }
-    /* The room moved (core.monitor, core.rns.graph). Each redraw is three
+    /* The archivers answered a name asked for: read it again. */
+    if (al_eq(topic, "core.names")) {
+        if (g_f.q[0] && g_names_q) { ask_names(0); g_list_dirty = 1; g_map_dirty = 1; }
+        return;
+    }
+    /* The room moved (core.monitor, core.rns.graph). Each redraw is a few
      * reads and one large message: at most one per tick, not one per packet. */
-    g_list_dirty = 1;
+    g_list_dirty = 2;
 }
 
 void browse_tick(void)
 {
-    if (g_list_dirty) push_list();
+    /* The copy of the archive catches up a few pages a tick, and is asked
+     * to every two minutes (wst_begin keeps the pace). */
+    if (wst_busy()) wst_step();
+    else wst_begin(0);
+    if (g_list_dirty) {
+        heard_sync(g_list_dirty == 2);
+        push_list();
+    }
+    if (g_map_dirty) push_map();
+}
+
+/* A station opened from the list, a marker or Show on map. */
+static void open_station(const char *call)
+{
+    al_cpy(g_call, call, sizeof g_call);
+    g_view = V_STATION;
+    say("{\"type\":\"ui.field.set\",\"field\":\"s_ways\",\"value\":{\"routes\":[]}}");
+    push_station();
+    screen_open("Station", g_call);
 }
 
 int browse_command(const char *cmd, const char *full)
 {
     char id[64];
-    if (al_eq(cmd, "stations_tap") || al_eq(cmd, "stations_action")) {
+    if (al_eq(cmd, "ready")) {
+        /* The page opened: its map and list from the copy at once, then
+         * the copy brought up to date behind them. */
+        g_page = 1;
+        g_map_dirty = 1;
+        g_fitted = 0;
+        heard_sync(0);
+        push_list();
+        push_map();
+        wst_begin(1);
+        return 0;                        /* main.c draws the graph too */
+    }
+    if (al_eq(cmd, "stations_tap")) {
         if (!al_json(full, "stations_id", id, sizeof id) || !id[0]) return 1;
-        if (al_starts(id, "more:")) {
-            for (int s = 0; s < 3; s++) {
-                if (!al_eq(id + 5, SCOPE[s])) continue;
-                al_cpy(g_req, "{\"get\":\"list\",\"scope\":\"", sizeof g_req);
-                al_cat(g_req, SCOPE[s], sizeof g_req);
-                al_cat(g_req, "\",\"offset\":", sizeof g_req);
-                al_cat_u(g_req, (unsigned)g_off[s] + 60, sizeof g_req);
-                al_cat(g_req, "}", sizeof g_req);
-                g_off[s] = sread() && al_json_next(al_json_arr(g_in, "rows"), g_obj, sizeof g_obj)
-                               ? g_off[s] + 60 : 0;
-            }
+        if (al_eq(id, "more")) { g_shown += 50; push_list(); return 1; }
+        if (al_eq(id, "none")) {
+            if (!g_names_q) { g_names_q = hal_time_epoch(); ask_names(1); }
             push_list();
             return 1;
         }
-        al_cpy(g_call, id, sizeof g_call);
-        g_view = V_STATION;
-        say("{\"type\":\"ui.field.set\",\"field\":\"s_ways\",\"value\":{\"routes\":[]}}");
-        push_station();
-        screen_open("Station", g_call);
+        open_station(id);
+        return 1;
+    }
+    /* The row's Message button: Chat's conversation with it. */
+    if (al_eq(cmd, "st_msg")) {
+        if (al_json(full, "stations_id", id, sizeof id) && id[0]) message(id);
+        return 1;
+    }
+    if (al_eq(cmd, "stations_search")) {
+        char q[40] = "";
+        al_json(full, "stations_query", q, sizeof q);
+        unsigned i = 0;
+        while (q[i] == ' ') i++;
+        al_cpy(g_f.q, q + i, sizeof g_f.q);
+        g_shown = 50;
+        g_names_q = 0;
+        /* Enter on a search that finds nothing here asks the archivers, as
+         * the portal does; a few letters typed do not. */
+        if (g_f.q[0] && al_len(g_f.q) >= 3 && !wst_count(&g_f)) {
+            g_names_q = hal_time_epoch();
+            ask_names(1);
+        }
+        push_list();
+        return 1;
+    }
+    if (al_eq(cmd, "st_tags_tap")) {
+        if (!al_json(full, "st_tags_id", id, sizeof id) || !id[0]) return 1;
+        if (al_eq(id, "area")) g_f.area[0] = 0;
+        else wst_filter_tag(&g_f, id);
+        g_shown = 50;
+        push_list();
+        return 1;
+    }
+    if (al_eq(cmd, "marker_tap")) return 1;   /* the host shows its popup */
+    if (al_eq(cmd, "marker_action")) {
+        char act[16] = "";
+        if (!al_json(full, "id", id, sizeof id)) return 1;
+        al_json(full, "action", act, sizeof act);
+        if (al_starts(id, "pl:") && al_eq(act, "open")) { open_station(id + 3); return 1; }
+        if (al_starts(id, "pl:") && al_eq(act, "message")) { message(id + 3); return 1; }
+        if (al_starts(id, "sq:") && al_eq(act, "area")) {
+            /* Show all N here: the list, filtered to the square. */
+            al_cpy(g_f.area, id + 3, sizeof g_f.area);
+            g_shown = 50;
+            push_list();
+            say("{\"type\":\"ui.drawer\",\"state\":\"half\"}");
+        }
         return 1;
     }
     if (al_eq(cmd, "st_stats_tap")) return 1;
@@ -625,6 +897,22 @@ int browse_command(const char *cmd, const char *full)
             al_cat(m, g_call, sizeof m);
             al_cat(m, "\"}", sizeof m);
             say(m);
+            return 1;
+        }
+        if (al_eq(id, "msg")) { message(g_call); return 1; }
+        if (al_eq(id, "map")) {
+            static char row[1024];
+            char pos[40] = "", v[16] = "";
+            long half = 0;
+            if (wst_row(g_call, row, sizeof row)) {
+                al_json(row, "pos", pos, sizeof pos);
+                if (al_json(row, "half", v, sizeof v)) half = (long)num(row, "half");
+            }
+            if (!pos[0]) return 1;
+            /* Back to the map: the panel closes, the map goes there. */
+            g_view = V_LIST;
+            say("{\"type\":\"ui.screen.close\"}");
+            locate(pos, half);
             return 1;
         }
         if (al_eq(id, "host:toggle")) {
