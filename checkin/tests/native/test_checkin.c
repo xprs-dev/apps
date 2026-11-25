@@ -660,6 +660,34 @@ static void test_places(void)
         strcpy(g_history, "[]");
         strcpy(g_identities, "[]");
     }
+
+    /* Two rows exactly as the live archive gave them on 2026-11-25 (every
+     * field the host sends, nick:- file:- acc: sig: m:-), both in the
+     * 49,8 square: one marker, "2 stations". */
+    {
+        static const char *real[2][4] = {
+            {"d79e2f", "1795602150", "X1R5J9", "t:identity f:X1R5J9 ts:2026-11-25_10:22:30 nick:- file:- pos:49%s,8%s acc:100000 sig:i,dJ#>3c#^8/07)*9#.((?i0fQ9fF/fk/R>vvtvynN*J2l5;_d51,TiVgTcV m:-"},
+            {"1bacd2", "1795549840", "X1Q6Y6", "t:identity f:X1Q6Y6 ts:2026-11-24_19:50:40 nick:- file:- pos:49%s,8%s acc:100000 sig:>0RvwP!i0/>E&e;2*(_?u=jK!Hu]rA0L%%B09Dd^>7GY$[VS_y*yk2(4UBH)C m:-"},
+        };
+        char rows[2][900];
+        for (int i = 0; i < 2; i++) {
+            char w[400];
+            snprintf(w, sizeof w, real[i][3], BAR5, BAR5);
+            snprintf(rows[i], sizeof rows[i],
+                     "{\"id\":\"%s\",\"ts\":%s,\"heardTs\":%s,\"bearer\":\"lan\",\"rssi\":0,\"from\":\"%s\","
+                     "\"to\":\"\",\"type\":\"identity\",\"mine\":false,\"own\":false,\"sig\":\"verified\","
+                     "\"heard\":20,\"wire\":\"%s\",\"scope\":\"global\",\"inRange\":true}",
+                     real[i][0], real[i][1], real[i][1], real[i][2], w);
+        }
+        snprintf(g_identities, sizeof g_identities, "[%s,%s]", rows[0], rows[1]);
+        g_now = 1795602150ULL + 3600;
+        mock_clear();
+        cmd("{\"command\":\"ready\"}");
+        module_tick();
+        CHECK(said("\"id\":\"sq:49.5000,8.5000\"") && said("\"label\":\"2 stations\""),
+              "the live archive's two stations: one marker in their square");
+        strcpy(g_identities, "[]");
+    }
 }
 
 int main(void)

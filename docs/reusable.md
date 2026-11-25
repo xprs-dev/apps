@@ -48,4 +48,5 @@
   built from a type that arrives from everywhere.
 - **`ui.map.status` items with `"on": false`**: a plain label pill on the
   map (a count, a time) that stays off the app bar's channel chips, which
-  show only items that are on.
+  show only items that are on. Shown on a map with `"chat": false` too
+  (top left, under the search box if there is one).
