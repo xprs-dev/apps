@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.app-creator",
-  "version":         "0.3.6",
+  "version":         "0.3.8",
   "kind":            "system",
   "title":           "App Creator",
   "description":     "Write and build C wapps inside XPRS.",
@@ -8,6 +8,8 @@
   "icon":            "media/icons/app-creator.svg",
   "tags":            ["system", "tools", "dev"],
   "entry_ui":        "screens/home.ui.json",
+  "layout":          "editor",
+  "launcher":        false,
   "tick_interval_ms": 500,
   "permissions":     ["tests.invoke"],
   "provides": {

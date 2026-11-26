@@ -2,6 +2,7 @@
   {
     "$": "screen",
     "name": "@screen.store",
+    "tail": false,
     "icon": "storefront",
     "tip": "@screen.store_tip",
     "children": [
