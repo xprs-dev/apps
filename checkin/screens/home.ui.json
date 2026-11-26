@@ -235,6 +235,20 @@
   },
   {
     "$": "screen",
+    "name": "Score detail",
+    "icon": "insights",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "detail",
+        "$type": "people",
+        "empty": ""
+      }
+    ]
+  },
+  {
+    "$": "screen",
     "name": "Entry",
     "icon": "check",
     "hidden": true,

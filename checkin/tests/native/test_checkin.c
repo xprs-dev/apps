@@ -462,6 +462,38 @@ static void test_chaser(void)
     cmd(tap);
     CHECK(said("Station's signed reply") && said("cmd:checkin") && said("code:200"),
           "the entry shows both packets");
+    /* The score's tiles open what they count. */
+    mock_clear();
+    cmd("{\"command\":\"ready\"}");
+    CHECK(said("\"id\":\"local\",\"label\":\"In person\"") && said("\"tap\":true"),
+          "the tiles say they can be tapped (the host takes no tap otherwise)");
+    mock_clear();
+    cmd("{\"command\":\"lb_stats_tap\",\"lb_stats_id\":\"local\"}");
+    CHECK(said("\"field\":\"detail\"") && said("\"call\":\"X3STN1\"") && said("\"in person\"") &&
+          said("\"name\":\"Score detail\",\"title\":\"In person\""),
+          "In person: the check-ins face to face (this one during an event, under its name)");
+    mock_clear();
+    cmd("{\"command\":\"lb_stats_tap\",\"lb_stats_id\":\"stations\"}");
+    CHECK(said("\"id\":\"st:X3STN1\"") && said("1 check-in") && said("1 in person"),
+          "Stations: each once, how many check-ins, how many in person");
+    mock_clear();
+    cmd("{\"command\":\"detail_tap\",\"detail_id\":\"st:X3STN1\"}");
+    CHECK(said("\"title\":\"X3STN1\"") && said("\"name\":\"Score detail\",\"title\":\"X3STN1\""),
+          "a station opens its check-ins");
+    snprintf(tap, sizeof tap, "{\"command\":\"detail_tap\",\"detail_id\":\"%s\"}", id);
+    mock_clear();
+    cmd(tap);
+    CHECK(said("Station's signed reply") && said("\"name\":\"Entry\""), "and a check-in opens its entry");
+    mock_clear();
+    cmd("{\"command\":\"lb_stats_tap\",\"lb_stats_id\":\"streak\"}");
+    CHECK(said("\"id\":\"day:") && said("\"title\":\"Streak\""), "Streak: its days");
+    mock_clear();
+    cmd("{\"command\":\"lb_stats_tap\",\"lb_stats_id\":\"events\"}");
+    CHECK(said("\"id\":\"ev:field-day-2026\"") && said("\"title\":\"Events attended\""),
+          "Events: each event attended, with its check-ins");
+    mock_clear();
+    cmd("{\"command\":\"detail_tap\",\"detail_id\":\"ev:field-day-2026\"}");
+    CHECK(said("\"title\":\"field-day-2026\"") && said("\"name\":\"Score detail\""), "an event opens its check-ins");
     snprintf(tap, sizeof tap, "{\"command\":\"marker_tap\",\"id\":\"log:%s\"}", id);
     mock_clear();
     cmd(tap);

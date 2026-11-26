@@ -890,7 +890,8 @@ static void tile(int *first, const char *id, const char *label, const char *valu
     al_jesc(g_out, value, sizeof g_out);
     al_cat(g_out, "\",\"hint\":\"", sizeof g_out);
     al_jesc(g_out, hint, sizeof g_out);
-    al_cat(g_out, "\"}", sizeof g_out);
+    /* Every tile opens what it counts (lb_stats_tap, push_detail). */
+    al_cat(g_out, "\",\"tap\":true}", sizeof g_out);
 }
 
 static void count(const char *sql, char *out, unsigned cap)
@@ -939,6 +940,185 @@ static void push_stats(void)
     tile(&first, "streak", "Streak", streak, "days in a row");
     al_cat(g_out, "]}", sizeof g_out);
     say(g_out);
+}
+
+/* ── what a score tile counts ─────────────────────────────────────────── */
+/* Tapping a tile opens what it counts: the check-ins themselves, the ones
+ * in person, the stations, events and badges, the days of the streak. A
+ * check-in opens its entry; a station, an event or a day opens its own
+ * check-ins. [what] is the tile's id, or st:<call>, ev:<title>, day:<n>. */
+static char g_detail[64];
+static unsigned long long u_of(const char *s);
+
+/* The check-ins matching [where] (an SQL condition on log, its one
+ * parameter [arg] or none), newest first, as rows that open their entry. */
+static int log_rows(const char *where, const char *arg)
+{
+    char sql[300] = "SELECT id, station, ts, grade, title, badge, greeting FROM log";
+    if (where && where[0]) { al_cat(sql, " WHERE ", sizeof sql); al_cat(sql, where, sizeof sql); }
+    al_cat(sql, " ORDER BY ts DESC LIMIT 200", sizeof sql);
+    if (arg) { p_begin(); p_str(arg); p_end(); }
+    int n = 0;
+    if (!db_query(sql, arg ? 1 : 0)) return 0;
+    const char *p = g_rows;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+        char id[8], st[16], ts[24], grade[12], title[32], badge[80], tok[88] = "", w[24], sub_[200];
+        al_json(g_obj, "id", id, sizeof id);
+        al_json(g_obj, "station", st, sizeof st);
+        al_json(g_obj, "ts", ts, sizeof ts);
+        al_json(g_obj, "grade", grade, sizeof grade);
+        al_json(g_obj, "title", title, sizeof title);
+        al_json(g_obj, "badge", badge, sizeof badge);
+        al_json(g_obj, "greeting", sub_, sizeof sub_);
+        when(w, sizeof w, u_of(ts));
+        if (!sub_[0]) al_cpy(sub_, w, sizeof sub_);
+        if (badge[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, badge, sizeof tok); }
+        if (!tok[0]) g_icon = "check";
+        row(id, title[0] ? title : st, sub_, entry_value("grade", grade), title[0] ? st : w, tok, st, "", "");
+        n++;
+    }
+    return n;
+}
+
+/* One row per value of [col] (station, title or badge): how many check-ins,
+ * when the last; [prefix] makes its id (st:, ev:) so a tap opens them. */
+static int group_rows(const char *col, const char *where, const char *prefix)
+{
+    char sql[300] = "SELECT ";
+    al_cat(sql, col, sizeof sql);
+    al_cat(sql, " AS v, COUNT(*) AS n, MAX(ts) AS last, MAX(station) AS st, MAX(badge) AS b,"
+                " SUM(CASE WHEN grade = 'local' THEN 1 ELSE 0 END) AS here FROM log", sizeof sql);
+    if (where && where[0]) { al_cat(sql, " WHERE ", sizeof sql); al_cat(sql, where, sizeof sql); }
+    al_cat(sql, " GROUP BY ", sizeof sql);
+    al_cat(sql, col, sizeof sql);
+    al_cat(sql, " ORDER BY last DESC LIMIT 200", sizeof sql);
+    int n = 0;
+    if (!db_query(sql, 0)) return 0;
+    const char *p = g_rows;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+        char v[96], cnt[12], last[24], st[16], b[80], here[12], id[110], sub_[120], w[24], tok[88] = "", t1[32] = "";
+        al_json(g_obj, "v", v, sizeof v);
+        al_json(g_obj, "n", cnt, sizeof cnt);
+        al_json(g_obj, "last", last, sizeof last);
+        al_json(g_obj, "st", st, sizeof st);
+        al_json(g_obj, "b", b, sizeof b);
+        al_json(g_obj, "here", here, sizeof here);
+        if (!v[0]) continue;
+        when(w, sizeof w, u_of(last));
+        al_cpy(sub_, cnt, sizeof sub_);
+        al_cat(sub_, al_eq(cnt, "1") ? " check-in \xc2\xb7 " : " check-ins \xc2\xb7 ", sizeof sub_);
+        al_cat(sub_, "last ", sizeof sub_);
+        al_cat(sub_, w, sizeof sub_);
+        if (u_of(here)) { al_cpy(t1, here, sizeof t1); al_cat(t1, " in person", sizeof t1); }
+        if (b[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, b, sizeof tok); }
+        al_cpy(id, prefix, sizeof id);
+        al_cat(id, al_eq(col, "badge") ? st : v, sizeof id);
+        if (!tok[0]) g_icon = al_eq(col, "title") ? "campaign" : "cell_tower";
+        row(id, al_eq(col, "badge") ? st : v, sub_, t1, al_eq(col, "title") ? st : "", tok,
+            al_eq(col, "title") ? "" : st, "", "");
+        n++;
+    }
+    return n;
+}
+
+static void push_detail(const char *what, int open)
+{
+    char title[80] = "";
+    al_cpy(g_detail, what, sizeof g_detail);
+    rows_begin("detail");
+    int any = 0, n = 0;
+    section_begin("", &any);
+    if (al_eq(what, "total")) { al_cpy(title, "Check-ins", sizeof title); n = log_rows("", 0); }
+    else if (al_eq(what, "local")) { al_cpy(title, "In person", sizeof title); n = log_rows("grade = 'local'", 0); }
+    else if (al_eq(what, "stations")) { al_cpy(title, "Stations visited", sizeof title); n = group_rows("station", "", "st:"); }
+    else if (al_eq(what, "events")) { al_cpy(title, "Events attended", sizeof title); n = group_rows("title", "title != ''", "ev:"); }
+    else if (al_eq(what, "badges")) { al_cpy(title, "Badges collected", sizeof title); n = group_rows("badge", "badge != ''", "st:"); }
+    else if (al_eq(what, "streak")) {
+        /* The days of the streak, newest first: how many check-ins each,
+         * and where. */
+        al_cpy(title, "Streak", sizeof title);
+        unsigned long long today = ci_day(now_s(), zone()), want = today;
+        struct { unsigned long long d, t; int n; char where[80]; } days[60];
+        int nd = 0;
+        if (db_query("SELECT ts, station FROM log ORDER BY ts DESC LIMIT 400", 0)) {
+            static char rows_[16384];
+            al_cpy(rows_, g_rows, sizeof rows_);
+            const char *p = rows_;
+            while (*p && *p != '[') p++;
+            if (*p == '[') p++;
+            while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+                char ts[24], st[16];
+                al_json(g_obj, "ts", ts, sizeof ts);
+                al_json(g_obj, "station", st, sizeof st);
+                unsigned long long t = u_of(ts), d = ci_day(t, zone());
+                if (nd == 0 && d + 1 == today) want = d;      /* none yet today */
+                if (nd && days[nd - 1].d == d) {
+                    days[nd - 1].n++;
+                    char k[20] = " ";
+                    al_cat(k, st, sizeof k);
+                    int dup = 0;
+                    for (const char *q = days[nd - 1].where; *q && !dup; q++)
+                        dup = al_starts(q, st) && (q == days[nd - 1].where || q[-1] == ' ');
+                    if (!dup && al_len(days[nd - 1].where) + al_len(st) + 3 < sizeof days[0].where) {
+                        al_cat(days[nd - 1].where, ", ", sizeof days[0].where);
+                        al_cat(days[nd - 1].where, st, sizeof days[0].where);
+                    }
+                    continue;
+                }
+                if (d != want || nd >= 60) break;
+                days[nd].d = d;
+                days[nd].t = t;
+                days[nd].n = 1;
+                al_cpy(days[nd].where, st, sizeof days[0].where);
+                nd++;
+                want--;
+            }
+        }
+        for (int i = 0; i < nd; i++) {
+            char id[32] = "day:", w[24], lbl[16], sub_[120] = "";
+            al_cat_u(id, days[i].d, sizeof id);
+            when(w, sizeof w, days[i].t);
+            al_cpy(lbl, w, sizeof lbl);
+            lbl[10] = 0;                                 /* the date */
+            al_cat_u(sub_, (unsigned long long)days[i].n, sizeof sub_);
+            al_cat(sub_, days[i].n == 1 ? " check-in \xc2\xb7 " : " check-ins \xc2\xb7 ", sizeof sub_);
+            al_cat(sub_, days[i].where, sizeof sub_);
+            g_icon = "schedule";
+            row(id, lbl, sub_, "", "", "", "", "", "");
+            n++;
+        }
+    } else if (al_starts(what, "st:")) { al_cpy(title, what + 3, sizeof title); n = log_rows("station = ?", what + 3); }
+    else if (al_starts(what, "ev:")) { al_cpy(title, what + 3, sizeof title); n = log_rows("title = ?", what + 3); }
+    else if (al_starts(what, "day:")) {
+        /* One day's check-ins: the day is a range of ts. */
+        unsigned long long d = u_of(what + 4);
+        char where[96] = "ts >= ", a[24], b[24];
+        unsigned long long from = 0;
+        /* The first second of that day in this zone. */
+        from = d * 86400ULL;
+        long long z = (long long)zone();
+        if (z > 0 && from >= (unsigned long long)z) from -= (unsigned long long)z;
+        else if (z < 0) from += (unsigned long long)(-z);
+        a[0] = 0; al_cat_u(a, from, sizeof a);
+        b[0] = 0; al_cat_u(b, from + 86400ULL, sizeof b);
+        al_cat(where, a, sizeof where);
+        al_cat(where, " AND ts < ", sizeof where);
+        al_cat(where, b, sizeof where);
+        when(title, sizeof title, from + 43200ULL);
+        title[10] = 0;
+        n = log_rows(where, 0);
+    }
+    if (!n) {
+        g_icon = "info";
+        row("none", "Nothing yet", "Check in at a station to start.", "", "", "", "", "", "");
+    }
+    section_end();
+    rows_end();
+    if (open) screen_open("Score detail", title);
 }
 
 static void badges_section(int *any);
@@ -1923,6 +2103,18 @@ static void on_command(void)
         g_chase_regional = al_eq(v, "true");
         kv_put_bool("chase_reg", g_chase_regional);
         toast("info", g_chase_regional ? "LoRa on." : "LoRa off.");
+        return;
+    }
+    if (al_eq(cmd, "lb_stats_tap")) {
+        if (al_json(g_buf, "lb_stats_id", id, sizeof id) && id[0]) push_detail(id, 1);
+        return;
+    }
+    if (al_eq(cmd, "detail_tap")) {
+        if (!al_json(g_buf, "detail_id", id, sizeof id) || !id[0] || al_eq(id, "none")) return;
+        if (al_starts(id, "st:") || al_starts(id, "ev:") || al_starts(id, "day:")) { push_detail(id, 1); return; }
+        al_cpy(g_sel, id, sizeof g_sel);
+        push_entry();
+        screen_open("Entry", "Check-in");
         return;
     }
     if (al_eq(cmd, "log_tap")) {
