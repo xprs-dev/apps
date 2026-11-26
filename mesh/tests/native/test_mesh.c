@@ -363,10 +363,13 @@ int main(void) {
         module_tick();
         module_tick();
         check(cap_contains("\"id\":\"pl:X3ARCH\"") && cap_contains("\"lat\":38.7200,\"lon\":-9.1400") &&
-              cap_contains("{\"id\":\"message\",\"label\":\"Message\"}"),
-              "a station at its point, offering Open and Message (it published a key)");
+              cap_contains("{\"id\":\"message\",\"label\":\"Message\"}") && !cap_contains("\"label\":\"Open\""),
+              "a station at its point, offering Visit and Message (it published a key), never Open");
+        check(cap_contains("{\"id\":\"keep\",\"label\":\"Keep my messages here\"}") &&
+              cap_contains("\"tags\":[\"Archiver\",\"Relay\",\"Solar\"]") && cap_contains("\"coords\":false"),
+              "an archiver offers to keep this phone's messages; its tags are chips in the popup");
         check(cap_contains("\"id\":\"pl:X3SQR1\"") && cap_contains("\"id\":\"pl:X3SQR2\"") &&
-              cap_contains("\"lat\":38.5000,\"lon\":-9.5000") && cap_contains("Somewhere within 111 km") &&
+              cap_contains("\"lat\":38.5000,\"lon\":-9.5000") && cap_contains("within 111 km") &&
               !cap_contains("sq:"),
               "two in one square: a marker each at its middle, for the map to fan out");
         check(cap_contains("\"id\":\"pl:X3ARCH\"") && cap_contains("\"kind\":\"archive\"") &&
@@ -378,22 +381,31 @@ int main(void) {
               cap_contains("Hill \xc2\xb7 Archivers \xc2\xb7 Relays \xc2\xb7 Solar"),
               "a row says what the station serves and runs on");
         check(cap_contains("\"title\":\"X1KEYD\"") && cap_contains("\"action\":\"st_msg\",\"actionLabel\":\"Message\""),
-              "a station never placed is listed, with Message when it can be messaged");
-        check(cap_contains("\"id\":\"serve:archive\",\"label\":\"Archivers\",\"count\":1") &&
+              "a person never placed is listed, with Message when they can be messaged");
+        check(cap_contains("\"title\":\"X3SQR1\"") && !cap_contains("\"label\":\"Open\""),
+              "no Open anywhere");
+        check(cap_contains("\"type\":\"ui.map.filter\",\"items\":[{\"id\":\"all\",\"label\":\"All\"") &&
+              cap_contains("{\"id\":\"archive\",\"label\":\"Archivers\",\"count\":1,\"on\":false}") &&
+              cap_contains("{\"id\":\"people\",\"label\":\"People\"") && cap_contains("{\"id\":\"other\",\"label\":\"Other\""),
+              "the filter over the map: All, Archivers, People, Other, with counts");
+        check(!cap_contains("\"id\":\"serve:archive\",\"label\"") &&
               cap_contains("\"id\":\"reach:local\",\"label\":\"Nearby\",\"count\":2") &&
               cap_contains("\"id\":\"source:solar\",\"label\":\"Solar\",\"count\":1"),
               "the chips: how stations are heard, what they serve and run on, with how many");
 
         cap_clear();
-        inbox_set("{\"command\":\"st_tags_tap\",\"fields\":{\"st_tags_id\":\"serve:archive\"}}");
+        inbox_set("{\"command\":\"map_filter\",\"id\":\"archive\"}");
         module_handle_event();
         check(cap_contains("\"title\":\"1 of 7 stations\"") && cap_contains("\"title\":\"X3ARCH\"") &&
-              !cap_contains("\"title\":\"X3SQR1\"") && cap_contains("\"id\":\"serve:archive\",\"label\":\"Archivers\",\"count\":1,\"on\":true"),
-              "Archivers: only the archivers, the chip on");
+              !cap_contains("\"title\":\"X3SQR1\"") && cap_contains("{\"id\":\"archive\",\"label\":\"Archivers\",\"count\":1,\"on\":true}"),
+              "Archivers: only the archivers in the list, the filter on");
         cap_clear();
-        inbox_set("{\"command\":\"st_tags_tap\",\"fields\":{\"st_tags_id\":\"serve:archive\"}}");
+        module_tick();
+        check(cap_contains("\"id\":\"pl:X3ARCH\"") && !cap_contains("\"id\":\"pl:X3SQR1\""), "and on the map");
+        cap_clear();
+        inbox_set("{\"command\":\"map_filter\",\"id\":\"all\"}");
         module_handle_event();
-        check(cap_contains("\"title\":\"7 stations\""), "tapped again, every station");
+        check(cap_contains("\"title\":\"7 stations\""), "All: every station");
 
         cap_clear();
         inbox_set("{\"command\":\"stations_search\",\"fields\":{\"stations_query\":\"sqr\"}}");
@@ -457,21 +469,24 @@ int main(void) {
         check(cap_contains("\"type\":\"ui.map.locate\",\"lat\":38.7200,\"lon\":-9.1400,\"zoom\":14,\"id\":\"pl:X3ARCH\"") &&
               !cap_contains("\"name\":\"Station\""),
               "a row on the map: its marker, centred and opened");
-        cap_clear();
-        inbox_set("{\"command\":\"st_tags_tap\",\"fields\":{\"st_tags_id\":\"serve:archive\"}}");
-        module_handle_event();
-        module_tick();
-        check(cap_contains("\"id\":\"pl:X3ARCH\"") && !cap_contains("\"id\":\"pl:X3SQR1\"") &&
-              cap_contains("\"type\":\"ui.map.markers.clear\""),
-              "the Archivers chip: only archivers on the map");
-        cap_clear();
-        inbox_set("{\"command\":\"st_tags_tap\",\"fields\":{\"st_tags_id\":\"serve:archive\"}}");
-        module_handle_event();
-        module_tick();
-        check(cap_contains("\"id\":\"pl:X3SQR1\""), "off again: every station");
-        check(cap_contains("\"id\":\"kind:people\",\"label\":\"People\"") &&
-              cap_contains("\"id\":\"kind:other\",\"label\":\"Other stations\""),
-              "the portal's kinds as chips: People, Other stations");
+        /* Keep my messages here: added to this phone's archivers. */
+        {
+            extern char g_set_pref[128];
+            cap_clear();
+            inbox_set("{\"command\":\"marker_action\",\"id\":\"pl:X3ARCH\",\"action\":\"keep\"}");
+            module_handle_event();
+            check(strcmp(g_set_pref, "archivers=X3HOME,X3ARCH") == 0 && cap_contains("X3ARCH keeps your messages now"),
+                  "Keep my messages here: added after the archivers already chosen");
+            cap_clear();
+            module_tick();
+            check(cap_contains("\"id\":\"pl:X3ARCH\"") && cap_contains("\"filled\":true") &&
+                  cap_contains("\"Keeps your messages\"") && !cap_contains("\"id\":\"keep\""),
+                  "then drawn filled, tagged Keeps your messages, and not offered again");
+            cap_clear();
+            inbox_set("{\"command\":\"marker_action\",\"id\":\"pl:X3ARCH\",\"action\":\"visit\"}");
+            module_handle_event();
+            check(cap_contains("\"title\":\"Keeps your messages\""), "its page says so too");
+        }
         cap_clear();
         inbox_set("{\"command\":\"st_msg\",\"fields\":{\"stations_id\":\"X1KEYD\"}}");
         module_handle_event();

@@ -105,8 +105,10 @@ void wst_named(const char *call, const char *nick, unsigned long long ts);
 /* ── the map ──────────────────────────────────────────────────────────── */
 /* Every placed station as a ui.map.marker "pl:<call>", the freshest 1500,
  * with its kind ("archive", "person" or "station": the host draws
- * archivers apart, above the rest) and, with opts.actions, "Visit" (an
- * archiver) or "Open", and "Message" when it published a key. The host
+ * archivers apart, above the rest), its tags, and with opts.actions
+ * "Visit" (its page, as its visitor), "Message" when it published a key and
+ * "Keep my messages here" for an archiver not yet keeping them (action
+ * "keep"). The host
  * groups near ones and fans out those on one point. Does not clear the map
  * first. wst_draw_f draws only those matching [f] (its search and tags, not
  * its area). */
@@ -122,9 +124,20 @@ int  wst_count_placed(void);
 typedef struct wst_filter {
     char q[40];          /* part of a callsign or a name, any case */
     char area[40];       /* only the stations at this point (a pos) */
+    char kind[12];       /* "" all, "archive", "people" (X1) or "other" */
     char tags[8][28];    /* every one of these */
     int  ntags;
 } wst_filter_t;
+
+/* The filter over the map, the portal's All / Archivers / People / Other:
+ * [{"id":"all","label":"All","count":N,"on":true},...] with the counts of
+ * [f]'s search and tags. Bytes written. */
+int  wst_kinds(const wst_filter_t *f, char *out, unsigned cap);
+/* The archivers that keep this phone's messages, from hal_xprs_archivers'
+ * answer ({"list":[...]}): drawn filled, tagged "Keeps your messages",
+ * and without the "Keep my messages here" action. */
+void wst_mine(const char *json);
+int  wst_is_mine(const char *call);
 
 /* Toggle a tag in [f]; 1 when it is now on. */
 int  wst_filter_tag(wst_filter_t *f, const char *tag);

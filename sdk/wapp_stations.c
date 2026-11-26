@@ -212,7 +212,6 @@ static const char *const TAG_NAMES[][2] = {
     {"source:solar", "Solar"}, {"source:battery", "Battery"}, {"source:mains", "Mains power"},
     {"reach:local", "Nearby"}, {"reach:regional", "Regional"}, {"reach:global", "Global"},
     {"placed", "On the map"}, {"key", "Can be messaged"},
-    {"kind:people", "People"}, {"kind:other", "Other stations"},
 };
 
 void wst_tag_name(const char *tag, char *out, unsigned cap)
@@ -591,7 +590,7 @@ void wst_step(void)
 static char g_draw[196608];
 
 static void marker(const char *id, const char *pos, const char *label, const char *detail,
-                   const char *actions, const char *kind)
+                   const char *actions, const char *kind, const char *tags, int filled)
 {
     char lat[24], lon[24], m[1400];
     unsigned i = 0, k = 0;
@@ -613,6 +612,10 @@ static void marker(const char *id, const char *pos, const char *label, const cha
     al_jesc(m, detail, sizeof m);
     al_cat(m, "\"", sizeof m);
     if (kind && kind[0]) { al_cat(m, ",\"kind\":\"", sizeof m); al_cat(m, kind, sizeof m); al_cat(m, "\"", sizeof m); }
+    if (tags && tags[0]) { al_cat(m, ",\"tags\":", sizeof m); al_cat(m, tags, sizeof m); }
+    if (filled) al_cat(m, ",\"filled\":true", sizeof m);
+    /* A station's popup is about the station, not a coordinate to copy. */
+    if (g_o.actions) al_cat(m, ",\"coords\":false", sizeof m);
     if (actions && actions[0]) { al_cat(m, ",\"actions\":", sizeof m); al_cat(m, actions, sizeof m); }
     al_cat(m, "}", sizeof m);
     say(m);
@@ -623,6 +626,35 @@ static void where_of(const wst_filter_t *f, char *w, unsigned cap);
 /* What a station is on the map, as the portal's filter has it: an archiver
  * (it keeps messages: serve:archive) whatever else it is, a person (an X1
  * callsign), or another station. */
+/* The archivers that keep this phone's messages (hal_xprs_archivers),
+ * ",X3AAA,X3BBB,". */
+static char g_mine[400] = ",";
+void wst_mine(const char *json)
+{
+    al_cpy(g_mine, ",", sizeof g_mine);
+    const char *p = json;
+    while (p && *p && *p != '[') p++;
+    while (p && *p && *p != ']') {
+        if (*p == '"') {
+            char c[16];
+            unsigned k = 0;
+            p++;
+            while (*p && *p != '"' && k + 1 < sizeof c) c[k++] = *p++;
+            c[k] = 0;
+            if (k) { al_cat(g_mine, c, sizeof g_mine); al_cat(g_mine, ",", sizeof g_mine); }
+        }
+        if (*p) p++;
+    }
+}
+int wst_is_mine(const char *call)
+{
+    char k[20] = ",";
+    al_cat(k, call, sizeof k);
+    al_cat(k, ",", sizeof k);
+    for (const char *s = g_mine; *s; s++) if (al_starts(s, k)) return 1;
+    return 0;
+}
+
 static const char *kind_of(const char *call, const char *serve)
 {
     for (const char *s = serve; *s; s++)
@@ -657,35 +689,56 @@ void wst_draw_f(const wst_filter_t *f)
         unsigned long long seen = json_u(g_obj, "last");
         if ((g_o.skip && g_o.skip(call)) || !wst_pos_ok(pos)) continue;
         const char *kind = kind_of(call, serve);
-        /* The popup: name, what it serves and runs on, how near the point
-         * is, how fresh. */
-        char id[24] = "pl:", detail[400] = "", a[24], sq[24], acts[200] = "";
+        /* The popup: its name; what it serves and runs on as tags; how
+         * near the point is and how fresh. */
+        char id[24] = "pl:", detail[400] = "", a[24], sq[24], acts[300] = "", tj[300] = "";
         al_cat(id, call, sizeof id);
         if (nick[0]) al_cpy(detail, nick, sizeof detail);
+        int mine = al_eq(kind, "archive") && wst_is_mine(call);
         wst_row_tags(g_obj, tags, sizeof tags);
-        if (tags[0]) {
-            if (detail[0]) al_cat(detail, "\n", sizeof detail);
-            al_cat(detail, tags, sizeof detail);
+        {
+            /* "Archivers · Relays · Solar" as ["Archiver","Relay","Solar"]. */
+            al_cpy(tj, "[", sizeof tj);
+            if (mine) al_cat(tj, "\"Keeps your messages\"", sizeof tj);
+            const char *t = tags;
+            while (*t) {
+                char w[40];
+                unsigned k = 0;
+                while (*t == ' ' || (unsigned char)*t == 0xC2 || (unsigned char)*t == 0xB7) t++;
+                while (*t && !(t[0] == ' ' && (unsigned char)t[1] == 0xC2) && k + 1 < sizeof w) w[k++] = *t++;
+                w[k] = 0;
+                if (!k) continue;
+                if (al_eq(w, "Archivers")) al_cpy(w, "Archiver", sizeof w);
+                else if (al_eq(w, "Relays")) al_cpy(w, "Relay", sizeof w);
+                if (al_len(tj) > 1) al_cat(tj, ",", sizeof tj);
+                al_cat(tj, "\"", sizeof tj);
+                al_jesc(tj, w, sizeof tj);
+                al_cat(tj, "\"", sizeof tj);
+            }
+            al_cat(tj, "]", sizeof tj);
+            if (al_len(tj) == 2) tj[0] = 0;
         }
         if (detail[0]) al_cat(detail, "\n", sizeof detail);
-        if (half) {
-            wst_dist_text(half * 2, sq, sizeof sq);
-            al_cat(detail, "Somewhere within ", sizeof detail);
-            al_cat(detail, sq, sizeof detail);
-            al_cat(detail, " \xC2\xB7 ", sizeof detail);
-        }
+        al_cat(detail, "Heard ", sizeof detail);
         wst_ago(a, sizeof a, seen, now);
         al_cat(detail, a, sizeof detail);
-        /* What it offers: an archiver is visited (its rooms, groups and
-         * chat, as its visitor), any other station opened; Message when
-         * it published a key to seal to. */
+        if (half) {
+            wst_dist_text(half * 2, sq, sizeof sq);
+            al_cat(detail, " \xC2\xB7 within ", sizeof detail);
+            al_cat(detail, sq, sizeof detail);
+        }
+        /* What it offers: Visit (its page, as its visitor: rooms, groups,
+         * files), Message when it published a key to seal to, and for an
+         * archiver that does not yet keep this phone's messages, the offer
+         * to make it. */
         if (g_o.actions) {
-            al_cpy(acts, al_eq(kind, "archive") ? "[{\"id\":\"visit\",\"label\":\"Visit\"}"
-                                                : "[{\"id\":\"open\",\"label\":\"Open\"}", sizeof acts);
+            al_cpy(acts, "[{\"id\":\"visit\",\"label\":\"Visit\"}", sizeof acts);
             if (key[0]) al_cat(acts, ",{\"id\":\"message\",\"label\":\"Message\"}", sizeof acts);
+            if (al_eq(kind, "archive") && !mine)
+                al_cat(acts, ",{\"id\":\"keep\",\"label\":\"Keep my messages here\"}", sizeof acts);
             al_cat(acts, "]", sizeof acts);
         }
-        marker(id, pos, call, detail, acts, kind);
+        marker(id, pos, call, detail, acts, kind, tj, mine);
         if (g_o.placed) g_o.placed(pos);
     }
 }
@@ -762,6 +815,12 @@ static void where_of(const wst_filter_t *f, char *w, unsigned cap)
         p_str(like); p_str(like);
     }
     if (f && f->area[0]) { al_cat(w, " AND pos = ?", cap); p_str(f->area); }
+    /* The portal's All / Archivers / People / Other. */
+    if (f && al_eq(f->kind, "archive")) al_cat(w, " AND serve LIKE '%,archive,%'", cap);
+    else if (f && al_eq(f->kind, "people"))
+        al_cat(w, " AND call LIKE 'X1%' AND serve NOT LIKE '%,archive,%'", cap);
+    else if (f && al_eq(f->kind, "other"))
+        al_cat(w, " AND call NOT LIKE 'X1%' AND serve NOT LIKE '%,archive,%'", cap);
     for (int i = 0; f && i < f->ntags; i++) {
         const char *t = f->tags[i];
         if (al_eq(t, "placed")) al_cat(w, " AND pos != ''", cap);
@@ -831,6 +890,8 @@ static int g_nchip;
 static void chip_add(const char *id, int n)
 {
     if (n <= 0 || !id[0]) return;
+    /* Archivers are the filter over the map (wst_kinds), not a chip. */
+    if (al_eq(id, "serve:archive")) return;
     for (int i = 0; i < g_nchip; i++) if (al_eq(g_chip[i].id, id)) { g_chip[i].n += n; return; }
     if (g_nchip >= MAX_CHIPS) return;
     al_cpy(g_chip[g_nchip].id, id, sizeof g_chip[0].id);
@@ -862,6 +923,27 @@ static void chips_of_group(const char *sql, const char *col, const char *prefix,
     }
 }
 
+int wst_kinds(const wst_filter_t *f, char *out, unsigned cap)
+{
+    static const char *const K[4][2] = {{"", "All"}, {"archive", "Archivers"}, {"people", "People"}, {"other", "Other"}};
+    al_cpy(out, "[", cap);
+    for (int i = 0; i < 4; i++) {
+        wst_filter_t g = {0};
+        if (f) { g = *f; g.area[0] = 0; }
+        al_cpy(g.kind, K[i][0], sizeof g.kind);
+        if (i) al_cat(out, ",", cap);
+        al_cat(out, "{\"id\":\"", cap);
+        al_cat(out, K[i][0][0] ? K[i][0] : "all", cap);
+        al_cat(out, "\",\"label\":\"", cap);
+        al_cat(out, K[i][1], cap);
+        al_cat(out, "\",\"count\":", cap);
+        al_cat_u(out, (unsigned long long)wst_count(&g), cap);
+        al_cat(out, (f ? al_eq(f->kind, K[i][0]) : !i) ? ",\"on\":true}" : ",\"on\":false}", cap);
+    }
+    al_cat(out, "]", cap);
+    return (int)al_len(out);
+}
+
 int wst_chips(const wst_filter_t *f, char *out, unsigned cap)
 {
     g_nchip = 0;
@@ -874,12 +956,6 @@ int wst_chips(const wst_filter_t *f, char *out, unsigned cap)
     p_begin(); p_str(g_me); p_end();
     chips_of_group("SELECT src, COUNT(*) AS n FROM places WHERE call != ? AND src != ''"
                    " GROUP BY src", "src", "source:", 0);
-    p_begin(); p_str(g_me); p_end();
-    chip_add("kind:people", one_int("SELECT COUNT(*) AS n FROM places WHERE call != ? AND call LIKE 'X1%'"
-                                    " AND serve NOT LIKE '%,archive,%'", 1));
-    p_begin(); p_str(g_me); p_end();
-    chip_add("kind:other", one_int("SELECT COUNT(*) AS n FROM places WHERE call != ? AND call NOT LIKE 'X1%'"
-                                   " AND serve NOT LIKE '%,archive,%'", 1));
     p_begin(); p_str(g_me); p_end();
     chip_add("placed", one_int("SELECT COUNT(*) AS n FROM places WHERE call != ? AND pos != ''", 1));
     p_begin(); p_str(g_me); p_end();

@@ -185,6 +185,59 @@ static void heard_sync(int moved)
 /* The chips over the list: how stations are heard, what they serve and run
  * on, which say where they are and which can be messaged; and the square a
  * marker's "Show all here" chose. */
+/* This phone's archivers (who keeps its messages), for the map and pages. */
+static void read_mine(void)
+{
+    char a[600];
+    int n = hal_xprs_archivers(a, sizeof a - 1);
+    if (n <= 0) return;
+    a[n] = 0;
+    wst_mine(a);
+}
+
+/* Keep this phone's messages on [call] too: appended to its archivers. */
+static void keep_here(const char *call)
+{
+    char a[600], kv[700] = "archivers=";
+    int n = hal_xprs_archivers(a, sizeof a - 1);
+    a[n > 0 ? n : 0] = 0;
+    if (wst_is_mine(call)) return;
+    const char *p = a;
+    int any = 0;
+    while (*p && *p != '[') p++;
+    while (*p && *p != ']') {
+        if (*p == '"') {
+            char c[16];
+            unsigned k = 0;
+            p++;
+            while (*p && *p != '"' && k + 1 < sizeof c) c[k++] = *p++;
+            c[k] = 0;
+            if (k) { if (any++) al_cat(kv, ",", sizeof kv); al_cat(kv, c, sizeof kv); }
+        }
+        if (*p) p++;
+    }
+    if (any) al_cat(kv, ",", sizeof kv);
+    al_cat(kv, call, sizeof kv);
+    hal_xprs_set_pref(kv, al_len(kv));
+    read_mine();
+    char t[160] = "{\"type\":\"ui.snackbar\",\"level\":\"success\",\"text\":\"";
+    al_cat(t, call, sizeof t);
+    al_cat(t, " keeps your messages now\"}", sizeof t);
+    say(t);
+    g_map_dirty = 1;
+}
+
+/* The filter over the map: All / Archivers / People / Other, with counts. */
+static void push_kinds(void)
+{
+    static char k[600];
+    wst_kinds(&g_f, k, sizeof k);
+    al_cpy(g_out, "{\"type\":\"ui.map.filter\",\"items\":", sizeof g_out);
+    al_cat(g_out, k, sizeof g_out);
+    al_cat(g_out, "}", sizeof g_out);
+    say(g_out);
+}
+
 static void push_chips(void)
 {
     static char chips[6144];
@@ -205,7 +258,7 @@ static void push_list(void)
     read_host();
     unsigned long long now = hal_time_epoch();
     int total = wst_total(), hits = wst_count(&g_f);
-    int filtered = g_f.q[0] || g_f.area[0] || g_f.ntags;
+    int filtered = g_f.q[0] || g_f.area[0] || g_f.ntags || g_f.kind[0];
     al_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"stations\",\"sections\":[{\"title\":\"", sizeof g_out);
     if (filtered) {
         al_cat_u(g_out, (unsigned)hits, sizeof g_out);
@@ -277,9 +330,10 @@ static void push_list(void)
         if (pos[0]) al_cat(g_out, ",\"On the map\"", sizeof g_out);
         if (h >= 0 && g_heard[h].api) al_cat(g_out, ",\"Browse\"", sizeof g_out);
         al_cat(g_out, "]", sizeof g_out);
-        /* The row's button, as the portal's: an archiver is visited, any
-         * other station that can be messaged is written to. */
-        if (archive) al_cat(g_out, ",\"action\":\"st_visit\",\"actionLabel\":\"Visit\"", sizeof g_out);
+        /* The row's button: a station (an X3, an archiver) is visited, a
+         * person (X1) who can be messaged is written to. */
+        (void)archive;
+        if (!al_starts(call, "X1")) al_cat(g_out, ",\"action\":\"st_visit\",\"actionLabel\":\"Visit\"", sizeof g_out);
         else if (key[0]) al_cat(g_out, ",\"action\":\"st_msg\",\"actionLabel\":\"Message\"", sizeof g_out);
         al_cat(g_out, "}", sizeof g_out);
         listed++;
@@ -300,6 +354,7 @@ static void push_list(void)
     al_cat(g_out, "]}]}", sizeof g_out);
     say(g_out);
     push_chips();
+    push_kinds();
 }
 
 /* The map: the markers anew (the SDK's), and the first time where this
@@ -308,6 +363,7 @@ static void push_map(void)
 {
     g_map_dirty = 0;
     say("{\"type\":\"ui.map.markers.clear\"}");
+    read_mine();
     wst_draw_f(&g_f);                /* the search and chips apply to the map too */
     wst_status();
     if (g_fitted) return;
@@ -527,6 +583,7 @@ static void push_station(void)
         /* What the map knows of it: a key to message it, a place to show. */
         static char row[1024];
         char key[80] = "", pos[40] = "", tags[120] = "";
+        row[0] = 0;
         if (wst_row(g_call, row, sizeof row)) {
             al_json(row, "key", key, sizeof key);
             al_json(row, "pos", pos, sizeof pos);
@@ -535,6 +592,18 @@ static void push_station(void)
         if (key[0]) {
             one_row("msg", "chat", "Message", "A private conversation in Chat");
             al_cat(g_out, ",", sizeof g_out);
+        }
+        {
+            char sv[96] = "";
+            int arch = 0;
+            if (row[0]) al_json(row, "serve", sv, sizeof sv);
+            for (const char *q = sv; *q && !arch; q++) arch = al_starts(q, ",archive,");
+            if (arch) {
+                read_mine();
+                if (wst_is_mine(g_call)) one_row("kept", "inventory_2", "Keeps your messages", "One of the archivers that hold your mail");
+                else one_row("keep", "inventory_2", "Keep my messages here", "Add it to the archivers that hold your mail");
+                al_cat(g_out, ",", sizeof g_out);
+            }
         }
         if (pos[0]) {
             char sub[160] = "Where it says it is";
@@ -777,7 +846,7 @@ void browse_init(void)
     o.keep_unplaced = 1;                 /* the list wants every station */
     o.recent_s = 30ULL * 86400ULL;       /* on the map: heard of this month */
     o.color = "#43A047";
-    o.actions = 1;                       /* Open, Message, Show all N here */
+    o.actions = 1;                       /* Visit, Message, Keep my messages here */
     o.done = walked;
     wst_init(db, &o);
     read_host();
@@ -904,11 +973,20 @@ int browse_command(const char *cmd, const char *full)
         return 1;
     }
     if (al_eq(cmd, "marker_tap")) return 1;   /* the host shows its popup */
+    if (al_eq(cmd, "map_filter")) {
+        if (!al_json(full, "id", id, sizeof id)) return 1;
+        al_cpy(g_f.kind, al_eq(id, "all") ? "" : id, sizeof g_f.kind);
+        g_shown = 50;
+        g_map_dirty = 1;
+        push_list();
+        return 1;
+    }
     if (al_eq(cmd, "marker_action")) {
         char act[16] = "";
         if (!al_json(full, "id", id, sizeof id)) return 1;
         al_json(full, "action", act, sizeof act);
         if (al_starts(id, "pl:") && (al_eq(act, "open") || al_eq(act, "visit"))) { open_station(id + 3); return 1; }
+        if (al_starts(id, "pl:") && al_eq(act, "keep")) { keep_here(id + 3); return 1; }
         if (al_starts(id, "pl:") && al_eq(act, "message")) { message(id + 3); return 1; }
         return 1;
     }
@@ -936,6 +1014,8 @@ int browse_command(const char *cmd, const char *full)
             return 1;
         }
         if (al_eq(id, "msg")) { message(g_call); return 1; }
+        if (al_eq(id, "keep")) { keep_here(g_call); push_station(); return 1; }
+        if (al_eq(id, "kept")) return 1;
         if (al_eq(id, "map")) {
             static char row[1024];
             char pos[40] = "", v[16] = "";

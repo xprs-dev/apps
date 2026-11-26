@@ -12,7 +12,7 @@
 /* ── outbox capture (hal_msg_send) ─────────────────────────────────────── */
 #define CAP_MAX 4096
 static char *g_cap[CAP_MAX];
-static int   g_capn = 0;
+int g_capn = 0;
 void cap_clear(void) { for (int i = 0; i < g_capn; i++) free(g_cap[i]); g_capn = 0; }
 int  cap_count(void) { return g_capn; }
 const char *cap_at(int i) { return (i >= 0 && i < g_capn) ? g_cap[i] : ""; }
@@ -154,12 +154,34 @@ const char *g_offers =
   "\"rooms\":[{\"call\":\"X562EL\",\"name\":\"Landscapes\",\"about\":\"photos\",\"kind\":\"gallery\",\"private\":false,\"role\":\"none\",\"can_post\":false,\"members\":0},"
   "{\"call\":\"X5VK3U\",\"name\":\"Family\",\"about\":\"\",\"kind\":\"music\",\"private\":true,\"role\":\"member\",\"can_post\":false,\"members\":3}]}";
 int g_host_serving = 0;
-char g_set_pref[64];
+char g_set_pref[128];
+/* This phone's archivers, as hal_xprs_archivers answers. */
+char g_archivers[256] = "{\"list\":[\"X3HOME\"],\"auto\":true}";
 int32_t hal_xprs_set_pref(const char *kv, uint32_t n) {
     if (n >= sizeof g_set_pref) n = sizeof g_set_pref - 1;
     memcpy(g_set_pref, kv, n); g_set_pref[n] = 0;
+    if (strncmp(g_set_pref, "archivers=", 10) == 0) {
+        char *p = g_set_pref + 10;
+        strcpy(g_archivers, "{\"list\":[");
+        while (*p) {
+            char *c = strchr(p, ',');
+            size_t l = c ? (size_t)(c - p) : strlen(p);
+            strcat(g_archivers, "\"");
+            strncat(g_archivers, p, l);
+            strcat(g_archivers, c ? "\"," : "\"");
+            p += l + (c ? 1 : 0);
+        }
+        strcat(g_archivers, "],\"auto\":true}");
+        return 0;
+    }
     g_host_serving = strstr(g_set_pref, "=1") != 0;
     return 0;
+}
+int32_t hal_xprs_archivers(char *out, uint32_t cap) {
+    uint32_t n = (uint32_t)strlen(g_archivers);
+    if (n > cap) return -(int32_t)n;
+    memcpy(out, g_archivers, n);
+    return (int32_t)n;
 }
 const char *g_own_offers =
   "{\"state\":\"ready\",\"busy\":false,\"call\":\"X1MINE\",\"known\":true,"
