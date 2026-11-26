@@ -333,7 +333,7 @@ int main(void) {
         extern unsigned long long g_now;
         extern char g_archive[16384], g_names[2048], g_names_q[256], g_followed_kind[64];
         void al_stamp(char *out, unsigned cap, unsigned long long epoch);
-        char st[24], w1[300], w2[300], w3[300], w4[300], w5[300];
+        char st[24], st2[24], w1[300], w2[300], w3[300], w4[300], w5[300], w6[300];
         const char *bar = "\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88";
         al_stamp(st, sizeof st, g_now - 3600);
         snprintf(w1, sizeof w1, "t:identity f:X3ARCH ts:%s nick:Hill pos:38.7200,-9.1400 k:npub1arch sig:x", st);
@@ -341,13 +341,18 @@ int main(void) {
         snprintf(w3, sizeof w3, "t:identity f:X3SQR1 ts:%s pos:38%s,-9%s sig:x", st, bar, bar);
         snprintf(w4, sizeof w4, "t:identity f:X3SQR2-1 ts:%s nick:Twin pos:38%s,-9%s sig:x", st, bar, bar);
         snprintf(w5, sizeof w5, "t:identity f:X1KEYD ts:%s nick:Ana k:npub1keyd sig:x", st);
+        /* Newer, and directed: the archiver's claim to the names keeper. It
+         * says nothing of what it serves and must not wipe serve:archive. */
+        al_stamp(st2, sizeof st2, g_now - 1800);
+        snprintf(w6, sizeof w6, "t:service f:X3ARCH d:X3KEEP ts:%s dial:1.2.3.4 sig:x", st2);
         snprintf(g_archive, sizeof g_archive,
                  "[{\"id\":\"a1\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"},"
                  "{\"id\":\"a2\",\"type\":\"service\",\"sig\":\"verified\",\"wire\":\"%s\"},"
                  "{\"id\":\"a3\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"},"
                  "{\"id\":\"a4\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"},"
-                 "{\"id\":\"a5\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"}]",
-                 w1, w2, w3, w4, w5);
+                 "{\"id\":\"a5\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"},"
+                 "{\"id\":\"a6\",\"type\":\"service\",\"sig\":\"verified\",\"wire\":\"%s\"}]",
+                 w6, w1, w2, w3, w4, w5);
         check(strstr(g_followed_kind, "identity") && strstr(g_followed_kind, "service"),
               "identities and service announcements are followed, from anyone");
 

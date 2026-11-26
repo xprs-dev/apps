@@ -419,6 +419,11 @@ int wst_take(const char *row)
     }
     int is_id = al_eq(type, "identity"), is_svc = al_eq(type, "service");
     if (!is_id && !is_svc) return 0;
+    /* Addressed to one station (d:), not announced: not what it is. */
+    {
+        char d[16];
+        if (al_field(wire, "d", d, sizeof d) && d[0] && !al_eq(d, "-")) return 0;
+    }
     al_field(wire, "f", f, sizeof f);
     wst_base_call(call, sizeof call, f);
     if (!wst_xprs_call(call) || (g_me[0] && al_eq(call, g_me))) return 0;
@@ -541,7 +546,10 @@ static void walk_done(void)
 void wst_step(void)
 {
     for (int pg = 0; g_w.on && pg < W_STEP_PAGES; pg++) {
-        char q[220] = "{\"types\":[\"identity\",\"service\"],\"limit\":", st[24];
+        /* Public words only ("to":[""]): a directed t:service (a claim to
+         * the names keeper, d:X3KEEP) says nothing of what a station
+         * serves, and being the newest it would wipe its serve:archive. */
+        char q[240] = "{\"types\":[\"identity\",\"service\"],\"to\":[\"\"],\"limit\":", st[24];
         al_cat_u(q, (unsigned long long)g_w.limit, sizeof q);
         if (g_w.floor) {
             al_stamp(st, sizeof st, g_w.floor);

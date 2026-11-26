@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.mesh",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "kind": "app",
   "title": "Mesh",
   "description": "Every station on a map and in a list you can search: message it, browse what it shares, see how it is reached.",
