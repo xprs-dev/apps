@@ -240,10 +240,12 @@ void ci_ref_of(const char *token, char *out, unsigned cap)
     al_cpy(out, token, cap);
 }
 
-int ci_build_event(char *out, unsigned cap, const char *me,
-                   unsigned long long now, const char *pos, const char *title,
-                   unsigned long long since, unsigned long long until,
-                   const char *file, const char *m)
+/* An event; [type], when set, is one more label on its tag: (a check-in
+ * point's kind of place). */
+static int build_event(char *out, unsigned cap, const char *me,
+                       unsigned long long now, const char *pos, const char *title,
+                       unsigned long long since, unsigned long long until,
+                       const char *file, const char *m, const char *type)
 {
     char ts[24], s[24], u[24], label[32], ref[64];
     ci_label(label, sizeof label, title);
@@ -260,6 +262,7 @@ int ci_build_event(char *out, unsigned cap, const char *me,
     al_cat(out, " title:", cap);
     al_cat(out, label, cap);
     al_cat(out, " tag:checkin", cap);
+    if (type && ci_place(type)) { al_cat(out, ",", cap); al_cat(out, type, cap); }
     /* An event that starts when it is announced says so by its ts:. */
     if (since != now) opt(out, cap, "since", s);
     al_cat(out, " until:", cap);
@@ -276,6 +279,149 @@ int ci_build_event(char *out, unsigned cap, const char *me,
         if (al_len(out) + 1 >= cap || al_len(out) > CI_EVENT_MAX) return -1;
     }
     return (int)al_len(out);
+}
+
+int ci_build_event(char *out, unsigned cap, const char *me,
+                   unsigned long long now, const char *pos, const char *title,
+                   unsigned long long since, unsigned long long until,
+                   const char *file, const char *m)
+{
+    return build_event(out, cap, me, now, pos, title, since, until, file, m, 0);
+}
+
+int ci_build_point(char *out, unsigned cap, const char *me,
+                   unsigned long long now, const char *pos, unsigned long long until,
+                   const char *file, const char *m, const char *type)
+{
+    return build_event(out, cap, me, now, pos, CI_POINT_TITLE, now, until, file, m, type);
+}
+
+/* ── kinds of place ───────────────────────────────────────────────────── */
+const ci_place_t ci_places[] = {
+    { "home", "Home", "home" },
+    { "work", "Work", "work" },
+    { "office", "Office", "business" },
+    { "school", "School", "school" },
+    { "library", "Library", "local_library" },
+    { "coffee", "Coffee", "local_cafe" },
+    { "restaurant", "Restaurant", "restaurant" },
+    { "bar", "Bar", "local_bar" },
+    { "bakery", "Bakery", "bakery_dining" },
+    { "market", "Market", "storefront" },
+    { "shop", "Shop", "shopping_bag" },
+    { "mall", "Mall", "local_mall" },
+    { "pharmacy", "Pharmacy", "local_pharmacy" },
+    { "hospital", "Hospital", "local_hospital" },
+    { "gym", "Gym", "fitness_center" },
+    { "pool", "Pool", "pool" },
+    { "sports", "Sports ground", "sports_soccer" },
+    { "stadium", "Stadium", "stadium" },
+    { "park", "Park", "park" },
+    { "garden", "Garden", "yard" },
+    { "beach", "Beach", "beach_access" },
+    { "campsite", "Campsite", "cabin" },
+    { "forest", "Forest", "forest" },
+    { "farm", "Farm", "agriculture" },
+    { "hotel", "Hotel", "hotel" },
+    { "museum", "Museum", "museum" },
+    { "gallery", "Gallery", "palette" },
+    { "theater", "Theater", "theater_comedy" },
+    { "cinema", "Cinema", "movie" },
+    { "concert", "Concert hall", "music_note" },
+    { "church", "Place of worship", "church" },
+    { "townhall", "Town hall", "account_balance" },
+    { "post-office", "Post office", "local_post_office" },
+    { "police", "Police", "local_police" },
+    { "fire-station", "Fire station", "local_fire_department" },
+    { "train", "Train", "train" },
+    { "metro", "Metro", "subway" },
+    { "tram", "Tram", "tram" },
+    { "bus", "Bus", "directions_bus" },
+    { "car", "Car", "directions_car" },
+    { "boat", "Boat", "directions_boat" },
+    { "ferry", "Ferry", "directions_ferry" },
+    { "plane", "Plane", "flight" },
+    { "airport", "Airport", "local_airport" },
+    { "harbour", "Harbour", "anchor" },
+    { "bike", "Bike", "directions_bike" },
+    { "parking", "Parking", "local_parking" },
+    { "fuel", "Fuel station", "local_gas_station" },
+    { "club", "Club", "groups" },
+    { "radio-club", "Radio club", "radio" },
+    { "repeater", "Repeater", "cell_tower" },
+    { "workshop", "Workshop", "handyman" },
+    { "festival", "Festival", "festival" },
+    { "other", "Other", "place" }
+};
+const unsigned ci_places_n = sizeof ci_places / sizeof ci_places[0];
+
+const ci_place_t *ci_place(const char *id)
+{
+    if (!id || !id[0]) return 0;
+    for (unsigned i = 0; i < ci_places_n; i++) if (al_eq(ci_places[i].id, id)) return &ci_places[i];
+    return 0;
+}
+
+void ci_point_type(const char *wire, char *out, unsigned cap)
+{
+    char v[96];
+    out[0] = 0;
+    if (!al_field(wire, "tag", v, sizeof v)) return;
+    const char *p = v;
+    while (*p) {
+        char w[32];
+        unsigned k = 0;
+        while (*p == ',') p++;
+        while (*p && *p != ',' && k + 1 < sizeof w) w[k++] = *p++;
+        w[k] = 0;
+        while (*p && *p != ',') p++;
+        if (!al_eq(w, "checkin") && ci_place(w)) { al_cpy(out, w, cap); return; }
+    }
+}
+
+/* ── time in range ────────────────────────────────────────────────────── */
+int ci_visit_step(unsigned long long *start, unsigned long long *last,
+                  unsigned long long heard_at, unsigned long long now,
+                  unsigned long long gap)
+{
+    if (*start) {
+        if (heard_at > *last && heard_at - *last <= gap) { *last = heard_at; return CI_V_EXTEND; }
+        if (now > *last && now - *last > gap) return CI_V_CLOSE;
+        return CI_V_NONE;
+    }
+    if (heard_at && heard_at <= now && now - heard_at <= gap) {
+        *start = *last = heard_at;
+        return CI_V_OPEN;
+    }
+    return CI_V_NONE;
+}
+
+static void span_part(char *out, unsigned cap, unsigned long long v, const char *unit)
+{
+    if (!v) return;
+    if (out[0]) al_cat(out, " ", cap);
+    al_cat_u(out, v, cap);
+    al_cat(out, unit, cap);
+}
+
+void ci_span(char *out, unsigned cap, unsigned long long s)
+{
+    static const unsigned long long M = 60, H = 3600, D = 86400, W = 7 * 86400, MO = 30 * 86400, Y = 365 * 86400;
+    out[0] = 0;
+    if (s < M) { al_cpy(out, s ? "under a minute" : "0 min", cap); return; }
+    if (s < H) { span_part(out, cap, s / M, " min"); return; }
+    if (s < D) { span_part(out, cap, s / H, " h"); span_part(out, cap, s % H / M, " min"); return; }
+    if (s < W) { span_part(out, cap, s / D, " d"); span_part(out, cap, s % D / H, " h"); return; }
+    if (s < MO) { span_part(out, cap, s / W, " wk"); span_part(out, cap, s % W / D, " d"); return; }
+    if (s < Y) {
+        span_part(out, cap, s / MO, " mo");
+        /* What is left: weeks, or days when it is less than one. */
+        if (s % MO >= W) span_part(out, cap, s % MO / W, " wk");
+        else span_part(out, cap, s % MO / D, " d");
+        return;
+    }
+    span_part(out, cap, s / Y, " y");
+    span_part(out, cap, s % Y / MO, " mo");
 }
 
 int ci_build_badge(char *out, unsigned cap, const char *me,

@@ -57,6 +57,18 @@
   `wst_list`, `wst_count`, `wst_chips` (the tags with their counts, as a
   `$type:"chips"` value), `wst_row`, `wst_row_tags`. Any wapp that maps or
   lists stations uses it; a new kind of station is a new tag, no code.
+- **Time in a station's range, from the core** (Check-in, `ci_visit_step` /
+  `ci_span` in `checkin/ci.c`, `visits_sample` in `main.c`): sample
+  `hal_xprs_stations` on the wapp's tick, take `now - heard.ble` as when the
+  station was last heard, and let the pure step open, extend or close a visit
+  (gap 10 min, under 2 min is passing by); `ci_span` writes "3 h 20 min",
+  "2 d 4 h", "3 wk 2 d". Any wapp that measures presence (a car, a club, a
+  family member) reuses both.
+- **Tags on records in a zx store** (Check-in `spots.tags`, `mytags`,
+  `each_tag`, `ftag_toggle`): a row keeps its tags as ",a,b," so a filter is
+  `tags LIKE '%,a,%'` per chosen tag; the chips are every tag with its count
+  (`$type:"chips"`), a Tags page lists them with totals. Worth moving to the
+  SDK when a second wapp tags things.
 - **Where something happened, on a small map** (`$type:"place"`, wapp-interfaces
   §14.0.2): set the field to `{"lat","lon","label"}`; Check-in's `place_set`
   turns a `pos:` into that value. Its `d_begin`/`d_section`/`d_item`/`d_end`

@@ -11,13 +11,25 @@
       },
       {
         "$": "field",
+        "name": "log_tags",
+        "$type": "chips"
+      },
+      {
+        "$": "field",
         "name": "log",
         "$type": "people",
-        "empty_title": "No check-ins yet",
-        "empty": "Check in at a station to start your log and collect its badge."
+        "empty_title": "No places yet",
+        "empty": "Check in at a station to start: it becomes a place, and the time you spend there is counted."
+      },
+      {
+        "$": "action",
+        "name": "tags_open",
+        "label": "Tags",
+        "icon": "label"
       }
     ],
-    "tip": "Walk up to a station: those heard over Bluetooth in the last 10 minutes are in reach. Tap Check in to collect its badge."
+    "tip": "Walk up to a station and check in. After the first time it happens by itself, and the time you spend in its Bluetooth range is counted. Tags sort your places.",
+    "search": true
   },
   {
     "$": "screen",
@@ -92,6 +104,292 @@
             "max": 100,
             "tip": "Shown with your pin on the map.",
             "apply": "save_intro"
+          },
+          {
+            "$": "field",
+            "name": "place_type",
+            "$type": "enum",
+            "label": "Kind of place",
+            "default": "none",
+            "tip": "Visitors see it, and their log sorts your station under it.",
+            "apply": "save_type",
+            "children": [
+              {
+                "$": "option",
+                "name": "none",
+                "label": "Not set"
+              },
+              {
+                "$": "option",
+                "name": "airport",
+                "label": "Airport"
+              },
+              {
+                "$": "option",
+                "name": "bakery",
+                "label": "Bakery"
+              },
+              {
+                "$": "option",
+                "name": "bar",
+                "label": "Bar"
+              },
+              {
+                "$": "option",
+                "name": "beach",
+                "label": "Beach"
+              },
+              {
+                "$": "option",
+                "name": "bike",
+                "label": "Bike"
+              },
+              {
+                "$": "option",
+                "name": "boat",
+                "label": "Boat"
+              },
+              {
+                "$": "option",
+                "name": "bus",
+                "label": "Bus"
+              },
+              {
+                "$": "option",
+                "name": "campsite",
+                "label": "Campsite"
+              },
+              {
+                "$": "option",
+                "name": "car",
+                "label": "Car"
+              },
+              {
+                "$": "option",
+                "name": "cinema",
+                "label": "Cinema"
+              },
+              {
+                "$": "option",
+                "name": "club",
+                "label": "Club"
+              },
+              {
+                "$": "option",
+                "name": "coffee",
+                "label": "Coffee"
+              },
+              {
+                "$": "option",
+                "name": "concert",
+                "label": "Concert hall"
+              },
+              {
+                "$": "option",
+                "name": "farm",
+                "label": "Farm"
+              },
+              {
+                "$": "option",
+                "name": "ferry",
+                "label": "Ferry"
+              },
+              {
+                "$": "option",
+                "name": "festival",
+                "label": "Festival"
+              },
+              {
+                "$": "option",
+                "name": "fire-station",
+                "label": "Fire station"
+              },
+              {
+                "$": "option",
+                "name": "forest",
+                "label": "Forest"
+              },
+              {
+                "$": "option",
+                "name": "fuel",
+                "label": "Fuel station"
+              },
+              {
+                "$": "option",
+                "name": "gallery",
+                "label": "Gallery"
+              },
+              {
+                "$": "option",
+                "name": "garden",
+                "label": "Garden"
+              },
+              {
+                "$": "option",
+                "name": "gym",
+                "label": "Gym"
+              },
+              {
+                "$": "option",
+                "name": "harbour",
+                "label": "Harbour"
+              },
+              {
+                "$": "option",
+                "name": "home",
+                "label": "Home"
+              },
+              {
+                "$": "option",
+                "name": "hospital",
+                "label": "Hospital"
+              },
+              {
+                "$": "option",
+                "name": "hotel",
+                "label": "Hotel"
+              },
+              {
+                "$": "option",
+                "name": "library",
+                "label": "Library"
+              },
+              {
+                "$": "option",
+                "name": "mall",
+                "label": "Mall"
+              },
+              {
+                "$": "option",
+                "name": "market",
+                "label": "Market"
+              },
+              {
+                "$": "option",
+                "name": "metro",
+                "label": "Metro"
+              },
+              {
+                "$": "option",
+                "name": "museum",
+                "label": "Museum"
+              },
+              {
+                "$": "option",
+                "name": "office",
+                "label": "Office"
+              },
+              {
+                "$": "option",
+                "name": "other",
+                "label": "Other"
+              },
+              {
+                "$": "option",
+                "name": "park",
+                "label": "Park"
+              },
+              {
+                "$": "option",
+                "name": "parking",
+                "label": "Parking"
+              },
+              {
+                "$": "option",
+                "name": "pharmacy",
+                "label": "Pharmacy"
+              },
+              {
+                "$": "option",
+                "name": "church",
+                "label": "Place of worship"
+              },
+              {
+                "$": "option",
+                "name": "plane",
+                "label": "Plane"
+              },
+              {
+                "$": "option",
+                "name": "police",
+                "label": "Police"
+              },
+              {
+                "$": "option",
+                "name": "pool",
+                "label": "Pool"
+              },
+              {
+                "$": "option",
+                "name": "post-office",
+                "label": "Post office"
+              },
+              {
+                "$": "option",
+                "name": "radio-club",
+                "label": "Radio club"
+              },
+              {
+                "$": "option",
+                "name": "repeater",
+                "label": "Repeater"
+              },
+              {
+                "$": "option",
+                "name": "restaurant",
+                "label": "Restaurant"
+              },
+              {
+                "$": "option",
+                "name": "school",
+                "label": "School"
+              },
+              {
+                "$": "option",
+                "name": "shop",
+                "label": "Shop"
+              },
+              {
+                "$": "option",
+                "name": "sports",
+                "label": "Sports ground"
+              },
+              {
+                "$": "option",
+                "name": "stadium",
+                "label": "Stadium"
+              },
+              {
+                "$": "option",
+                "name": "theater",
+                "label": "Theater"
+              },
+              {
+                "$": "option",
+                "name": "townhall",
+                "label": "Town hall"
+              },
+              {
+                "$": "option",
+                "name": "train",
+                "label": "Train"
+              },
+              {
+                "$": "option",
+                "name": "tram",
+                "label": "Tram"
+              },
+              {
+                "$": "option",
+                "name": "work",
+                "label": "Work"
+              },
+              {
+                "$": "option",
+                "name": "workshop",
+                "label": "Workshop"
+              }
+            ]
           }
         ]
       },
@@ -330,6 +628,15 @@
         "empty": ""
       },
       {
+        "$": "field",
+        "name": "a_auto",
+        "$type": "bool",
+        "label": "Check in automatically",
+        "default": true,
+        "tip": "Once a day, when this station is in Bluetooth reach.",
+        "apply": "set_auto"
+      },
+      {
         "$": "action",
         "name": "about_list",
         "label": "Your check-ins here",
@@ -340,6 +647,40 @@
         "name": "about_station",
         "label": "About the station",
         "icon": "cell_tower"
+      },
+      {
+        "$": "action",
+        "name": "about_visits",
+        "label": "Visits",
+        "icon": "schedule"
+      },
+      {
+        "$": "action",
+        "name": "add_tag",
+        "label": "Add a tag",
+        "icon": "label"
+      },
+      {
+        "$": "action",
+        "name": "remove_tag",
+        "label": "Remove a tag",
+        "icon": "close"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Tags",
+    "icon": "label",
+    "hidden": true,
+    "tip": "Every tag on your places: the kinds of place stations say they are, the automatic ones and yours.",
+    "children": [
+      {
+        "$": "field",
+        "name": "tags_list",
+        "$type": "people",
+        "empty_title": "No tags yet",
+        "empty": "Places get tags as you check in."
       }
     ]
   }

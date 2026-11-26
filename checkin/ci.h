@@ -145,4 +145,37 @@ void ci_label(char *out, unsigned cap, const char *text);
 /* The <digest>.<ext> of a file: token or a bare reference; "" otherwise. */
 void ci_ref_of(const char *token, char *out, unsigned cap);
 
+/* The standing check-in point, typed: as ci_build_event under
+ * CI_POINT_TITLE, starting now, with the kind of place [type] (a
+ * ci_places id, or "" for none) as one more label on its tag:, so
+ * "tag:checkin,coffee". tag: is the sender's own topic labels (XPRS.md 7):
+ * no new word on the air. */
+int ci_build_point(char *out, unsigned cap, const char *me,
+                   unsigned long long now, const char *pos, unsigned long long until,
+                   const char *file, const char *m, const char *type);
+
+/* The kinds of place a station can say it is: [id] the label on the air
+ * (a-z 0-9 -), [name] what a person reads, [icon] the host's icon name. */
+typedef struct { const char *id, *name, *icon; } ci_place_t;
+extern const ci_place_t ci_places[];
+extern const unsigned ci_places_n;
+/* The kind named [id], or 0. */
+const ci_place_t *ci_place(const char *id);
+/* The kind of place a check-in point's wire says, "" when none. */
+void ci_point_type(const char *wire, char *out, unsigned cap);
+
+/* Time in range: a visit is [start]..[last], 0..0 when none is open.
+ * [heard_at] is when the station was last heard (0: not heard), [now] the
+ * clock, [gap] how long out of range ends a visit. Opens a visit on a
+ * fresh hearing, extends it, or says it closed (the caller records
+ * start..last and clears both). */
+enum { CI_V_NONE, CI_V_OPEN, CI_V_EXTEND, CI_V_CLOSE };
+int ci_visit_step(unsigned long long *start, unsigned long long *last,
+                  unsigned long long heard_at, unsigned long long now,
+                  unsigned long long gap);
+
+/* A length of time as a person reads it, two units at most:
+ * "45 min", "3 h 20 min", "2 d 4 h", "3 wk 2 d", "4 mo 1 wk", "1 y 2 mo". */
+void ci_span(char *out, unsigned cap, unsigned long long secs);
+
 #endif
