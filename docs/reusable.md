@@ -57,6 +57,12 @@
   `wst_list`, `wst_count`, `wst_chips` (the tags with their counts, as a
   `$type:"chips"` value), `wst_row`, `wst_row_tags`. Any wapp that maps or
   lists stations uses it; a new kind of station is a new tag, no code.
+- **Where something happened, on a small map** (`$type:"place"`, wapp-interfaces
+  §14.0.2): set the field to `{"lat","lon","label"}`; Check-in's `place_set`
+  turns a `pos:` into that value. Its `d_begin`/`d_section`/`d_item`/`d_end`
+  build a `$type:"details"` value fact by fact, leaving out empty ones;
+  `find_event` finds the newest announcement a station made under a title in
+  the archive (an event's description, a check-in point's words).
 - **A map with its list in a drawer** (`"drawer": true` on the map group, a
   `$type:"people"` field on the same screen, `"search": true` on the screen
   for the search box, a `$type:"chips"` field for filters): the host draws

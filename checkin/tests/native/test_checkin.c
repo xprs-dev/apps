@@ -23,6 +23,8 @@ extern char g_put_token[96];
 extern char g_cmd[4096];
 extern char g_stations[4096];
 extern char g_history[8192];
+extern char g_names[2048];
+extern char g_station_one[2048];
 extern char g_shared[96];
 extern char g_followed_kind[64];
 extern char g_identities[16384];
@@ -457,14 +459,51 @@ static void test_chaser(void)
     char id[7];
     al_id(ask, al_len(ask), id);
     char tap[96];
+    /* What the archive keeps of the station: its event's announcement and
+     * its check-in point, with their words. */
+    {
+        static char evw[700], ptw[400];
+        ci_build_event(evw, sizeof evw, "X3STN1", g_now - 3600, "38.7071,-9.1393", "Field Day 2026",
+                       0, g_now + 6 * 86400ULL, EREF, "On the hill all weekend");
+        ci_build_event(ptw, sizeof ptw, "X3STN1", g_now - 60, "38.7071,-9.1393", CI_POINT_TITLE,
+                       0, g_now + 3600, "", "Hilltop shack, ring the bell");
+        snprintf(g_history, sizeof g_history, "[{\"id\":\"ev0001\",\"wire\":\"%s\"},{\"id\":\"pt0001\",\"wire\":\"%s\"}]", evw, ptw);
+    }
     snprintf(tap, sizeof tap, "{\"command\":\"log_tap\",\"log_id\":\"%s\"}", id);
     mock_clear();
     cmd(tap);
-    CHECK(said("Station's signed reply") && said("cmd:checkin") && said("code:200"),
+    CHECK(said("The station's signed reply") && said("cmd:checkin") && said("code:200"),
           "the entry shows both packets");
+    CHECK(said("\"field\":\"e_place\",\"value\":{\"lat\":38.7071,\"lon\":-9.1393,\"label\":\"X3STN1\"}"),
+          "the entry shows where it was on a small map");
+    CHECK(said("\"label\":\"About the event\",\"value\":\"On the hill all weekend\"") &&
+          said("\"label\":\"About the station\",\"value\":\"Hilltop shack, ring the bell\""),
+          "with the event's description and the station's own words");
+    CHECK(said("\"label\":\"When\""), "and when");
     CHECK(said("\"field\":\"e_badge\",\"value\":\"file:"), "the entry shows the badge it collected");
     CHECK(said("\"label\":\"Radio\",\"value\":\"Bluetooth\""), "and the radio by its name");
-    CHECK(said("\"name\":\"Entry\",\"title\":\"field-day-2026\""), "titled with its event");
+    CHECK(said("\"name\":\"Entry\",\"title\":\"Field Day 2026\""), "titled with its event");
+    mock_clear();
+    cmd("{\"command\":\"entry_event\"}");
+    CHECK(said("\"name\":\"About\",\"title\":\"Field Day 2026\"") &&
+          said("\"label\":\"Run by\",\"value\":\"X3STN1\"") && said("\"label\":\"Ends\"") &&
+          said("\"label\":\"Now\",\"value\":\"On now\"") && said("\"field\":\"a_place\""),
+          "the entry's event opens what its announcement says");
+    strcpy(g_names, "[{\"call\":\"X3STN1\",\"nick\":\"Hilltop club\",\"kind\":\"station\",\"ts\":1786960000}]");
+    strcpy(g_station_one, "{\"call\":\"X3STN1\",\"kind\":\"station\",\"bearer\":\"ble5\",\"bearers\":[\"ble5\",\"ble\",\"lora\"],"
+                          "\"rssi\":-61,\"agoMs\":180000,\"serve\":[\"archive\"],\"sig\":\"verified\"}");
+    mock_clear();
+    cmd("{\"command\":\"about_station\"}");
+    CHECK(said("\"name\":\"About\",\"title\":\"X3STN1\"") &&
+          said("\"label\":\"Gives check-ins\",\"value\":\"Yes, until") &&
+          said("\"label\":\"Events\",\"value\":\"Field Day 2026\""),
+          "and from it, the station that runs it");
+    CHECK(said("\"label\":\"Name\",\"value\":\"Hilltop club\"") &&
+          said("\"label\":\"Heard this hour\",\"value\":\"Bluetooth, LoRa, 3 min ago (-61 dBm)\"") &&
+          said("\"label\":\"Serves\",\"value\":\"Archive (keeps messages)\"") && said("\"label\":\"Signatures\",\"value\":\"verified\""),
+          "its name from its identity, and how it is heard now");
+    strcpy(g_names, "[]");
+    g_station_one[0] = 0;
     /* The score's tiles open what they count. */
     mock_clear();
     cmd("{\"command\":\"ready\"}");
@@ -482,12 +521,16 @@ static void test_chaser(void)
           "Stations: each once, how many check-ins, how many in person");
     mock_clear();
     cmd("{\"command\":\"detail_tap\",\"detail_id\":\"st:X3STN1\"}");
+    CHECK(said("\"name\":\"About\",\"title\":\"X3STN1\"") && said("\"label\":\"Callsign\""),
+          "a station opens what is known of it");
+    mock_clear();
+    cmd("{\"command\":\"about_list\"}");
     CHECK(said("\"title\":\"X3STN1\"") && said("\"name\":\"Score detail\",\"title\":\"X3STN1\""),
-          "a station opens its check-ins");
+          "and from there its check-ins");
     snprintf(tap, sizeof tap, "{\"command\":\"detail_tap\",\"detail_id\":\"%s\"}", id);
     mock_clear();
     cmd(tap);
-    CHECK(said("Station's signed reply") && said("\"name\":\"Entry\""), "and a check-in opens its entry");
+    CHECK(said("The station's signed reply") && said("\"name\":\"Entry\""), "and a check-in opens its entry");
     mock_clear();
     cmd("{\"command\":\"lb_stats_tap\",\"lb_stats_id\":\"streak\"}");
     CHECK(said("\"id\":\"day:") && said("\"title\":\"Streak\""), "Streak: its days");
@@ -497,11 +540,16 @@ static void test_chaser(void)
           "Events: each event attended, with its check-ins");
     mock_clear();
     cmd("{\"command\":\"detail_tap\",\"detail_id\":\"ev:field-day-2026\"}");
-    CHECK(said("\"title\":\"field-day-2026\"") && said("\"name\":\"Score detail\""), "an event opens its check-ins");
+    CHECK(said("\"name\":\"About\",\"title\":\"Field Day 2026\"") &&
+          said("\"label\":\"About\",\"value\":\"On the hill all weekend\""), "an event opens its announcement");
+    mock_clear();
+    cmd("{\"command\":\"about_list\"}");
+    CHECK(said("\"title\":\"Field Day 2026\"") && said("\"name\":\"Score detail\""), "and from there its check-ins");
     snprintf(tap, sizeof tap, "{\"command\":\"marker_tap\",\"id\":\"log:%s\"}", id);
     mock_clear();
     cmd(tap);
-    CHECK(said("Station's signed reply") && said("\"name\":\"Entry\""), "a pin opens its check-in");
+    CHECK(said("The station's signed reply") && said("\"name\":\"Entry\""), "a pin opens its check-in");
+    strcpy(g_history, "[]");
 
     /* Saving a city for off-grid use is the person's act, at a town's scale. */
     mock_clear();

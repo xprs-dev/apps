@@ -73,6 +73,7 @@ static char g_greet_from[16];
 
 /* The entry open on the Entry screen, and the event being written. */
 static char g_sel[8];
+static char g_sel_station[16];   /* the About page's event is run by */
 static struct { char badge[80]; } g_draft;
 
 static void say(const char *json) { hal_msg_send(json, al_len(json)); }
@@ -618,6 +619,8 @@ static void fetch_badge(const char *ref)
 
 static void push_log(void);
 static void push_badges(void);
+static void push_entry(void);
+static void open_about(const char *what);
 static const char *entry_value(const char *col, const char *v);
 static void push_map(void);
 static int has_tag(const char *wire, const char *tag);
@@ -990,7 +993,9 @@ static void checkin_row(void)
     } else g_icon = "check";
     heard_as(how, sizeof how, link, rssi);
     g_tag3 = how;
-    row(id, title[0] ? title : st, sub_, entry_value("grade", grade), title[0] ? st : w, tok, st, "", "");
+    char nice[40];
+    label_name(nice, sizeof nice, title);
+    row(id, title[0] ? nice : st, sub_, entry_value("grade", grade), title[0] ? st : w, tok, st, "", "");
 }
 
 /* ── what a score tile counts ─────────────────────────────────────────── */
@@ -1057,7 +1062,10 @@ static int group_rows(const char *col, const char *where, const char *prefix)
         al_cpy(id, prefix, sizeof id);
         al_cat(id, al_eq(col, "badge") ? st : v, sizeof id);
         if (!tok[0]) g_icon = al_eq(col, "title") ? "campaign" : "cell_tower";
-        row(id, al_eq(col, "badge") ? st : v, sub_, t1, al_eq(col, "title") ? st : "", tok,
+        char nice[100];
+        if (al_eq(col, "title")) label_name(nice, sizeof nice, v);
+        else al_cpy(nice, al_eq(col, "badge") ? st : v, sizeof nice);
+        row(id, nice, sub_, t1, al_eq(col, "title") ? st : "", tok,
             al_eq(col, "title") ? "" : st, "", "");
         n++;
     }
@@ -1131,7 +1139,7 @@ static void push_detail(const char *what, int open)
             n++;
         }
     } else if (al_starts(what, "st:")) { al_cpy(title, what + 3, sizeof title); n = log_rows("station = ?", what + 3); }
-    else if (al_starts(what, "ev:")) { al_cpy(title, what + 3, sizeof title); n = log_rows("title = ?", what + 3); }
+    else if (al_starts(what, "ev:")) { label_name(title, sizeof title, what + 3); n = log_rows("title = ?", what + 3); }
     else if (al_starts(what, "day:")) {
         /* One day's check-ins: the day is a range of ts. */
         unsigned long long d = u_of(what + 4);
@@ -1232,61 +1240,6 @@ static const char *entry_value(const char *col, const char *v)
         return via;
     }
     return v;
-}
-
-static void push_entry(void)
-{
-    if (!g_sel[0]) return;
-    p_begin(); p_str(g_sel); p_end();
-    if (!db_query("SELECT * FROM log WHERE id = ?", 1)) return;
-    const char *p = g_rows;
-    while (*p && *p != '[') p++;
-    if (*p == '[') p++;
-    if (!al_json_next(p, g_obj, sizeof g_obj)) return;
-    static const struct { const char *col, *label; } rows_[] = {
-        { "station", "Station" }, { "title", "Event" }, { "greeting", "Greeting" },
-        { "grade", "Contact" }, { "link", "Radio" }, { "rssi", "Signal" },
-        { "route", "Relays" }, { "pos", "Location" },
-        { "cert", "Station's signed reply" }, { "ask", "Your request" }
-    };
-    {
-        /* The station's badge, the picture this check-in collected. */
-        char b[80], tok[88] = "";
-        if (al_json(g_obj, "badge", b, sizeof b) && b[0]) {
-            al_cpy(tok, "file:", sizeof tok);
-            al_cat(tok, b, sizeof tok);
-            fetch_badge(b);
-        }
-        field_set_str("e_badge", tok);
-        char st[16] = "", ev[32] = "";
-        al_json(g_obj, "station", st, sizeof st);
-        al_json(g_obj, "title", ev, sizeof ev);
-        al_cpy(g_entry_title, ev[0] ? ev : st, sizeof g_entry_title);
-    }
-    al_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"e_info\",\"value\":[{\"title\":\"\",\"items\":[", sizeof g_out);
-    int first = 1;
-    char ts[24], w[24];
-    al_json(g_obj, "ts", ts, sizeof ts);
-    unsigned long long t = 0;
-    for (const char *q = ts; *q >= '0' && *q <= '9'; q++) t = t * 10 + (unsigned)(*q - '0');
-    when(w, sizeof w, t);
-    al_cat(g_out, "{\"label\":\"When\",\"value\":\"", sizeof g_out);
-    al_jesc(g_out, w, sizeof g_out);
-    al_cat(g_out, "\"}", sizeof g_out);
-    first = 0;
-    for (unsigned i = 0; i < sizeof rows_ / sizeof rows_[0]; i++) {
-        static char v[CI_WIRE_MAX + 64];
-        if (!al_json(g_obj, rows_[i].col, v, sizeof v) || !v[0]) continue;
-        if (!first) al_cat(g_out, ",", sizeof g_out);
-        first = 0;
-        al_cat(g_out, "{\"label\":\"", sizeof g_out);
-        al_jesc(g_out, rows_[i].label, sizeof g_out);
-        al_cat(g_out, "\",\"value\":\"", sizeof g_out);
-        al_jesc(g_out, entry_value(rows_[i].col, v), sizeof g_out);
-        al_cat(g_out, "\"}", sizeof g_out);
-    }
-    al_cat(g_out, "]}]}", sizeof g_out);
-    say(g_out);
 }
 
 /* ── The map ──────────────────────────────────────────────────────────── */
@@ -1711,6 +1664,467 @@ static void place_sheet_of(const char *id)
     place_sheet(id, title, intro, pos, g_here[0] ? wst_dist_m(g_here, pos) : -1, extra);
 }
 
+/* ── About: one check-in, one event, one station ───────────────────────── */
+/* What a tap on a check-in, an event or a station opens: its picture, where
+ * it was on a small map ($type:"place"), and every fact the packets carried
+ * (the station's certificate, the event's announcement, the station's
+ * check-in point and what the stations walk knows of it), then what you did
+ * there. g_about is st:<call> or ev:<title>. */
+static char g_about[64];
+
+/* A details field's value, built in g_out: d_begin, d_section, d_item...,
+ * d_end sends it. */
+static int g_dsec, g_dfirst;
+static void d_begin(const char *field)
+{
+    al_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"", sizeof g_out);
+    al_cat(g_out, field, sizeof g_out);
+    al_cat(g_out, "\",\"value\":[", sizeof g_out);
+    g_dsec = 0;
+}
+static void d_section(const char *title)
+{
+    if (g_dsec) al_cat(g_out, "]},", sizeof g_out);
+    al_cat(g_out, "{\"title\":\"", sizeof g_out);
+    al_jesc(g_out, title, sizeof g_out);
+    al_cat(g_out, "\",\"items\":[", sizeof g_out);
+    g_dsec = 1;
+    g_dfirst = 1;
+}
+static void d_item_m(const char *label, const char *value, int mono)
+{
+    if (!value || !value[0]) return;
+    if (!g_dfirst) al_cat(g_out, ",", sizeof g_out);
+    g_dfirst = 0;
+    al_cat(g_out, "{\"label\":\"", sizeof g_out);
+    al_jesc(g_out, label, sizeof g_out);
+    al_cat(g_out, "\",\"value\":\"", sizeof g_out);
+    al_jesc(g_out, value, sizeof g_out);
+    al_cat(g_out, mono ? "\",\"mono\":true}" : "\"}", sizeof g_out);
+}
+static void d_item(const char *label, const char *value) { d_item_m(label, value, 0); }
+static void d_end(void)
+{
+    if (g_dsec) al_cat(g_out, "]}", sizeof g_out);
+    al_cat(g_out, "]}", sizeof g_out);
+    say(g_out);
+}
+
+/* A $type:"place" field: [pos] with [label] on a small map, or nothing. */
+static void place_set(const char *field, const char *pos, const char *label)
+{
+    long la, lo;
+    if (!pos[0] || !wst_pos_parse(pos, &la, &lo)) { field_set_str(field, ""); return; }
+    char m[300] = "{\"type\":\"ui.field.set\",\"field\":\"";
+    al_cat(m, field, sizeof m);
+    al_cat(m, "\",\"value\":{\"lat\":", sizeof m);
+    cat_deg7(m, sizeof m, la);
+    al_cat(m, ",\"lon\":", sizeof m);
+    cat_deg7(m, sizeof m, lo);
+    al_cat(m, ",\"label\":\"", sizeof m);
+    al_jesc(m, label, sizeof m);
+    al_cat(m, "\"}}", sizeof m);
+    say(m);
+}
+
+/* "2026-11-20 14:02, 6 d ago". */
+static void when_ago(char *out, unsigned cap, unsigned long long t)
+{
+    char a[24];
+    out[0] = 0;
+    if (!t) return;
+    when(out, cap, t);
+    ago(a, sizeof a, t);
+    al_cat(out, ", ", cap);
+    al_cat(out, a, cap);
+}
+
+/* "38.7071, -9.1355 (1.2 km from you)". */
+static void where_text(char *out, unsigned cap, const char *pos)
+{
+    out[0] = 0;
+    if (!wst_pos_ok(pos)) return;
+    al_cpy(out, entry_value("pos", pos), cap);
+    here_pos(g_here, sizeof g_here);
+    if (g_here[0]) {
+        char d[24];
+        wst_dist_text(wst_dist_m(g_here, pos), d, sizeof d);
+        al_cat(out, " (", cap);
+        al_cat(out, d, cap);
+        al_cat(out, " from you)", cap);
+    }
+}
+
+/* The newest announcement [from] made under [title] (any, when [from] is
+ * empty), from the archive: its wire in g_evf.wire, 1 when found. */
+static struct { char from[16], title[32], wire[CI_EVENT_MAX + 64]; unsigned long long ts; int found; } g_evf;
+static void ev_find_of(const char *id, const char *wire, void *ctx)
+{
+    (void)id; (void)ctx;
+    char f[16], t[32], ts[24];
+    al_field(wire, "title", t, sizeof t);
+    if (!al_eq(t, g_evf.title)) return;
+    al_field(wire, "f", f, sizeof f);
+    if (g_evf.from[0] && !al_eq(f, g_evf.from)) return;
+    al_field(wire, "ts", ts, sizeof ts);
+    unsigned long long v = al_epoch(ts);
+    if (g_evf.found && v <= g_evf.ts) return;
+    g_evf.found = 1;
+    g_evf.ts = v;
+    al_cpy(g_evf.wire, wire, sizeof g_evf.wire);
+}
+static int find_event(const char *from, const char *title)
+{
+    al_cpy(g_evf.from, from, sizeof g_evf.from);
+    al_cpy(g_evf.title, title, sizeof g_evf.title);
+    g_evf.found = 0;
+    g_evf.ts = 0;
+    g_evf.wire[0] = 0;
+    each_event(ev_find_of, 0);
+    return g_evf.found;
+}
+
+/* A station's name as its owner gave it, from its t:identity: heard here or
+ * asked of the archivers (hal_xprs_names, XPRS.md 12.9.4). */
+static void station_nick(const char *call, char *out, unsigned cap)
+{
+    static char q[80], r[4096], o[300];
+    out[0] = 0;
+    if (!call[0]) return;
+    al_cpy(q, "{\"q\":\"", sizeof q);
+    al_jesc(q, call, sizeof q);
+    al_cat(q, "\",\"limit\":8,\"ask\":true}", sizeof q);
+    int32_t n = hal_xprs_names(q, al_len(q), r, sizeof r - 1);
+    if (n <= 0 || n >= (int32_t)sizeof r) return;
+    r[n] = 0;
+    const char *p = r;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    while ((p = al_json_next(p, o, sizeof o)) != 0) {
+        char c[16];
+        al_json(o, "call", c, sizeof c);
+        if (al_eq(c, call)) { al_json(o, "nick", out, cap); return; }
+    }
+}
+
+/* The next string of a JSON array of strings (after al_json_arr), or 0 at
+ * its end. */
+static const char *str_next(const char *p, char *out, unsigned cap)
+{
+    out[0] = 0;
+    if (!p) return 0;
+    while (*p == ' ' || *p == ',') p++;
+    if (*p != '"') return 0;
+    p++;
+    unsigned k = 0;
+    while (*p && *p != '"') { if (k + 1 < cap) out[k++] = *p; p++; }
+    out[k] = 0;
+    return *p ? p + 1 : 0;
+}
+
+/* What the host heard of [call] this hour (hal_xprs_station): over which
+ * radios and how long ago, its signal, what it serves, whether its
+ * signatures hold. Empty strings when it was not heard. */
+static void station_heard(const char *call, char *heard, unsigned hcap, char *serves, unsigned scap,
+                          char *sig, unsigned sigcap, char *pos, unsigned pcap)
+{
+    static char r[4096];
+    heard[0] = serves[0] = sig[0] = 0;
+    int32_t n = hal_xprs_station(call, al_len(call), r, sizeof r - 1);
+    if (n <= 0 || n >= (int32_t)sizeof r) return;
+    r[n] = 0;
+    const char *b = al_json_arr(r, "bearers");
+    char one[16], a[24];
+    while (b && (b = str_next(b, one, sizeof one)) != 0) {
+        const char *w = one;
+        if (!w[0]) continue;
+        const char *name = entry_value("link", al_eq(w, "ble5") ? "ble" : w);
+        if (heard[0] && al_len(heard) >= al_len(name)) {
+            /* Bluetooth twice (ble and ble5) is one radio to a person. */
+            int dup = 0;
+            for (const char *q = heard; *q && !dup; q++) dup = al_starts(q, name);
+            if (dup) continue;
+        }
+        if (heard[0]) al_cat(heard, ", ", hcap);
+        al_cat(heard, name, hcap);
+    }
+    long long ago_ms = json_int(r, "agoMs", -1);
+    if (ago_ms >= 0) {
+        ago(a, sizeof a, now_s() - (unsigned long long)(ago_ms / 1000));
+        if (heard[0]) al_cat(heard, ", ", hcap);
+        al_cat(heard, a, hcap);
+    }
+    int rssi = json_int(r, "rssi", 0);
+    if (rssi) {
+        char d[16] = "";
+        if (rssi < 0) { al_cat(d, "-", sizeof d); rssi = -rssi; }
+        al_cat_u(d, (unsigned long long)rssi, sizeof d);
+        al_cat(heard, " (", hcap);
+        al_cat(heard, entry_value("rssi", d), hcap);
+        al_cat(heard, ")", hcap);
+    }
+    const char *sv = al_json_arr(r, "serve");
+    while (sv && (sv = str_next(sv, one, sizeof one)) != 0) {
+        /* One station's services, in the singular. */
+        static const struct { const char *w, *name; } svc[] = {
+            { "archive", "Archive (keeps messages)" }, { "relay", "Relay" },
+            { "internet", "Internet gateway" }, { "aprs", "APRS gateway" },
+            { "files", "Files" }, { "meshtastic", "Meshtastic bridge" }
+        };
+        const char *nm = one;
+        for (unsigned i = 0; i < sizeof svc / sizeof svc[0]; i++) if (al_eq(one, svc[i].w)) nm = svc[i].name;
+        if (serves[0]) al_cat(serves, ", ", scap);
+        al_cat(serves, nm, scap);
+    }
+    al_json(r, "sig", sig, sigcap);
+    if (!pos[0]) al_json(r, "pos", pos, pcap);
+}
+
+/* What your log holds about [where] (st or ev, value [arg]): how many,
+ * in person, first and last, and the newest check-in's station, badge, pos. */
+static struct { unsigned long long n, here, first, last; char st[16], badge[80], pos[40], title[32]; } g_mine;
+static void mine_of(const char *col, const char *arg)
+{
+    char sql[300], v[24];
+    g_mine.n = g_mine.here = g_mine.first = g_mine.last = 0;
+    g_mine.st[0] = g_mine.badge[0] = g_mine.pos[0] = g_mine.title[0] = 0;
+    al_cpy(sql, "SELECT COUNT(*) AS n, MIN(ts) AS a, MAX(ts) AS b,"
+                " SUM(CASE WHEN grade = 'local' THEN 1 ELSE 0 END) AS here FROM log WHERE ", sizeof sql);
+    al_cat(sql, col, sizeof sql);
+    al_cat(sql, " = ?", sizeof sql);
+    p_begin(); p_str(arg); p_end();
+    if (!db_query(sql, 1)) return;
+    const char *p = g_rows;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    if (!al_json_next(p, g_obj, sizeof g_obj)) return;
+    if (al_json(g_obj, "n", v, sizeof v)) g_mine.n = u_of(v);
+    if (al_json(g_obj, "a", v, sizeof v)) g_mine.first = u_of(v);
+    if (al_json(g_obj, "b", v, sizeof v)) g_mine.last = u_of(v);
+    if (al_json(g_obj, "here", v, sizeof v)) g_mine.here = u_of(v);
+    al_cpy(sql, "SELECT station, badge, pos, title FROM log WHERE ", sizeof sql);
+    al_cat(sql, col, sizeof sql);
+    al_cat(sql, " = ? ORDER BY ts DESC LIMIT 1", sizeof sql);
+    p_begin(); p_str(arg); p_end();
+    if (!db_query(sql, 1)) return;
+    p = g_rows;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    if (!al_json_next(p, g_obj, sizeof g_obj)) return;
+    al_json(g_obj, "station", g_mine.st, sizeof g_mine.st);
+    al_json(g_obj, "badge", g_mine.badge, sizeof g_mine.badge);
+    al_json(g_obj, "pos", g_mine.pos, sizeof g_mine.pos);
+    al_json(g_obj, "title", g_mine.title, sizeof g_mine.title);
+}
+
+static void badge_set(const char *field, const char *ref)
+{
+    char tok[88] = "";
+    if (ref[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, ref, sizeof tok); fetch_badge(ref); }
+    field_set_str(field, tok);
+}
+
+static void mine_section(const char *what)
+{
+    char v[48];
+    d_section(what);
+    v[0] = 0; al_cat_u(v, g_mine.n, sizeof v);
+    d_item("Check-ins", g_mine.n ? v : "None yet");
+    if (g_mine.n) {
+        v[0] = 0; al_cat_u(v, g_mine.here, sizeof v);
+        d_item("In person", v);
+        when_ago(v, sizeof v, g_mine.first);
+        d_item(g_mine.n == 1 ? "When" : "First", v);
+        if (g_mine.n > 1) { when_ago(v, sizeof v, g_mine.last); d_item("Last", v); }
+    }
+}
+
+/* An event: its announcement (name, description, who runs it, when, where,
+ * badge), then your check-ins at it. */
+static void push_about_event(const char *title)
+{
+    char nice[40], from[16] = "", m[CI_EVENT_MAX], s_[24], u[24], ts[24], pos[40] = "", file[80] = "", v[96], nick[48];
+    label_name(nice, sizeof nice, title);
+    mine_of("title", title);
+    al_cpy(from, g_mine.st, sizeof from);
+    m[0] = s_[0] = u[0] = ts[0] = 0;
+    if (find_event(from, title) || find_event("", title)) {
+        al_field(g_evf.wire, "f", from, sizeof from);
+        al_field(g_evf.wire, "m", m, sizeof m);
+        al_field(g_evf.wire, "since", s_, sizeof s_);
+        al_field(g_evf.wire, "until", u, sizeof u);
+        al_field(g_evf.wire, "ts", ts, sizeof ts);
+        al_field(g_evf.wire, "pos", pos, sizeof pos);
+        al_field(g_evf.wire, "file", file, sizeof file);
+    }
+    if (!pos[0]) al_cpy(pos, g_mine.pos, sizeof pos);
+    badge_set("a_badge", file[0] ? file : g_mine.badge);
+    place_set("a_place", pos, nice);
+    d_begin("a_info");
+    d_section("Event");
+    d_item("Name", nice);
+    d_item("About", m);
+    station_nick(from, nick, sizeof nick);
+    al_cpy(v, from, sizeof v);
+    if (nick[0]) { al_cat(v, " \xc2\xb7 ", sizeof v); al_cat(v, nick, sizeof v); }
+    d_item("Run by", v);
+    unsigned long long since = al_epoch(s_), until = al_epoch(u), at = al_epoch(ts), now = now_s();
+    if (!since) since = at;
+    if (since) { when(v, sizeof v, since); d_item("Starts", v); }
+    if (until) { when(v, sizeof v, until); d_item("Ends", v); }
+    if (until) d_item("Now", until <= now ? "Ended" : since > now ? "Not started yet" : "On now");
+    where_text(v, sizeof v, pos);
+    d_item("Where", v);
+    if (at) { when_ago(v, sizeof v, at); d_item("Announced", v); }
+    if (!g_evf.found) d_item("Announcement", "Not kept here any more: shown from your check-ins.");
+    mine_section("You there");
+    d_end();
+    field_set_bool("about_station__hidden", from[0] == 0);
+    field_set_bool("about_list__hidden", g_mine.n == 0);
+    al_cpy(g_about, "ev:", sizeof g_about);
+    al_cat(g_about, title, sizeof g_about);
+    al_cpy(g_sel_station, from, sizeof g_sel_station);
+}
+
+/* A station: who it is (callsign, name, what its owner says about it),
+ * where, whether it gives check-ins now, when it was last heard and how,
+ * the events it ran, then your check-ins there. */
+static void push_about_station(const char *call)
+{
+    char nick[48] = "", pos[40] = "", intro[104] = "", file[80] = "", u[24] = "", v[120],
+         heard[120], serves[120], sig[16];
+    station_nick(call, nick, sizeof nick);
+    int open_ = 0;
+    if (find_event(call, CI_POINT_TITLE)) {
+        char pp[40];
+        al_field(g_evf.wire, "m", intro, sizeof intro);
+        al_field(g_evf.wire, "file", file, sizeof file);
+        al_field(g_evf.wire, "until", u, sizeof u);
+        al_field(g_evf.wire, "pos", pp, sizeof pp);
+        if (wst_pos_ok(pp)) al_cpy(pos, pp, sizeof pos);
+        open_ = al_epoch(u) > now_s();
+    }
+    station_heard(call, heard, sizeof heard, serves, sizeof serves, sig, sizeof sig, pos, sizeof pos);
+    mine_of("station", call);
+    if (!wst_pos_ok(pos)) al_cpy(pos, g_mine.pos, sizeof pos);
+    badge_set("a_badge", file[0] ? file : g_mine.badge);
+    place_set("a_place", pos, call);
+    d_begin("a_info");
+    d_section("Station");
+    d_item("Callsign", call);
+    d_item("Name", nick);
+    d_item("About", intro);
+    if (open_) { al_cpy(v, "Yes, until ", sizeof v); char w[24]; when(w, sizeof w, al_epoch(u)); al_cat(v, w, sizeof v); }
+    d_item("Gives check-ins", open_ ? v : "Not now");
+    where_text(v, sizeof v, pos);
+    d_item("Where", v);
+    d_item("Heard this hour", heard[0] ? heard : "Not heard this hour");
+    d_item("Serves", serves);
+    d_item("Signatures", sig);
+    /* The events it announced, newest first, as far as the archive keeps them. */
+    {
+        char evs[400] = "";
+        int k = 0;
+        p_begin(); p_str(call); p_end();
+        if (db_query("SELECT title, MAX(ts) AS last FROM log WHERE station = ? AND title != ''"
+                     " GROUP BY title ORDER BY last DESC LIMIT 8", 1)) {
+            const char *p = g_rows;
+            while (*p && *p != '[') p++;
+            if (*p == '[') p++;
+            while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+                char t[32], n2[40];
+                al_json(g_obj, "title", t, sizeof t);
+                label_name(n2, sizeof n2, t);
+                if (k++) al_cat(evs, ", ", sizeof evs);
+                al_cat(evs, n2, sizeof evs);
+            }
+        }
+        mine_section("You there");
+        d_item("Events", evs);
+    }
+    d_end();
+    field_set_bool("about_station__hidden", 1);
+    field_set_bool("about_list__hidden", g_mine.n == 0);
+    al_cpy(g_about, "st:", sizeof g_about);
+    al_cat(g_about, call, sizeof g_about);
+    g_sel_station[0] = 0;
+}
+
+static void open_about(const char *what)
+{
+    char nice[40];
+    if (al_starts(what, "ev:")) {
+        push_about_event(what + 3);
+        label_name(nice, sizeof nice, what + 3);
+        screen_open("About", nice);
+    } else if (al_starts(what, "st:")) {
+        push_about_station(what + 3);
+        screen_open("About", what + 3);
+    }
+}
+
+/* One check-in: the badge it collected, where it was on a small map, and
+ * everything the station's certificate said, with the event's description
+ * and the station's name and words beside it. */
+static char g_entry_st[16], g_entry_ev[32];
+static void push_entry(void)
+{
+    if (!g_sel[0]) return;
+    p_begin(); p_str(g_sel); p_end();
+    if (!db_query("SELECT * FROM log WHERE id = ?", 1)) return;
+    const char *p = g_rows;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    static char row_[sizeof g_obj];
+    if (!al_json_next(p, row_, sizeof row_)) return;
+    char st[16] = "", ev[32] = "", nice[40] = "", b[80] = "", pos[40] = "", ts[24] = "", v[CI_WIRE_MAX + 64];
+    al_json(row_, "station", st, sizeof st);
+    al_json(row_, "title", ev, sizeof ev);
+    al_json(row_, "badge", b, sizeof b);
+    al_json(row_, "pos", pos, sizeof pos);
+    al_json(row_, "ts", ts, sizeof ts);
+    label_name(nice, sizeof nice, ev);
+    al_cpy(g_entry_st, st, sizeof g_entry_st);
+    al_cpy(g_entry_ev, ev, sizeof g_entry_ev);
+    al_cpy(g_entry_title, ev[0] ? nice : st, sizeof g_entry_title);
+    badge_set("e_badge", b);
+    place_set("e_place", pos, st);
+
+    /* What the announcements say about the station and the event. */
+    char nick[48], intro[104] = "", about_ev[CI_EVENT_MAX] = "";
+    station_nick(st, nick, sizeof nick);
+    if (find_event(st, CI_POINT_TITLE)) al_field(g_evf.wire, "m", intro, sizeof intro);
+    if (ev[0] && find_event(st, ev)) al_field(g_evf.wire, "m", about_ev, sizeof about_ev);
+
+    d_begin("e_info");
+    d_section("Check-in");
+    when_ago(v, sizeof v, u_of(ts));
+    d_item("When", v);
+    d_item("Event", nice);
+    d_item("About the event", about_ev);
+    d_item("Station", st);
+    d_item("Name", nick);
+    d_item("About the station", intro);
+    static const struct { const char *col, *label; } rows_[] = {
+        { "greeting", "Greeting" }, { "grade", "Contact" }, { "link", "Radio" },
+        { "rssi", "Signal" }, { "route", "Relays" }
+    };
+    for (unsigned i = 0; i < sizeof rows_ / sizeof rows_[0]; i++)
+        if (al_json(row_, rows_[i].col, v, sizeof v) && v[0] && !(al_eq(rows_[i].col, "rssi") && al_eq(v, "0")))
+            d_item(rows_[i].label, entry_value(rows_[i].col, v));
+    where_text(v, sizeof v, pos);
+    d_item("Where", v);
+    d_end();
+
+    /* The proof, as it came: for anyone who wants to check it. */
+    d_begin("e_proof");
+    d_section("Proof");
+    if (al_json(row_, "cert", v, sizeof v)) d_item_m("The station's signed reply", v, 1);
+    if (al_json(row_, "ask", v, sizeof v)) d_item_m("Your request", v, 1);
+    d_end();
+    field_set_bool("entry_event__hidden", ev[0] == 0);
+}
+
 static void push_map(void)
 {
     uint64_t t0 = hal_time_ms();
@@ -1817,7 +2231,9 @@ static void badges_section(int *any)
             al_cpy(id, badge, sizeof id);
             al_cat(id, "|", sizeof id);
             al_cat(id, st, sizeof id);
-            row(id, title[0] ? title : st, sub_, title[0] ? st : "", w, tok, st, "", "");
+            char nice[40];
+            label_name(nice, sizeof nice, title);
+            row(id, title[0] ? nice : st, sub_, title[0] ? st : "", w, tok, st, "", "");
             fetch_badge(badge);   /* the core keeps it once it has it */
         }
         section_end();
@@ -2179,7 +2595,8 @@ static void on_command(void)
     }
     if (al_eq(cmd, "detail_tap")) {
         if (!al_json(g_buf, "detail_id", id, sizeof id) || !id[0] || al_eq(id, "none")) return;
-        if (al_starts(id, "st:") || al_starts(id, "ev:") || al_starts(id, "day:")) { push_detail(id, 1); return; }
+        if (al_starts(id, "st:") || al_starts(id, "ev:")) { open_about(id); return; }
+        if (al_starts(id, "day:")) { push_detail(id, 1); return; }
         al_cpy(g_sel, id, sizeof g_sel);
         push_entry();
         screen_open("Entry", g_entry_title[0] ? g_entry_title : "Check-in");
@@ -2187,10 +2604,39 @@ static void on_command(void)
     }
     if (al_eq(cmd, "log_tap")) {
         if (!al_json(g_buf, "log_id", id, sizeof id)) return;
-        for (const char *q = id; *q; q++) if (*q == '|') return;   /* a badge row */
+        /* A badge (<badge>|<station>): what gave it, its event or else its station. */
+        for (const char *q = id; *q; q++) if (*q == '|') {
+            char b[80], t[32] = "", what[64];
+            unsigned k = (unsigned)(q - id);
+            if (k >= sizeof b) return;
+            al_cpy(b, id, k + 1);
+            p_begin(); p_str(b); p_end();
+            db_one("SELECT title FROM log WHERE badge = ? ORDER BY ts DESC LIMIT 1", 1, "title", t, sizeof t);
+            al_cpy(what, t[0] ? "ev:" : "st:", sizeof what);
+            al_cat(what, t[0] ? t : q + 1, sizeof what);
+            open_about(what);
+            return;
+        }
         al_cpy(g_sel, id, sizeof g_sel);
         push_entry();
         screen_open("Entry", g_entry_title[0] ? g_entry_title : "Check-in");
+        return;
+    }
+    if (al_eq(cmd, "about_list")) { if (g_about[0]) push_detail(g_about, 1); return; }
+    if (al_eq(cmd, "about_station")) {
+        char what[24] = "st:";
+        if (!g_sel_station[0]) return;
+        al_cat(what, g_sel_station, sizeof what);
+        open_about(what);
+        return;
+    }
+    if (al_eq(cmd, "entry_station") || al_eq(cmd, "entry_event")) {
+        char what[48];
+        int ev = al_eq(cmd, "entry_event");
+        if (!(ev ? g_entry_ev : g_entry_st)[0]) return;
+        al_cpy(what, ev ? "ev:" : "st:", sizeof what);
+        al_cat(what, ev ? g_entry_ev : g_entry_st, sizeof what);
+        open_about(what);
         return;
     }
     if (al_eq(cmd, "remove_entry")) {

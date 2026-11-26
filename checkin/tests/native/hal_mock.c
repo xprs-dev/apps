@@ -206,6 +206,27 @@ int32_t hal_xprs_history(const char *q, uint32_t ql, char *out, uint32_t cap)
     return (int32_t)n;
 }
 
+/* Names (hal_xprs_names) and one station heard this hour (hal_xprs_station). */
+char g_names[2048] = "[]";
+char g_station_one[2048] = "";
+int32_t hal_xprs_names(const char *q, uint32_t ql, char *out, uint32_t cap)
+{
+    (void)q; (void)ql;
+    uint32_t n = (uint32_t)strlen(g_names);
+    if (n > cap) return -(int32_t)n;
+    memcpy(out, g_names, n);
+    return (int32_t)n;
+}
+int32_t hal_xprs_station(const char *call, uint32_t cl, char *out, uint32_t cap)
+{
+    (void)cl;
+    if (!g_station_one[0] || !strstr(g_station_one, call)) return 0;
+    uint32_t n = (uint32_t)strlen(g_station_one);
+    if (n > cap) return -(int32_t)n;
+    memcpy(out, g_station_one, n);
+    return (int32_t)n;
+}
+
 /* hal.db is not mocked: sdk/hal_db_zx.c runs it on zx, the host's engine. */
 
 void mock_clear(void)

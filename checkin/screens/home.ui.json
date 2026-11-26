@@ -262,7 +262,32 @@
       },
       {
         "$": "field",
+        "name": "e_place",
+        "$type": "place",
+        "zoom": 15
+      },
+      {
+        "$": "field",
         "name": "e_info",
+        "$type": "details",
+        "layout": "rows",
+        "empty": ""
+      },
+      {
+        "$": "action",
+        "name": "entry_event",
+        "label": "About the event",
+        "icon": "campaign"
+      },
+      {
+        "$": "action",
+        "name": "entry_station",
+        "label": "About the station",
+        "icon": "cell_tower"
+      },
+      {
+        "$": "field",
+        "name": "e_proof",
         "$type": "details",
         "empty": ""
       },
@@ -274,7 +299,47 @@
         "style": "danger",
         "confirm": true,
         "confirm-label": "Remove this check-in?",
-        "confirm-text": "It leaves your log, map and stats."
+        "confirm-text": "It leaves your log and stats."
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "About",
+    "icon": "info",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "a_badge",
+        "$type": "image",
+        "label": "",
+        "readonly": true
+      },
+      {
+        "$": "field",
+        "name": "a_place",
+        "$type": "place",
+        "zoom": 15
+      },
+      {
+        "$": "field",
+        "name": "a_info",
+        "$type": "details",
+        "layout": "rows",
+        "empty": ""
+      },
+      {
+        "$": "action",
+        "name": "about_list",
+        "label": "Your check-ins here",
+        "icon": "check"
+      },
+      {
+        "$": "action",
+        "name": "about_station",
+        "label": "About the station",
+        "icon": "cell_tower"
       }
     ]
   }

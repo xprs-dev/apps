@@ -929,6 +929,17 @@ than a fan can show (40): list them (`id` is the first), and
 `{"type":"map.prefetch","state":"running|done|busy","done","total","held"}`
 while an area is saved.
 
+### 14.0.2 `$type="place"`: one place on a small map
+
+A field, not a screen: any form screen can show where something happened (a
+check-in, an event, a station's pin) as a still map a few tiles wide, centred
+on it with a pin and its label; a tap opens the place on the full map, where
+it pans and zooms. Value (`ui.field.set`): `{"lat","lon","label"?,"zoom"?}`
+or `"lat,lon"`; an empty value, or one that names no place, draws nothing.
+Attributes: `zoom` (15), `height` (180), `tile-url`, `tile-style` (as on a
+map group). Unlike `$type:"map"` it needs no map screen, and a wapp may have
+as many as it likes. Check-in's Entry and About screens use it.
+
 ### 14.1 `$type="menu"`
 
 A `<group $type="menu">` collapses into a single icon button. When
