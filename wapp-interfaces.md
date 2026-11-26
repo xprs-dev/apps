@@ -919,7 +919,7 @@ Wapp to host:
 | `{"type":"ui.map.markers.clear"}` | remove every pin |
 | `{"type":"ui.map.locate","lat","lon","zoom"?,"id"?}` | show one place: the map's tab, centred, zoomed in (`zoom` when the wapp knows how big the place is); folds a drawer; with a marker's `id`, opens its popup (fanned out first when it shares its point: the portal's mapFocus) |
 | `{"type":"ui.map.filter","items":[{"id","label","count"?,"on"}]}` | a segmented filter over the map (the portal's All / Archivers / People / Other); a tap sends `{"command":"map_filter","id"}` and the wapp redraws the markers and sends the items again |
-| `{"type":"ui.drawer","state":"peek\|half\|full"}` | move the drawer of a map screen whose map group says `"drawer": true`: its `$type:"people"` field, with the screen's search box and `$type:"chips"` fields, in a drawer over the map (a side panel on a wide screen) |
+| `{"type":"ui.drawer","state":"peek\|half\|full"}` | move the drawer of a map screen whose map group says `"drawer": true` (a `$type:"graph"` group on the same screen is the same data drawn as a network: a floating button over the + and − switches the view behind the one drawer): its `$type:"people"` field, with the screen's search box and `$type:"chips"` fields, in a drawer over the map (a side panel on a wide screen) |
 | `{"type":"ui.map.prefetch","bbox"?:[s,w,n,e],"minZoom","maxZoom","max"?}` | save an area's tiles for off-grid use; without `bbox`, the area on screen. At most 1500 tiles, two at a time, one save at a time: a tile server is shared and OpenStreetMap's refuses bulk downloads, so save what a person asked for, not the world |
 
 Host to wapp: `{"type":"setViewport","lat","lon","zoom"}` after every pan,

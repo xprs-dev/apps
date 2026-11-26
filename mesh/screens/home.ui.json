@@ -22,6 +22,11 @@
         "search": false
       },
       {
+        "$": "group",
+        "name": "network-graph",
+        "$type": "graph"
+      },
+      {
         "$": "field",
         "name": "st_tags",
         "$type": "chips"
@@ -35,19 +40,6 @@
       }
     ],
     "search": true
-  },
-  {
-    "$": "screen",
-    "name": "@screen.mesh",
-    "icon": "hub",
-    "tip": "@screen.mesh_tip",
-    "children": [
-      {
-        "$": "group",
-        "name": "network-graph",
-        "$type": "graph"
-      }
-    ]
   },
   {
     "$": "screen",
