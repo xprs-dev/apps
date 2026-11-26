@@ -341,14 +341,43 @@ static void test_chaser(void)
     as("X1CHSR");
     mock_clear();
     snprintf(g_stations, sizeof g_stations,
-             "[{\"title\":\"Heard over the air (2)\",\"items\":["
-             "{\"id\":\"X3STN1\",\"title\":\"X3STN1\",\"subtitle\":\"BLE\",\"tags\":[\"5s ago\",\"BLE\"],\"kind\":\"station\"},"
-             "{\"id\":\"X4LAMP\",\"title\":\"X4LAMP\",\"subtitle\":\"LAN\",\"tags\":[],\"kind\":\"device\"}]},"
+             "[{\"title\":\"Heard over the air (5)\",\"items\":["
+             "{\"id\":\"X3STN1\",\"title\":\"X3STN1\",\"subtitle\":\"BLE\",\"tags\":[\"5s ago\",\"BLE\"],\"kind\":\"station\",\"heard\":{\"ble\":5},\"rssi\":-61},"
+             "{\"id\":\"X3BOTH\",\"title\":\"X3BOTH\",\"subtitle\":\"LAN\",\"tags\":[],\"kind\":\"station\",\"heard\":{\"ble\":200,\"lan\":2},\"rssi\":-80},"
+             "{\"id\":\"X3LAN1\",\"title\":\"X3LAN1\",\"subtitle\":\"LAN\",\"tags\":[],\"kind\":\"station\",\"heard\":{\"lan\":1}},"
+             "{\"id\":\"X3OLD1\",\"title\":\"X3OLD1\",\"subtitle\":\"BLE\",\"tags\":[],\"kind\":\"station\",\"heard\":{\"ble\":601}},"
+             "{\"id\":\"X4LAMP\",\"title\":\"X4LAMP\",\"subtitle\":\"LAN\",\"tags\":[],\"kind\":\"device\",\"heard\":{\"ble\":3}}]},"
              "{\"title\":\"Heard this hour (1)\",\"items\":[{\"id\":\"X3FAR1\",\"title\":\"X3FAR1\",\"kind\":\"station\"}]}]");
     cmd("{\"command\":\"ready\"}");
     CHECK(said("\"id\":\"X3STN1\"") && said("\"action\":\"nearby_checkin\""),
           "a station in reach, with Check in (the host sends that action as the command)");
     CHECK(!said("\"id\":\"X4LAMP\"") && !said("\"id\":\"X3FAR1\""), "no devices, nobody out of reach");
+    CHECK(said("\"id\":\"X3BOTH\"") && said("heard 3 min ago"),
+          "heard on Bluetooth 3 minutes ago and on the LAN just now: in reach, by its Bluetooth time");
+    CHECK(!said("\"id\":\"X3LAN1\""), "only on the LAN: not in reach");
+    CHECK(!said("\"id\":\"X3OLD1\""), "Bluetooth more than ten minutes ago: not in reach");
+    CHECK(said("Bluetooth \xc2\xb7 -61 dBm \xc2\xb7 heard just now"), "how it is heard, its signal, how fresh");
+    {
+        const char *a = 0, *b = 0;
+        for (int i = g_said_n - 1; i >= 0 && !a; i--)
+            if (strstr(g_said[i], "\"field\":\"log\"")) {
+                a = strstr(g_said[i], "\"id\":\"X3STN1\"");
+                b = strstr(g_said[i], "\"id\":\"X3BOTH\"");
+            }
+        CHECK(a && b && a < b, "the strongest signal first");
+    }
+    CHECK(said("\"tab\":\"In reach\",\"title\":\"In reach\"") && said("\"field\":\"log\""),
+          "In reach is the first section of the one screen");
+    {
+        char keep[4096];
+        snprintf(keep, sizeof keep, "%s", g_stations);
+        snprintf(g_stations, sizeof g_stations, "[{\"title\":\"Heard over the air (0)\",\"items\":[]}]");
+        mock_clear();
+        cmd("{\"command\":\"ready\"}");
+        CHECK(said("No station in Bluetooth reach") && said("\"note\":true"),
+              "nobody in reach: said so, as a note its chip does not count");
+        snprintf(g_stations, sizeof g_stations, "%s", keep);
+    }
 
     mock_clear();
     cmd("{\"command\":\"nearby_checkin\",\"nearby_id\":\"X3STN1\"}");
@@ -481,12 +510,8 @@ static void test_chaser(void)
         event("xprs.event", evrow);
         mock_clear();
         cmd("{\"command\":\"events_refresh\"}");
-        CHECK(said("\"title\":\"Stations\"") && said("\"st:X3PNT1\"") && said("1.0 km away") &&
-              said("Rooftop station, ask at the bar"), "a station to visit, how far, and its intro");
         CHECK(!said("Check-ins Open"), "its point is not listed again as an event");
         CHECK(said("\"id\":\"st:X3PNT1\"") && said("#43A047"), "and it is a green pin");
-        CHECK(said("\"field\":\"nearby\"") && said("\"title\":\"In reach now\""),
-              "the stations heard are listed on Nearby, under the ones in reach");
         mock_clear();
         cmd("{\"command\":\"nearby_tap\",\"nearby_id\":\"st:X3PNT1\"}");
         CHECK(said("\"type\":\"ui.prompt\"") && said("\"copy\":\"38.7161,-9.1393\"") && g_aired_n == 0,
@@ -567,136 +592,12 @@ static void test_chaser(void)
 }
 
 
-/* Every station that says where it is, on the map: the copy kept here is
- * drawn at once, says when it was brought up to date, and catches up with
- * the archive behind it. */
-static const char *BAR5 = "\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88\xE2\x96\x88";
-static void id_row(char *out, unsigned cap, const char *call, unsigned long long ts,
-                   const char *nick, const char *pos)
-{
-    char st[24], w[300];
-    al_stamp(st, sizeof st, ts);
-    snprintf(w, sizeof w, "t:identity f:%s ts:%s%s%s%s%s k:npub1test", call, st,
-             nick ? " nick:" : "", nick ? nick : "", pos ? " pos:" : "", pos ? pos : "");
-    snprintf(out, cap, "{\"id\":\"%.6s\",\"type\":\"identity\",\"sig\":\"verified\",\"wire\":\"%s\"}", call + 1, w);
-}
-
-static void test_places(void)
-{
-    as("X1CHSR");
-    mock_clear();
-    module_init();
-    CHECK(strstr(g_followed_kind, "identity") != 0, "identities are followed, from anyone");
-
-    char sq[64], r1[400], r2[400], r3[400], r4[400], r5[400];
-    snprintf(sq, sizeof sq, "38%s,-9%s", BAR5, BAR5);
-    id_row(r1, sizeof r1, "X3AAA1", g_now - 600, "Hill", sq);
-    id_row(r2, sizeof r2, "X3AAA2-1", g_now - 500, 0, sq);
-    id_row(r3, sizeof r3, "X3BBB1", g_now - 400, "Plaza", "40.4168,-3.7038");
-    id_row(r4, sizeof r4, "MT0001", g_now - 300, 0, "41.0000,2.0000");     /* another network */
-    id_row(r5, sizeof r5, "X1CHSR", g_now - 200, 0, "37.0000,-8.0000");    /* this station */
-    snprintf(g_identities, sizeof g_identities, "[%s,%s,%s,%s,%s]", r5, r4, r3, r2, r1);
-
-    mock_clear();
-    cmd("{\"command\":\"ready\"}");
-    CHECK(said("\"id\":\"pl_at\"") && !said("sq:38.5000"), "the map says how fresh its copy is, before the archive is read");
-    mock_clear();
-    module_tick();   /* the walk goes on behind the page */
-    CHECK(said("\"id\":\"pl:X3AAA1\"") && said("\"id\":\"pl:X3AAA2\"") &&
-          said("\"lat\":38.5000,\"lon\":-9.5000") && said("within 111 km") && !said("sq:"),
-          "two stations in one square: a marker each at its middle (the map fans them out), and how big the square is");
-    CHECK(said("\"id\":\"pl:X3BBB1\"") && said("\"lat\":40.4168,\"lon\":-3.7038") && said("Plaza"),
-          "a station at its point, with its name");
-    CHECK(!said("MT0001") && !said("pl:X1CHSR"), "not other networks' nodes, not this station");
-    CHECK(said("\"label\":\"3 stations\"") && said("\"label\":\"Updated "), "how many, and when it was updated");
-
-    /* The page opens again: the copy is drawn before the archive is read. */
-    int q0 = g_id_queries;
-    strcpy(g_identities, "[]");
-    mock_clear();
-    cmd("{\"command\":\"ready\"}");
-    CHECK(said("\"id\":\"pl:X3BBB1\"") && said("\"id\":\"pl:X3AAA1\"") && said("\"label\":\"Updated "),
-          "the map opens on the kept copy, saying how old it is");
-    CHECK(g_id_queries == q0, "and nothing was read from the archive to draw it");
-    module_tick();
-    CHECK(g_id_queries > q0 && strstr(g_id_query, "\"since\":"), "then the last hour is read, not everything");
-
-    /* Taps: a square lists who is in it; Show on map goes there. */
-    mock_clear();
-    cmd("{\"command\":\"marker_tap\",\"id\":\"sq:38.5000,-9.5000\"}");
-    CHECK(said("\"type\":\"ui.prompt\"") && said("\"title\":\"2 stations\"") && said("X3AAA1 Hill") &&
-          said("X3AAA2") && said("Somewhere in this 111 km square") && said("\"copy\":\"38.5000,-9.5000\""),
-          "a square's sheet: who is there, how approximate, the point to copy");
-    mock_clear();
-    cmd("{\"command\":\"prompt\",\"prompt_id\":\"sq:38.5000,-9.5000\",\"prompt_value\":\"map\"}");
-    CHECK(said("\"type\":\"ui.map.locate\",\"lat\":38.5000,\"lon\":-9.5000"), "Show on map");
-    mock_clear();
-    cmd("{\"command\":\"marker_tap\",\"id\":\"pl:X3BBB1\"}");
-    CHECK(said("\"title\":\"X3BBB1\"") && said("Plaza") && said("Heard 6 min ago"), "a station's sheet");
-
-    /* A station that stops saying where it is leaves the map. */
-    char gone[400];
-    g_now += 200;
-    id_row(gone, sizeof gone, "X3BBB1", g_now - 10, 0, "-");
-    snprintf(g_identities, sizeof g_identities, "[%s]", gone);
-    mock_clear();
-    module_tick();
-    CHECK(said("ui.map.markers.clear") && !said("pl:X3BBB1") && said("\"label\":\"2 stations\""),
-          "pos:- takes a station off the map");
-
-    /* A station giving check-ins is the green marker, not a grey one too. */
-    {
-        char ev[400], one[400];
-        ci_build_event(ev, sizeof ev, "X3AAA1", g_now - 60, "38.7161,-9.1393", CI_POINT_TITLE,
-                       g_now - 60, g_now + 7200, "", "");
-        snprintf(g_history, sizeof g_history, "[{\"id\":\"ab12cd\",\"wire\":\"%s\"}]", ev);
-        id_row(one, sizeof one, "X3AAA2", g_now - 5, 0, sq);
-        snprintf(g_identities, sizeof g_identities, "[%s]", one);
-        g_now += 200;
-        mock_clear();
-        cmd("{\"command\":\"ready\"}");
-        CHECK(said("\"id\":\"st:X3AAA1\"") && said("#43A047"), "its check-in point is green");
-        CHECK(said("\"id\":\"pl:X3AAA2\"") && !said("sq:38.5000,-9.5000"),
-              "and its square holds only the other station");
-        strcpy(g_history, "[]");
-        strcpy(g_identities, "[]");
-    }
-
-    /* Two rows exactly as the live archive gave them on 2026-11-25 (every
-     * field the host sends, nick:- file:- acc: sig: m:-), both in the
-     * 49,8 square: a marker each at its middle. */
-    {
-        static const char *real[2][4] = {
-            {"d79e2f", "1795602150", "X1R5J9", "t:identity f:X1R5J9 ts:2026-11-25_10:22:30 nick:- file:- pos:49%s,8%s acc:100000 sig:i,dJ#>3c#^8/07)*9#.((?i0fQ9fF/fk/R>vvtvynN*J2l5;_d51,TiVgTcV m:-"},
-            {"1bacd2", "1795549840", "X1Q6Y6", "t:identity f:X1Q6Y6 ts:2026-11-24_19:50:40 nick:- file:- pos:49%s,8%s acc:100000 sig:>0RvwP!i0/>E&e;2*(_?u=jK!Hu]rA0L%%B09Dd^>7GY$[VS_y*yk2(4UBH)C m:-"},
-        };
-        char rows[2][900];
-        for (int i = 0; i < 2; i++) {
-            char w[400];
-            snprintf(w, sizeof w, real[i][3], BAR5, BAR5);
-            snprintf(rows[i], sizeof rows[i],
-                     "{\"id\":\"%s\",\"ts\":%s,\"heardTs\":%s,\"bearer\":\"lan\",\"rssi\":0,\"from\":\"%s\","
-                     "\"to\":\"\",\"type\":\"identity\",\"mine\":false,\"own\":false,\"sig\":\"verified\","
-                     "\"heard\":20,\"wire\":\"%s\",\"scope\":\"global\",\"inRange\":true}",
-                     real[i][0], real[i][1], real[i][1], real[i][2], w);
-        }
-        snprintf(g_identities, sizeof g_identities, "[%s,%s]", rows[0], rows[1]);
-        g_now = 1795602150ULL + 3600;
-        mock_clear();
-        cmd("{\"command\":\"ready\"}");
-        module_tick();
-        CHECK(said("\"id\":\"pl:X1R5J9\"") && said("\"id\":\"pl:X1Q6Y6\"") && said("\"lat\":49.5000,\"lon\":8.5000"),
-              "the live archive's two stations: both at their square's middle");
-        strcpy(g_identities, "[]");
-    }
-}
 
 int main(void)
 {
     test_rules();
     test_station();
     test_chaser();
-    test_places();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

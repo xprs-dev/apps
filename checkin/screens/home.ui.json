@@ -1,75 +1,8 @@
 [
   {
     "$": "screen",
-    "name": "Map",
-    "icon": "map",
-    "toolbar": true,
-    "tip": "Green: stations giving check-ins. Grey: other stations, or how many are in one area. White: your check-ins. Amber: events.",
-    "children": [
-      {
-        "$": "group",
-        "name": "checkin-map",
-        "$type": "map",
-        "tile-url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        "tile-style": "dark",
-        "default-lat": 38.7223,
-        "default-lon": -9.1393,
-        "default-zoom": 3,
-        "min-zoom": 2,
-        "max-zoom": 18,
-        "radius": false,
-        "chat": false,
-        "search": false
-      },
-      {
-        "$": "action",
-        "name": "fit_map",
-        "label": "Show all",
-        "icon": "map"
-      },
-      {
-        "$": "action",
-        "name": "save_area",
-        "label": "Save offline",
-        "icon": "download"
-      }
-    ]
-  },
-  {
-    "$": "screen",
-    "name": "Nearby",
-    "icon": "radar",
-    "tip": "Tap Check in on a station in reach. Under them, every station and event heard, nearest first.",
-    "children": [
-      {
-        "$": "field",
-        "name": "nearby",
-        "$type": "people",
-        "empty_title": "No stations yet",
-        "empty": "Walk up to a station to check in. Stations and events heard appear here too."
-      },
-      {
-        "$": "field",
-        "name": "chase_regional",
-        "$type": "bool",
-        "label": "Use LoRa too",
-        "default": false,
-        "tip": "Reach stations farther away. Never over the internet.",
-        "apply": "set_chase"
-      },
-      {
-        "$": "action",
-        "name": "nearby_refresh",
-        "label": "Refresh",
-        "icon": "refresh"
-      }
-    ],
-    "toolbar": true
-  },
-  {
-    "$": "screen",
-    "name": "Score",
-    "icon": "history",
+    "name": "Check-in",
+    "icon": "verified",
     "children": [
       {
         "$": "field",
@@ -84,7 +17,7 @@
         "empty": "Check in at a station to start your log and collect its badge."
       }
     ],
-    "tabs": "Check-ins,Badges"
+    "tip": "Walk up to a station: those heard over Bluetooth in the last 10 minutes are in reach. Tap Check in to collect its badge."
   },
   {
     "$": "screen",

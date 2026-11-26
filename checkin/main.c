@@ -434,76 +434,116 @@ static int known_station(const char *call)
 #define NEAR_MAX 64
 /* The Stations and Events sections, as JSON, appended to Nearby's list. */
 static char g_explore[32768];
-static struct { char id[16]; char sub[48]; int known; } g_near[NEAR_MAX];
+static struct { char id[16]; int rssi; int age; int known; } g_near[NEAR_MAX];
 
 static int near_before(int a, int b)
 {
     if (g_near[a].known != g_near[b].known) return g_near[a].known > g_near[b].known;
+    if (g_near[a].rssi != g_near[b].rssi) return g_near[a].rssi > g_near[b].rssi;
     return al_cmp(g_near[a].id, g_near[b].id) < 0;
 }
 
-static void push_nearby(void)
+/* In reach: who a check-in in person can reach. Only Bluetooth (BLE5, the
+ * bearer "ble") heard in the last ten minutes: a station on the LAN is not
+ * in front of you, and LoRa is not in person. The core says how long ago
+ * each station was heard on each bearer ("heard"), so a LAN packet a moment
+ * ago does not hide a Bluetooth one. */
+#define REACH_S 600
+static int json_int(const char *json, const char *key, int dflt)
+{
+    char v[16];
+    if (!al_json(json, key, v, sizeof v) || !v[0]) return dflt;
+    int neg = v[0] == '-', n = 0;
+    for (const char *q = v + neg; *q >= '0' && *q <= '9'; q++) n = n * 10 + (*q - '0');
+    return neg ? -n : n;
+}
+static int gather_reach(void)
 {
     int32_t n = hal_xprs_stations(g_big, sizeof g_big - 1);
     int count = 0;
-    if (n > 0) {
-        g_big[n] = 0;
-        const char *p = g_big;
-        while (*p && *p != '[') p++;
-        if (*p == '[') p++;
-        /* The first section is "heard over the air" in the last eleven
-         * minutes: who a check-in can reach. The others are not in reach. */
-        if (al_json_next(p, g_obj, sizeof g_obj)) {
-            const char *it = al_json_arr(g_obj, "items");
-            static char item[1024];
-            while (count < NEAR_MAX && it && (it = al_json_next(it, item, sizeof item)) != 0) {
-                char id[16], kind[12];
-                al_json(item, "id", id, sizeof id);
-                al_json(item, "kind", kind, sizeof kind);
-                if (!id[0] || al_eq(kind, "device") || al_eq(id, g_me)) continue;
-                al_cpy(g_near[count].id, id, sizeof g_near[count].id);
-                al_json(item, "subtitle", g_near[count].sub, sizeof g_near[count].sub);
-                g_near[count].known = known_station(id);
-                count++;
-            }
-        }
+    if (n <= 0) return 0;
+    g_big[n] = 0;
+    const char *p = g_big;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    /* The first section is what is heard now; the others are older. */
+    if (!al_json_next(p, g_obj, sizeof g_obj)) return 0;
+    const char *it = al_json_arr(g_obj, "items");
+    static char item[1024];
+    while (count < NEAR_MAX && it && (it = al_json_next(it, item, sizeof item)) != 0) {
+        char id[16], kind[12], heard[160];
+        al_json(item, "id", id, sizeof id);
+        al_json(item, "kind", kind, sizeof kind);
+        if (!id[0] || al_eq(kind, "device") || al_eq(id, g_me)) continue;
+        if (!al_json_obj(item, "heard", heard, sizeof heard)) continue;
+        int age = json_int(heard, "ble", -1);
+        int age5 = json_int(heard, "ble5", -1);
+        if (age < 0 || (age5 >= 0 && age5 < age)) age = age5;
+        if (age < 0 || age > REACH_S) continue;
+        al_cpy(g_near[count].id, id, sizeof g_near[count].id);
+        g_near[count].rssi = json_int(item, "rssi", -200);
+        g_near[count].age = age;
+        g_near[count].known = known_station(id);
+        count++;
     }
-    /* Insertion sort: a few dozen rows. */
+    return count;
+}
+
+static void reach_section(int *any)
+{
+    int count = gather_reach();
     int order[NEAR_MAX];
     for (int i = 0; i < count; i++) {
         int j = i;
         while (j > 0 && near_before(i, order[j - 1])) { order[j] = order[j - 1]; j--; }
         order[j] = i;
     }
-    rows_begin("nearby");
-    int any = 0;
-    section_begin("In reach now", &any);
+    g_tab = "In reach";
+    section_begin("In reach", any);
+    if (!count) {
+        g_icon = "bluetooth";
+        row("reach_none", "No station in Bluetooth reach",
+            "Walk up to one: stations heard in the last 10 minutes show here.", "", "", "", "", "", "");
+        /* An empty state, not a station: not counted on its chip. */
+        g_out[al_len(g_out) - 1] = 0;
+        al_cat(g_out, ",\"note\":true}", sizeof g_out);
+    }
     for (int k = 0; k < count; k++) {
-        const char *id = g_near[order[k]].id;
-        char tag[32] = "", tag2[32] = "";
-        int had = log_count_for(id);
-        if (had) {
-            tag[0] = 0;
-            al_cat_u(tag, (unsigned long long)had, sizeof tag);
-            al_cat(tag, had == 1 ? " check-in" : " check-ins", sizeof tag);
+        int i = order[k];
+        const char *id = g_near[i].id;
+        char sub_[64] = "Bluetooth", tag[32] = "", tag2[32] = "";
+        if (g_near[i].rssi > -200) {
+            al_cat(sub_, " \xc2\xb7 ", sizeof sub_);
+            if (g_near[i].rssi < 0) al_cat(sub_, "-", sizeof sub_);
+            al_cat_u(sub_, (unsigned long long)(g_near[i].rssi < 0 ? -g_near[i].rssi : g_near[i].rssi), sizeof sub_);
+            al_cat(sub_, " dBm", sizeof sub_);
         }
-        if (g_near[order[k]].known) al_cpy(tag2, "gives check-ins", sizeof tag2);
+        al_cat(sub_, " \xc2\xb7 ", sizeof sub_);
+        if (g_near[i].age < 60) al_cat(sub_, "heard just now", sizeof sub_);
+        else {
+            al_cat(sub_, "heard ", sizeof sub_);
+            al_cat_u(sub_, (unsigned long long)(g_near[i].age / 60), sizeof sub_);
+            al_cat(sub_, " min ago", sizeof sub_);
+        }
+        int had = log_count_for(id);
+        if (g_near[i].known) al_cpy(tag, "gives check-ins", sizeof tag);
+        if (had) {
+            al_cat_u(tag2, (unsigned long long)had, sizeof tag2);
+            al_cat(tag2, had == 1 ? " check-in" : " check-ins", sizeof tag2);
+        }
         int asking = 0;
         for (int q = 0; q < PEND_MAX; q++)
             if (g_pend[q].id[0] && al_eq(g_pend[q].station, id)) asking = 1;
-        if (asking) row(id, id, g_near[order[k]].sub, tag, tag2, "", id, "nearby_asking", "Asking...");
-        else row(id, id, g_near[order[k]].sub, tag, tag2, "", id, "nearby_checkin", "Check in");
+        if (asking) row(id, id, sub_, tag, tag2, "", id, "nearby_asking", "Asking...");
+        else row(id, id, sub_, tag, tag2, "", id, "nearby_checkin", "Check in");
     }
     section_end();
-    /* Under them, every station and event heard, nearest first: built when
-     * one is heard (push_events), not each time the air changes. */
-    if (g_explore[0]) {
-        al_cat(g_out, ",", sizeof g_out);
-        al_cat(g_out, g_explore, sizeof g_out);
-    }
-    rows_end();
-    field_set_bool("chase_regional", g_chase_regional);
 }
+
+/* The one screen is drawn whole: the tiles, who is in reach, the log, the
+ * badges. */
+static void push_log(void);
+static void push_nearby(void) { push_log(); }
 
 /* ── checking in ──────────────────────────────────────────────────────── */
 static int pend_find(const char *id)
@@ -517,8 +557,8 @@ static void do_checkin(const char *station)
     char wire[CI_WIRE_MAX + 1];
     who_am_i();
     unsigned long long now = now_s();
-    int n = ci_build_ask(wire, sizeof wire, g_me, station, now,
-                         g_chase_regional ? "regional" : "local");
+    /* In person: the station is in Bluetooth reach (see reach_section). */
+    int n = ci_build_ask(wire, sizeof wire, g_me, station, now, "local");
     if (n < 0) { toast("warning", "Set up your callsign first."); return; }
     for (int i = 0; i < PEND_MAX; i++)
         if (g_pend[i].id[0] && al_eq(g_pend[i].station, station)) {
@@ -573,7 +613,6 @@ static void push_log(void);
 static void push_badges(void);
 static const char *entry_value(const char *col, const char *v);
 static void push_map(void);
-static void frame_when_known(void);
 static int has_tag(const char *wire, const char *tag);
 static void label_name(char *out, unsigned cap, const char *label);
 
@@ -908,6 +947,7 @@ static void push_log(void)
     push_stats();
     rows_begin("log");
     int any = 0;
+    reach_section(&any);
     if (db_query("SELECT id, station, ts, grade, title, badge, greeting FROM log"
                  " ORDER BY ts DESC LIMIT 200", 0)) {
         const char *p = g_rows;
@@ -1357,26 +1397,7 @@ static void ago(char *out, unsigned cap, unsigned long long ts) { wst_ago(out, c
 static void push_map(void);
 static int point_find(const char *call);
 static void fit_put(const char *pos);
-static int place_skip(const char *call) { return point_find(call) >= 0; }
-/* A walk of the archive finished: redraw when it brought anything. */
-static void places_walked(int changed)
-{
-    if (!g_page_seen) return;
-    if (changed) push_map();
-    else wst_status();
-}
 
-static void places_init(void)
-{
-    wst_opts_t o = {0};
-    o.recent_s = PL_RECENT_S;
-    o.color = "#90A4AE";
-    o.skip = place_skip;
-    o.placed = fit_put;
-    o.done = places_walked;
-    wst_init(g_db, &o);
-    wst_me(g_me);
-}
 
 /* A station's sheet, or a square's: who is there, how approximate the
  * place is, when it was last heard, and its point to copy. */
@@ -1826,10 +1847,7 @@ static void publish_event(void)
 /* ── the page ─────────────────────────────────────────────────────────── */
 static void push_all(void)
 {
-    push_map();
-    push_nearby();
-    push_log();          /* with the badges */
-    push_events();       /* and Nearby with them */
+    push_log();          /* who is in reach, the log, the badges */
     push_station();
 }
 
@@ -2080,16 +2098,11 @@ static void drain_events(void)
         else if (al_eq(g_topic, "xprs.message")) on_message(g_ev);
         else if (al_eq(g_topic, "xprs.event")) {
             /* Kept by the core already: only the screen is behind. */
-            if (g_page_seen && now_s() >= g_explore_at + 10) {
-                g_explore_at = now_s();
-                push_events();
-                push_map();
-            }
+            (void)g_explore_at;
         }
         else if (al_eq(g_topic, "core.monitor") && now_s() >= g_nearby_at + 10) {
             g_nearby_at = now_s();
             push_nearby();
-            frame_when_known();
         }
     }
 }
@@ -2102,10 +2115,6 @@ int32_t module_init(void)
     /* Check-in events from anyone, heard here or replayed by the archivers:
      * the core keeps them and fetches what is new; this wapp reads them. */
     hal_xprs_follow_kind("event", 5, 1);
-    /* Every station's identity and service, from anyone, the same way:
-     * where stations say they are, for the map (see "Stations everywhere"). */
-    wst_follow();
-    places_init();
     sub("xprs.event", 1);
     load_settings();
     pend_load();
@@ -2115,36 +2124,20 @@ int32_t module_init(void)
     return 0;
 }
 
-/* The first view waits for a place to frame: a GPS fix often arrives a few
- * seconds after the page opens, and until then the map shows the world. */
-static void frame_when_known(void)
-{
-    /* Framed already, and around the person (or they took over): done. A
-     * view framed before the fix came is redone once, around them. */
-    if (g_map_fitted && g_fit_here) return;
-    char h[40];
-    here_pos(h, sizeof h);
-    if (!h[0]) return;
-    g_map_fitted = 0;
-    push_map();
-}
 
 int32_t module_tick(void)
 {
     drain_events();
     point_due();
-    frame_when_known();
-    wst_begin(0);
-    wst_step();
+    /* A station that left Bluetooth reach ten minutes ago leaves the list,
+     * though nothing new was heard. */
+    if (g_page_seen) push_nearby();
     return 0;
 }
 
 int32_t module_handle_event(void)
 {
     drain_events();
-    /* A walk under way goes on with whatever wakes this engine: while a page
-     * is open that is often, so a first fill takes seconds, not minutes. */
-    if (wst_busy()) wst_step();
     uint32_t n = hal_msg_recv(g_buf, sizeof g_buf - 1);
     if (n == 0) return 0;
     g_buf[n < sizeof g_buf ? n : sizeof g_buf - 1] = 0;
