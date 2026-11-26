@@ -51,6 +51,9 @@ int main(void) {
     check(cap_contains("rns.beleth.net:4242"), "hub endpoint forwarded");
     check(cap_contains("\"connected\":true"), "hub connected flag forwarded");
 
+    check(cap_contains("\"type\":\"ui.map.markers.clear\"") && cap_contains("\"type\":\"ui.map.status\""),
+          "the stations map is drawn at start: a JSON page never says ready");
+
     /* ── it redraws on a core event, and on nothing else ── */
     check(event_subscribed("core.rns.graph"), "subscribed to the announce topic");
     check(event_subscribed("core.monitor"),
@@ -59,9 +62,8 @@ int main(void) {
 
     cap_clear();
     module_tick();
-    check(cap_count() == 0,
-          "a tick draws nothing: tick_interval_ms is 0 and the screen is "
-          "event-driven (a poll here is the regression)");
+    check(!cap_contains("\"type\":\"ui.graph.set\""),
+          "a tick with nothing new does not redraw the graph (a poll here is the regression)");
 
     cap_clear();
     event_push("core.rns.graph");

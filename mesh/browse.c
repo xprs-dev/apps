@@ -773,6 +773,10 @@ void browse_init(void)
     wst_follow();
     heard_sync(0);
     push_list();
+    /* A JSON page has no "ready" (only an HTML one sends it): the page is
+     * open when the wapp starts, so its map is drawn now. */
+    g_page = 1;
+    push_map();
     wst_begin(1);
 }
 
