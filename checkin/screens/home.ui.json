@@ -255,6 +255,13 @@
     "children": [
       {
         "$": "field",
+        "name": "e_badge",
+        "$type": "image",
+        "label": "",
+        "readonly": true
+      },
+      {
+        "$": "field",
         "name": "e_info",
         "$type": "details",
         "empty": ""

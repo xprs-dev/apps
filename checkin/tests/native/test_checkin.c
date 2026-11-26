@@ -462,6 +462,9 @@ static void test_chaser(void)
     cmd(tap);
     CHECK(said("Station's signed reply") && said("cmd:checkin") && said("code:200"),
           "the entry shows both packets");
+    CHECK(said("\"field\":\"e_badge\",\"value\":\"file:"), "the entry shows the badge it collected");
+    CHECK(said("\"label\":\"Radio\",\"value\":\"Bluetooth\""), "and the radio by its name");
+    CHECK(said("\"name\":\"Entry\",\"title\":\"field-day-2026\""), "titled with its event");
     /* The score's tiles open what they count. */
     mock_clear();
     cmd("{\"command\":\"ready\"}");
@@ -469,6 +472,7 @@ static void test_chaser(void)
           "the tiles say they can be tapped (the host takes no tap otherwise)");
     mock_clear();
     cmd("{\"command\":\"lb_stats_tap\",\"lb_stats_id\":\"local\"}");
+    CHECK(said("\"tags\":[\"in person\",\"X3STN1\",\"Bluetooth"), "a row says how it was heard");
     CHECK(said("\"field\":\"detail\"") && said("\"call\":\"X3STN1\"") && said("\"in person\"") &&
           said("\"name\":\"Score detail\",\"title\":\"In person\""),
           "In person: the check-ins face to face (this one during an event, under its name)");

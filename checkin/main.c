@@ -363,6 +363,8 @@ static void rows_end(void) { al_cat(g_out, "]}", sizeof g_out); say(g_out); }
  * badge not chosen yet, an event, a check-in without a badge) reads better as
  * an icon than as a generated face. Reset by row(). */
 static const char *g_icon;
+/* A third tag for the next row() (how it was heard), or 0. Reset by row(). */
+static const char *g_tag3;
 
 /* One row. [avatar] a file: token or "", [call] the station it is about. */
 static void row(const char *id, const char *title, const char *sub_,
@@ -382,6 +384,10 @@ static void row(const char *id, const char *title, const char *sub_,
     if (t2 && t2[0]) {
         if (t1 && t1[0]) al_cat(g_out, ",", sizeof g_out);
         al_cat(g_out, "\"", sizeof g_out); al_jesc(g_out, t2, sizeof g_out); al_cat(g_out, "\"", sizeof g_out);
+    }
+    if (g_tag3 && g_tag3[0]) {
+        if ((t1 && t1[0]) || (t2 && t2[0])) al_cat(g_out, ",", sizeof g_out);
+        al_cat(g_out, "\"", sizeof g_out); al_jesc(g_out, g_tag3, sizeof g_out); al_cat(g_out, "\"", sizeof g_out);
     }
     al_cat(g_out, "]", sizeof g_out);
     if (avatar && avatar[0]) {
@@ -408,6 +414,7 @@ static void row(const char *id, const char *title, const char *sub_,
     }
     al_cat(g_out, "}", sizeof g_out);
     g_icon = 0;
+    g_tag3 = 0;
 }
 
 static int log_count_for(const char *call)
@@ -942,6 +949,50 @@ static void push_stats(void)
     say(g_out);
 }
 
+static unsigned long long u_of(const char *s);
+/* The open entry's title: its event, else its station. */
+static char g_entry_title[40];
+
+/* How a check-in was heard, as a person reads it: "Bluetooth -61 dBm". */
+static void heard_as(char *out, unsigned cap, const char *link, const char *rssi)
+{
+    out[0] = 0;
+    if (link[0]) al_cpy(out, entry_value("link", link), cap);
+    if (rssi[0] && !al_eq(rssi, "0")) {
+        if (out[0]) al_cat(out, " ", cap);
+        al_cat(out, entry_value("rssi", rssi), cap);
+    }
+}
+
+/* One check-in in a list (g_obj, a log row): the station's badge as its
+ * picture (asked of the core when it is not here yet), the event or the
+ * station, the greeting, and tags: in person or by radio, how it was heard,
+ * when (or at which station, for an event). */
+static void checkin_row(void)
+{
+    char id[8], st[16], ts[24], grade[12], title[32], badge[80], tok[88] = "", w[24], sub_[200],
+         link[16], rssi[12], how[40];
+    al_json(g_obj, "id", id, sizeof id);
+    al_json(g_obj, "station", st, sizeof st);
+    al_json(g_obj, "ts", ts, sizeof ts);
+    al_json(g_obj, "grade", grade, sizeof grade);
+    al_json(g_obj, "title", title, sizeof title);
+    al_json(g_obj, "badge", badge, sizeof badge);
+    al_json(g_obj, "greeting", sub_, sizeof sub_);
+    al_json(g_obj, "link", link, sizeof link);
+    al_json(g_obj, "rssi", rssi, sizeof rssi);
+    when(w, sizeof w, u_of(ts));
+    if (!sub_[0]) al_cpy(sub_, title[0] ? st : w, sizeof sub_);
+    if (badge[0]) {
+        al_cpy(tok, "file:", sizeof tok);
+        al_cat(tok, badge, sizeof tok);
+        fetch_badge(badge);
+    } else g_icon = "check";
+    heard_as(how, sizeof how, link, rssi);
+    g_tag3 = how;
+    row(id, title[0] ? title : st, sub_, entry_value("grade", grade), title[0] ? st : w, tok, st, "", "");
+}
+
 /* ── what a score tile counts ─────────────────────────────────────────── */
 /* Tapping a tile opens what it counts: the check-ins themselves, the ones
  * in person, the stations, events and badges, the days of the streak. A
@@ -954,7 +1005,7 @@ static unsigned long long u_of(const char *s);
  * parameter [arg] or none), newest first, as rows that open their entry. */
 static int log_rows(const char *where, const char *arg)
 {
-    char sql[300] = "SELECT id, station, ts, grade, title, badge, greeting FROM log";
+    char sql[300] = "SELECT id, station, ts, grade, title, badge, greeting, link, rssi FROM log";
     if (where && where[0]) { al_cat(sql, " WHERE ", sizeof sql); al_cat(sql, where, sizeof sql); }
     al_cat(sql, " ORDER BY ts DESC LIMIT 200", sizeof sql);
     if (arg) { p_begin(); p_str(arg); p_end(); }
@@ -964,19 +1015,7 @@ static int log_rows(const char *where, const char *arg)
     while (*p && *p != '[') p++;
     if (*p == '[') p++;
     while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
-        char id[8], st[16], ts[24], grade[12], title[32], badge[80], tok[88] = "", w[24], sub_[200];
-        al_json(g_obj, "id", id, sizeof id);
-        al_json(g_obj, "station", st, sizeof st);
-        al_json(g_obj, "ts", ts, sizeof ts);
-        al_json(g_obj, "grade", grade, sizeof grade);
-        al_json(g_obj, "title", title, sizeof title);
-        al_json(g_obj, "badge", badge, sizeof badge);
-        al_json(g_obj, "greeting", sub_, sizeof sub_);
-        when(w, sizeof w, u_of(ts));
-        if (!sub_[0]) al_cpy(sub_, w, sizeof sub_);
-        if (badge[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, badge, sizeof tok); }
-        if (!tok[0]) g_icon = "check";
-        row(id, title[0] ? title : st, sub_, entry_value("grade", grade), title[0] ? st : w, tok, st, "", "");
+        checkin_row();
         n++;
     }
     return n;
@@ -1014,7 +1053,7 @@ static int group_rows(const char *col, const char *where, const char *prefix)
         al_cat(sub_, "last ", sizeof sub_);
         al_cat(sub_, w, sizeof sub_);
         if (u_of(here)) { al_cpy(t1, here, sizeof t1); al_cat(t1, " in person", sizeof t1); }
-        if (b[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, b, sizeof tok); }
+        if (b[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, b, sizeof tok); fetch_badge(b); }
         al_cpy(id, prefix, sizeof id);
         al_cat(id, al_eq(col, "badge") ? st : v, sizeof id);
         if (!tok[0]) g_icon = al_eq(col, "title") ? "campaign" : "cell_tower";
@@ -1128,31 +1167,14 @@ static void push_log(void)
     rows_begin("log");
     int any = 0;
     reach_section(&any);
-    if (db_query("SELECT id, station, ts, grade, title, badge, greeting FROM log"
+    if (db_query("SELECT id, station, ts, grade, title, badge, greeting, link, rssi FROM log"
                  " ORDER BY ts DESC LIMIT 200", 0)) {
         const char *p = g_rows;
         while (*p && *p != '[') p++;
         if (*p == '[') p++;
         g_tab = "Check-ins";
         section_begin("Check-ins", &any);
-        while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
-            char id[8], st[16], ts[24], grade[12], title[32], badge[80], tok[88] = "", w[24], sub_[200];
-            al_json(g_obj, "id", id, sizeof id);
-            al_json(g_obj, "station", st, sizeof st);
-            al_json(g_obj, "ts", ts, sizeof ts);
-            al_json(g_obj, "grade", grade, sizeof grade);
-            al_json(g_obj, "title", title, sizeof title);
-            al_json(g_obj, "badge", badge, sizeof badge);
-            al_json(g_obj, "greeting", sub_, sizeof sub_);
-            unsigned long long t = 0;
-            for (const char *q = ts; *q >= '0' && *q <= '9'; q++) t = t * 10 + (unsigned)(*q - '0');
-            when(w, sizeof w, t);
-            if (!sub_[0]) al_cpy(sub_, w, sizeof sub_);
-            if (badge[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, badge, sizeof tok); }
-            if (!tok[0]) g_icon = "check";
-            row(id, title[0] ? title : st, sub_, entry_value("grade", grade),
-                title[0] ? st : w, tok, st, "", "");
-        }
+        while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) checkin_row();
         section_end();
     }
     badges_section(&any);
@@ -1178,6 +1200,37 @@ static const char *entry_value(const char *col, const char *v)
         if (al_eq(v, "regional")) return "by radio";
     }
     if (al_eq(col, "badge")) return "in your Badges";
+    if (al_eq(col, "rssi")) {
+        /* The certificate says "-61dBm"; a person reads "-61 dBm". */
+        static char dbm[24];
+        unsigned k = 0;
+        for (unsigned i = 0; v[i] && k + 1 < sizeof dbm; i++)
+            if ((v[i] >= '0' && v[i] <= '9') || v[i] == '-') dbm[k++] = v[i];
+        dbm[k] = 0;
+        al_cat(dbm, " dBm", sizeof dbm);
+        return dbm;
+    }
+    if (al_eq(col, "pos")) {
+        static char at[48];
+        unsigned i = 0, k = 0;
+        for (; v[i] && k + 2 < sizeof at; i++) {
+            at[k++] = v[i];
+            if (v[i] == ',') at[k++] = ' ';
+        }
+        at[k] = 0;
+        return at;
+    }
+    if (al_eq(col, "route")) {
+        static char via[96];
+        al_cpy(via, "via ", sizeof via);
+        unsigned k = al_len(via);
+        for (unsigned i = 0; v[i] && k + 3 < sizeof via; i++) {
+            if (v[i] == ',' || v[i] == '>') { via[k++] = ','; via[k++] = ' '; }
+            else via[k++] = v[i];
+        }
+        via[k] = 0;
+        return via;
+    }
     return v;
 }
 
@@ -1191,11 +1244,25 @@ static void push_entry(void)
     if (*p == '[') p++;
     if (!al_json_next(p, g_obj, sizeof g_obj)) return;
     static const struct { const char *col, *label; } rows_[] = {
-        { "station", "Station" }, { "grade", "Contact" }, { "link", "Radio" },
-        { "rssi", "Signal" }, { "route", "Relays" }, { "pos", "Location" },
-        { "title", "Event" }, { "greeting", "Greeting" }, { "badge", "Badge" },
+        { "station", "Station" }, { "title", "Event" }, { "greeting", "Greeting" },
+        { "grade", "Contact" }, { "link", "Radio" }, { "rssi", "Signal" },
+        { "route", "Relays" }, { "pos", "Location" },
         { "cert", "Station's signed reply" }, { "ask", "Your request" }
     };
+    {
+        /* The station's badge, the picture this check-in collected. */
+        char b[80], tok[88] = "";
+        if (al_json(g_obj, "badge", b, sizeof b) && b[0]) {
+            al_cpy(tok, "file:", sizeof tok);
+            al_cat(tok, b, sizeof tok);
+            fetch_badge(b);
+        }
+        field_set_str("e_badge", tok);
+        char st[16] = "", ev[32] = "";
+        al_json(g_obj, "station", st, sizeof st);
+        al_json(g_obj, "title", ev, sizeof ev);
+        al_cpy(g_entry_title, ev[0] ? ev : st, sizeof g_entry_title);
+    }
     al_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"e_info\",\"value\":[{\"title\":\"\",\"items\":[", sizeof g_out);
     int first = 1;
     char ts[24], w[24];
@@ -1726,8 +1793,9 @@ static void push_map(void)
 /* The badge wall: a section of the logbook's list, under its own chip. */
 static void badges_section(int *any)
 {
-    if (db_query("SELECT badge, station, title, COUNT(*) AS n, MAX(ts) AS last FROM log"
-                 " WHERE badge != '' GROUP BY badge, station, title ORDER BY last DESC", 0)) {
+    /* One per badge: an event's badge given by two stations is one badge. */
+    if (db_query("SELECT badge, MAX(station) AS station, MAX(title) AS title, COUNT(*) AS n,"
+                 " MAX(ts) AS last FROM log WHERE badge != '' GROUP BY badge ORDER BY last DESC", 0)) {
         const char *p = g_rows;
         while (*p && *p != '[') p++;
         if (*p == '[') p++;
@@ -2114,7 +2182,7 @@ static void on_command(void)
         if (al_starts(id, "st:") || al_starts(id, "ev:") || al_starts(id, "day:")) { push_detail(id, 1); return; }
         al_cpy(g_sel, id, sizeof g_sel);
         push_entry();
-        screen_open("Entry", "Check-in");
+        screen_open("Entry", g_entry_title[0] ? g_entry_title : "Check-in");
         return;
     }
     if (al_eq(cmd, "log_tap")) {
@@ -2122,7 +2190,7 @@ static void on_command(void)
         for (const char *q = id; *q; q++) if (*q == '|') return;   /* a badge row */
         al_cpy(g_sel, id, sizeof g_sel);
         push_entry();
-        screen_open("Entry", "Check-in");
+        screen_open("Entry", g_entry_title[0] ? g_entry_title : "Check-in");
         return;
     }
     if (al_eq(cmd, "remove_entry")) {
@@ -2186,7 +2254,7 @@ static void on_command(void)
         if (al_starts(id, "log:")) {
             al_cpy(g_sel, id + 4, sizeof g_sel);
             push_entry();
-            screen_open("Entry", "Check-in");
+            screen_open("Entry", g_entry_title[0] ? g_entry_title : "Check-in");
         }
         return;
     }
