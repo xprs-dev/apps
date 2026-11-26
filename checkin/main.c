@@ -9,17 +9,24 @@
  * two packets together are the evidence. Nothing here is new to XPRS
  * (ci.h).
  *
- *   Map         check-ins, check-in points (green), events, and every
- *               XPRS station that says where it is, drawn at once from the
- *               last copy kept here and brought up to date behind it
- *   Nearby      stations in reach now, a Check in button on each; under
- *               them every station and event heard (t:event tag:checkin)
- *   Score       every check-in, counted, and the badges earned (a filter
- *               chip each); tap a check-in for the evidence
- *   Settings    (the top-right menu, not a tab) this station: where it
- *               is (a link to the setting), check-ins on or off, greeting,
- *               badge, events, and a Visitors page. Every input saves as it
- *               is changed: there is no Save button.
+ *   Check-in    one screen: the score as tiles (tap one for what it
+ *               counts), the stations in Bluetooth reach with Check in,
+ *               then your PLACES, one row per station you checked in at,
+ *               with the visits and the time spent in its range. Tags over
+ *               the list filter it: the kind of place a station says it is
+ *               (its check-in point's tag:, ~50 kinds in ci.c), automatic
+ *               ones (event, badge, in person, by radio) and your own.
+ *   About       a check-in, an event or a place: its badge, a small map,
+ *               every fact its packets carried; a place also its time,
+ *               its tags and the switch for automatic check-ins
+ *   Settings    (the menu) this station: where it is, check-ins on or off,
+ *               its kind of place, greeting, badge, events, Visitors.
+ *
+ * The first check-in at a station is asked by hand; after that this wapp
+ * asks once a day by itself while the station is in Bluetooth reach, until
+ * the person turns that off for the place. Time in range is the core's:
+ * every three minutes hal_xprs_stations says how long ago each station was
+ * heard on each radio, and ci_visit_step turns that into visits.
  *
  * The wapp decides what a check-in means; the core does everything else
  * (docs/architecture.md). hal_xprs_send hands the ask to the core's command
@@ -73,6 +80,9 @@ static char g_greet_from[16];
 
 /* The entry open on the Entry screen, and the event being written. */
 static char g_sel[8];
+static char g_ptype[24];          /* this station's kind of place (ci_places), "" none */
+static int g_quiet;               /* do_checkin: an automatic ask says nothing */
+static char g_ftags[200];         /* the tags the list is filtered by, ",coffee," */
 static char g_sel_station[16];   /* the About page's event is run by */
 static struct { char badge[80]; } g_draft;
 
@@ -193,6 +203,9 @@ static void load_settings(void)
     kv_str("greet", g_greeting, sizeof g_greeting);
     kv_str("badge", g_badge, sizeof g_badge);
     kv_str("intro", g_intro, sizeof g_intro);
+    kv_str("ptype", g_ptype, sizeof g_ptype);
+    kv_str("ftags", g_ftags, sizeof g_ftags);
+    if (!g_ftags[0]) al_cpy(g_ftags, ",", sizeof g_ftags);
 }
 
 /* ── the database ─────────────────────────────────────────────────────── */
@@ -241,6 +254,7 @@ static int db_one(const char *sql, int with_params, const char *col, char *out, 
     return al_json(g_obj, col, out, cap);
 }
 
+static void spots_init(void);
 static void db_init(void)
 {
     static const char path[] = "checkin.db";
@@ -266,6 +280,7 @@ static void db_init(void)
      * owner turned it on). Results are never archived: missed is lost. */
     db_exec("CREATE TABLE IF NOT EXISTS asks (id TEXT PRIMARY KEY, station TEXT,"
             " ts INTEGER, wire TEXT)", 0);
+    spots_init();
 }
 
 /* ── subscriptions ────────────────────────────────────────────────────── */
@@ -506,16 +521,9 @@ static void reach_section(int *any)
         while (j > 0 && near_before(i, order[j - 1])) { order[j] = order[j - 1]; j--; }
         order[j] = i;
     }
-    g_tab = "In reach";
+    /* Only while a station is in reach: the list is the places otherwise. */
+    if (!count) return;
     section_begin("In reach", any);
-    if (!count) {
-        g_icon = "bluetooth";
-        row("reach_none", "No station in Bluetooth reach",
-            "Walk up to one: stations heard in the last 10 minutes show here.", "", "", "", "", "", "");
-        /* An empty state, not a station: not counted on its chip. */
-        g_out[al_len(g_out) - 1] = 0;
-        al_cat(g_out, ",\"note\":true}", sizeof g_out);
-    }
     for (int k = 0; k < count; k++) {
         int i = order[k];
         const char *id = g_near[i].id;
@@ -567,17 +575,17 @@ static void do_checkin(const char *station)
     unsigned long long now = now_s();
     /* In person: the station is in Bluetooth reach (see reach_section). */
     int n = ci_build_ask(wire, sizeof wire, g_me, station, now, "local");
-    if (n < 0) { toast("warning", "Set up your callsign first."); return; }
+    if (n < 0) { if (!g_quiet) toast("warning", "Set up your callsign first."); return; }
     for (int i = 0; i < PEND_MAX; i++)
         if (g_pend[i].id[0] && al_eq(g_pend[i].station, station)) {
-            toast("info", "Already asking this station.");
+            if (!g_quiet) toast("info", "Already asking this station.");
             return;
         }
     int slot = -1;
     for (int i = 0; i < PEND_MAX; i++) if (!g_pend[i].id[0]) { slot = i; break; }
-    if (slot < 0) { toast("warning", "Too many open requests. Try again soon."); return; }
+    if (slot < 0) { if (!g_quiet) toast("warning", "Too many open requests. Try again soon."); return; }
     int rc = hal_xprs_send(wire, (uint32_t)n);
-    if (rc != 0) { toast("warning", "Could not send. Try again."); return; }
+    if (rc != 0) { if (!g_quiet) toast("warning", "Could not send. Try again."); return; }
     /* The identifier of the wire we built is the one the signed copy has:
      * a signature changes neither f:, ts: nor the payload (XPRS.md 5). */
     al_id(wire, (unsigned)n, g_pend[slot].id);
@@ -588,6 +596,7 @@ static void do_checkin(const char *station)
     p_begin(); p_str(g_pend[slot].id); p_str(station); p_int(now); p_str(wire); p_end();
     db_exec("INSERT OR REPLACE INTO asks (id, station, ts, wire) VALUES (?,?,?,?)", 1);
     listen_update();
+    if (g_quiet) return;
     char b[96] = "Asking ";
     al_cat(b, station, sizeof b);
     al_cat(b, "...", sizeof b);
@@ -619,6 +628,11 @@ static void fetch_badge(const char *ref)
 
 static void push_log(void);
 static void push_badges(void);
+static void spot_refresh(const char *call, const char *type_in);
+static void spots_backfill(void);
+static void spots_types(void);
+static void visits_sample(void);
+static int asked_automatically(const char *call, unsigned long long asked_at);
 static void push_entry(void);
 static void open_about(const char *what);
 static const char *entry_value(const char *col, const char *v);
@@ -638,13 +652,14 @@ static void on_result(const char *row_)
     if (al_eq(sig, "forged")) return;
     char station[16];
     al_cpy(station, g_pend[i].station, sizeof station);
+    int automatic = asked_automatically(station, g_pend[i].ts);
     char body[200];
     if (c.code == CI_OK && !wst_pos_ok(c.pos)) {
         /* Signed, and still not a check-in: it names no place, and every
          * check-in is a place on the map. */
         al_cpy(body, station, sizeof body);
         al_cat(body, " sent no location. Not counted.", sizeof body);
-        tell("warning", body);
+        if (!automatic) tell("warning", body);
     } else if (c.code == CI_OK) {
         char ask[CI_WIRE_MAX + 64];
         /* What is new about this one, for the message: a station never met
@@ -669,13 +684,18 @@ static void on_result(const char *row_)
         p_begin(); p_str(station); p_int(now_s()); p_end();
         db_exec("INSERT OR REPLACE INTO stations (call, last) VALUES (?, ?)", 1);
         fetch_badge(c.file);
+        /* Its place: the next check-ins there are automatic (the first one
+         * was asked by hand, this one), until the person turns that off. */
+        spot_refresh(station, "");
+        spots_types();
         /* The greeting, if the owner wrote one, follows as a message. */
         al_cpy(g_greet_from, station, sizeof g_greet_from);
         g_greet_until = now_s() + 300;
-        al_cpy(body, first_here ? "First check-in at " : "Checked in at ", sizeof body);
+        al_cpy(body, automatic ? "Checked in automatically at " : first_here ? "First check-in at " : "Checked in at ", sizeof body);
         al_cat(body, station, sizeof body);
         if (c.title[0]) { al_cat(body, " (", sizeof body); al_cat(body, c.title, sizeof body); al_cat(body, ")", sizeof body); }
         if (new_badge) al_cat(body, ". New badge!", sizeof body);
+        if (first_here) al_cat(body, ". Next time here you are checked in automatically.", sizeof body);
         tell("success", body);
         g_map_fitted = 0;          /* the map shows the new place */
     } else {
@@ -685,7 +705,7 @@ static void on_result(const char *row_)
                    : c.code == CI_REFUSED ? ": in person only."
                    : c.code == CI_NO_PLACE ? ": no location set yet."
                    : ": no check-in.", sizeof body);
-        tell("warning", body);
+        if (!automatic) tell("warning", body);
     }
     pend_drop(i);
     listen_update();
@@ -706,7 +726,7 @@ static void on_status(const char *row_)
     char body[160];
     al_cpy(body, g_pend[i].station, sizeof body);
     al_cat(body, " did not answer.", sizeof body);
-    tell("warning", body);
+    if (!asked_automatically(g_pend[i].station, g_pend[i].ts)) tell("warning", body);
     pend_drop(i);
     listen_update();
     push_nearby();
@@ -819,8 +839,8 @@ static void announce_point(int closing)
     who_am_i();
     if (!g_me[0]) return;
     unsigned long long now = now_s();
-    int n = ci_build_event(wire, sizeof wire, g_me, now, pos, CI_POINT_TITLE, now,
-                           now + (closing ? 60ULL : POINT_FOR_S), g_badge, g_intro);
+    int n = ci_build_point(wire, sizeof wire, g_me, now, pos,
+                           now + (closing ? 60ULL : POINT_FOR_S), g_badge, g_intro, g_ptype);
     if (n < 0) return;
     if (hal_xprs_send(wire, (uint32_t)n) == 0) g_point_at = closing ? 0 : now;
 }
@@ -909,6 +929,8 @@ static void count(const char *sql, char *out, unsigned cap)
     if (!db_one(sql, 0, "n", out, cap) || !out[0]) al_cpy(out, "0", cap);
 }
 
+static unsigned long long secs_since(const char *call, unsigned long long from);
+static unsigned long long one_u(const char *sql, int with_params, const char *col);
 static void push_stats(void)
 {
     char total[12], stations[12], local[12], events[12], badges[12];
@@ -948,6 +970,15 @@ static void push_stats(void)
     tile(&first, "events", "Events", events, "attended");
     tile(&first, "badges", "Badges", badges, "collected");
     tile(&first, "streak", "Streak", streak, "days in a row");
+    {
+        char t[40], vis[16] = "";
+        ci_span(t, sizeof t, secs_since(0, 0));
+        unsigned long long nv = one_u("SELECT COUNT(*) AS n FROM visits", 0, "n") +
+                                one_u("SELECT COUNT(*) AS n FROM spots WHERE vstart > 0", 0, "n");
+        al_cat_u(vis, nv, sizeof vis);
+        tile(&first, "time", "Time", t, "in range of places");
+        tile(&first, "visits", "Visits", vis, "stays in range");
+    }
     al_cat(g_out, "]}", sizeof g_out);
     say(g_out);
 }
@@ -1072,6 +1103,8 @@ static int group_rows(const char *col, const char *where, const char *prefix)
     return n;
 }
 
+static void spot_row(void);
+static int visit_rows(const char *call);
 static void push_detail(const char *what, int open)
 {
     char title[80] = "";
@@ -1140,6 +1173,50 @@ static void push_detail(const char *what, int open)
         }
     } else if (al_starts(what, "st:")) { al_cpy(title, what + 3, sizeof title); n = log_rows("station = ?", what + 3); }
     else if (al_starts(what, "ev:")) { label_name(title, sizeof title, what + 3); n = log_rows("title = ?", what + 3); }
+    else if (al_eq(what, "time")) {
+        /* The places by the time spent in their range. */
+        al_cpy(title, "Time in range", sizeof title);
+        if (db_query("SELECT call, nick, type, badge, visits, secs, checkins, last, vstart, vlast FROM spots"
+                     " WHERE visits > 0 OR vstart > 0 ORDER BY secs DESC LIMIT 200", 0)) {
+            static char rows_[24576];
+            al_cpy(rows_, g_rows, sizeof rows_);
+            const char *p = rows_;
+            while (*p && *p != '[') p++;
+            if (*p == '[') p++;
+            while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) { spot_row(); n++; }
+        }
+    } else if (al_eq(what, "visits")) {
+        /* Every stay, newest first, at any place. */
+        al_cpy(title, "Visits", sizeof title);
+        if (db_query("SELECT v.call AS call, v.start AS start, v.stop AS stop, v.secs AS secs,"
+                     " s.nick AS nick, s.type AS type FROM visits v LEFT JOIN spots s ON s.call = v.call"
+                     " ORDER BY v.start DESC LIMIT 300", 0)) {
+            static char rows_[24576];
+            al_cpy(rows_, g_rows, sizeof rows_);
+            const char *p = rows_;
+            while (*p && *p != '[') p++;
+            if (*p == '[') p++;
+            char o[300];
+            while ((p = al_json_next(p, o, sizeof o)) != 0) {
+                char call[16], nick[48], type[24], v[24], w[24], d[40], id[48] = "st:";
+                al_json(o, "call", call, sizeof call);
+                al_json(o, "nick", nick, sizeof nick);
+                al_json(o, "type", type, sizeof type);
+                unsigned long long st = al_json(o, "start", v, sizeof v) ? u_of(v) : 0;
+                unsigned long long secs = al_json(o, "secs", v, sizeof v) ? u_of(v) : 0;
+                when(w, sizeof w, st);
+                ci_span(d, sizeof d, secs);
+                const ci_place_t *k = ci_place(type);
+                g_icon = k ? k->icon : "schedule";
+                al_cat(id, call, sizeof id);
+                row(id, nick[0] ? nick : call, w, d, nick[0] ? call : "", "", "", "", "");
+                n++;
+            }
+        }
+    } else if (al_starts(what, "vi:")) {
+        al_cpy(title, "Visits", sizeof title);
+        n = visit_rows(what + 3);
+    }
     else if (al_starts(what, "day:")) {
         /* One day's check-ins: the day is a range of ts. */
         unsigned long long d = u_of(what + 4);
@@ -1169,23 +1246,30 @@ static void push_detail(const char *what, int open)
 }
 
 static void badges_section(int *any);
+static int spot_rows(void);
+static void push_chips(void);
+static int ftag_on(const char *label);
+/* The one screen: the tiles, the tags, who is in reach, then the places
+ * (the tags and the search filter them), or the events or the badges when
+ * that tag is chosen. */
 static void push_log(void)
 {
     push_stats();
+    push_chips();
     rows_begin("log");
     int any = 0;
     reach_section(&any);
-    if (db_query("SELECT id, station, ts, grade, title, badge, greeting, link, rssi FROM log"
-                 " ORDER BY ts DESC LIMIT 200", 0)) {
-        const char *p = g_rows;
-        while (*p && *p != '[') p++;
-        if (*p == '[') p++;
-        g_tab = "Check-ins";
-        section_begin("Check-ins", &any);
-        while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) checkin_row();
+    if (ftag_on("event")) {
+        section_begin("Events", &any);
+        group_rows("title", "title != ''", "ev:");
+        section_end();
+    } else if (ftag_on("badge")) {
+        badges_section(&any);
+    } else {
+        section_begin("Places", &any);
+        spot_rows();
         section_end();
     }
-    badges_section(&any);
     rows_end();
 }
 
@@ -1664,6 +1748,664 @@ static void place_sheet_of(const char *id)
     place_sheet(id, title, intro, pos, g_here[0] ? wst_dist_m(g_here, pos) : -1, extra);
 }
 
+/* ── Places: time in range, automatic check-ins, tags ─────────────────── */
+/* A place is a station you checked in at: one row in `spots` with what
+ * your log says of it (check-ins, in person, first, last, badge, where),
+ * the time you spent in its Bluetooth range (`visits`), whether the next
+ * check-ins there are automatic, its kind of place (its check-in point's
+ * tag:, ci_point_type) and its tags. Everything is in this wapp's zx store
+ * (hal.db). Time in range is read from the core, never measured here: every
+ * VISIT_SAMPLE_MS, hal_xprs_stations says how many seconds ago each station
+ * was heard on each radio (XprsMonitor, the verb architecture.md 4 gives a
+ * wapp), and ci_visit_step turns that into visits. The end of a visit is
+ * exact (the core's own time), its start at most one sample late. */
+#define VISIT_GAP_S     600ULL    /* out of Bluetooth range this long ends a visit */
+#define VISIT_MIN_S     120ULL    /* shorter was passing by: not kept */
+#define AUTO_FRESH_S    180       /* heard this recently: in reach for an automatic check-in */
+#define AUTO_RETRY_S    1800ULL   /* one automatic try per station per half hour */
+
+static void spots_init(void)
+{
+    db_exec("CREATE TABLE IF NOT EXISTS spots (call TEXT PRIMARY KEY, nick TEXT, type TEXT,"
+            " pos TEXT, badge TEXT, auto INTEGER, checkins INTEGER, here INTEGER, first INTEGER,"
+            " last INTEGER, visits INTEGER, secs INTEGER, vstart INTEGER, vlast INTEGER,"
+            " vrssi INTEGER, atry INTEGER, tags TEXT)", 0);
+    db_exec("CREATE INDEX IF NOT EXISTS spots_last ON spots(last DESC)", 0);
+    db_exec("CREATE TABLE IF NOT EXISTS visits (id TEXT PRIMARY KEY, call TEXT, start INTEGER,"
+            " stop INTEGER, secs INTEGER, rssi INTEGER)", 0);
+    db_exec("CREATE INDEX IF NOT EXISTS visits_call ON visits(call)", 0);
+    db_exec("CREATE INDEX IF NOT EXISTS visits_start ON visits(start DESC)", 0);
+    db_exec("CREATE TABLE IF NOT EXISTS mytags (id TEXT PRIMARY KEY, call TEXT, label TEXT)", 0);
+    db_exec("CREATE INDEX IF NOT EXISTS mytags_label ON mytags(label)", 0);
+    db_exec("CREATE INDEX IF NOT EXISTS log_station ON log(station)", 0);
+}
+
+static unsigned long long one_u(const char *sql, int with_params, const char *col)
+{
+    char v[24];
+    if (!db_one(sql, with_params, col, v, sizeof v)) return 0;
+    return u_of(v);
+}
+
+/* The tags of a place, as the list filters them: ",coffee,event,mine,". The
+ * automatic ones first (its kind, event, badge, in person or by radio,
+ * auto), then yours. */
+static void spot_tags(const char *call, const char *type, int is_auto, char *out, unsigned cap)
+{
+    al_cpy(out, ",", cap);
+    if (type[0]) { al_cat(out, type, cap); al_cat(out, ",", cap); }
+    p_begin(); p_str(call); p_end();
+    if (one_u("SELECT COUNT(*) AS n FROM log WHERE station = ? AND title != ''", 1, "n")) al_cat(out, "event,", cap);
+    p_begin(); p_str(call); p_end();
+    if (one_u("SELECT COUNT(*) AS n FROM log WHERE station = ? AND badge != ''", 1, "n")) al_cat(out, "badge,", cap);
+    p_begin(); p_str(call); p_end();
+    if (one_u("SELECT COUNT(*) AS n FROM log WHERE station = ? AND grade = 'local'", 1, "n")) al_cat(out, "in-person,", cap);
+    p_begin(); p_str(call); p_end();
+    if (one_u("SELECT COUNT(*) AS n FROM log WHERE station = ? AND grade != 'local'", 1, "n")) al_cat(out, "by-radio,", cap);
+    if (is_auto) al_cat(out, "auto,", cap);
+    p_begin(); p_str(call); p_end();
+    if (db_query("SELECT label FROM mytags WHERE call = ? ORDER BY label LIMIT 40", 1)) {
+        const char *p = g_rows;
+        while (*p && *p != '[') p++;
+        if (*p == '[') p++;
+        char o[200];
+        while ((p = al_json_next(p, o, sizeof o)) != 0) {
+            char l[40], k[44] = ",";
+            al_json(o, "label", l, sizeof l);
+            al_cat(k, l, sizeof k);
+            al_cat(k, ",", sizeof k);
+            int dup = 0;
+            for (const char *q = out; *q && !dup; q++) dup = al_starts(q, k);
+            if (l[0] && !dup) { al_cat(out, l, cap); al_cat(out, ",", cap); }
+        }
+    }
+}
+
+/* Bring a place's row up to date from the log and its visits; makes it
+ * when it is new (the next check-ins there automatic: the first was asked
+ * by hand). [type] "" keeps the kind it had. */
+static void spot_refresh(const char *call, const char *type_in)
+{
+    char v[96], type[24] = "", badge[80] = "", pos[40] = "", tags[400];
+    if (!call[0]) return;
+    p_begin(); p_str(call); p_end();
+    db_exec("INSERT OR IGNORE INTO spots (call, nick, type, auto, checkins, here, first, last, visits,"
+            " secs, vstart, vlast, vrssi, atry, tags) VALUES (?, '', '', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ',')", 1);
+    if (type_in && type_in[0]) al_cpy(type, type_in, sizeof type);
+    else { p_begin(); p_str(call); p_end(); db_one("SELECT type FROM spots WHERE call = ?", 1, "type", type, sizeof type); }
+    p_begin(); p_str(call); p_end();
+    int is_auto = (int)one_u("SELECT auto FROM spots WHERE call = ?", 1, "auto");
+    p_begin(); p_str(call); p_end();
+    if (db_query("SELECT badge, pos FROM log WHERE station = ? ORDER BY ts DESC LIMIT 1", 1)) {
+        const char *p = g_rows;
+        while (*p && *p != '[') p++;
+        if (*p == '[') p++;
+        if (al_json_next(p, g_obj, sizeof g_obj)) {
+            al_json(g_obj, "badge", badge, sizeof badge);
+            al_json(g_obj, "pos", pos, sizeof pos);
+        }
+    }
+    unsigned long long n, here, first, last, visits, secs, vlast;
+    p_begin(); p_str(call); p_end(); n = one_u("SELECT COUNT(*) AS n FROM log WHERE station = ?", 1, "n");
+    p_begin(); p_str(call); p_end(); here = one_u("SELECT COUNT(*) AS n FROM log WHERE station = ? AND grade = 'local'", 1, "n");
+    p_begin(); p_str(call); p_end(); first = one_u("SELECT MIN(ts) AS n FROM log WHERE station = ?", 1, "n");
+    p_begin(); p_str(call); p_end(); last = one_u("SELECT MAX(ts) AS n FROM log WHERE station = ?", 1, "n");
+    p_begin(); p_str(call); p_end(); visits = one_u("SELECT COUNT(*) AS n FROM visits WHERE call = ?", 1, "n");
+    p_begin(); p_str(call); p_end(); secs = one_u("SELECT SUM(secs) AS n FROM visits WHERE call = ?", 1, "n");
+    p_begin(); p_str(call); p_end(); vlast = one_u("SELECT MAX(stop) AS n FROM visits WHERE call = ?", 1, "n");
+    if (vlast > last) last = vlast;
+    spot_tags(call, type, is_auto, tags, sizeof tags);
+    p_begin();
+    p_str(type); p_str(badge); p_str(pos); p_int(n); p_int(here); p_int(first); p_int(last);
+    p_int(visits); p_int(secs); p_str(tags); p_str(call);
+    p_end();
+    db_exec("UPDATE spots SET type = ?, badge = ?, pos = ?, checkins = ?, here = ?, first = ?, last = ?,"
+            " visits = ?, secs = ?, tags = ? WHERE call = ?", 1);
+    (void)v;
+}
+
+/* Every station in the log has its place (a log from before places). */
+static void spots_backfill(void)
+{
+    unsigned long long a = one_u("SELECT COUNT(DISTINCT station) AS n FROM log", 0, "n");
+    unsigned long long b = one_u("SELECT COUNT(*) AS n FROM spots", 0, "n");
+    if (a <= b) return;
+    if (!db_query("SELECT DISTINCT station FROM log LIMIT 500", 0)) return;
+    static char rows_[16384];
+    al_cpy(rows_, g_rows, sizeof rows_);
+    const char *p = rows_;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    char o[120];
+    while ((p = al_json_next(p, o, sizeof o)) != 0) {
+        char st[16];
+        al_json(o, "station", st, sizeof st);
+        p_begin(); p_str(st); p_end();
+        if (st[0] && !one_u("SELECT COUNT(*) AS n FROM spots WHERE call = ?", 1, "n")) spot_refresh(st, "");
+    }
+}
+
+/* The kinds of place the check-in points say, for the places we have. */
+static void spot_type_of(const char *id, const char *wire, void *ctx)
+{
+    (void)id; (void)ctx;
+    char t[32], f[16], type[24], have[24] = "";
+    al_field(wire, "title", t, sizeof t);
+    if (!al_eq(t, CI_POINT_TITLE)) return;
+    al_field(wire, "f", f, sizeof f);
+    ci_point_type(wire, type, sizeof type);
+    if (!f[0] || !type[0]) return;
+    p_begin(); p_str(f); p_end();
+    if (!db_one("SELECT type FROM spots WHERE call = ?", 1, "type", have, sizeof have)) return;
+    if (!al_eq(have, type)) spot_refresh(f, type);
+}
+static void spots_types(void) { each_event(spot_type_of, 0); }
+
+/* A visit ended: kept when it was more than passing by. */
+static void visit_close(const char *call, unsigned long long start, unsigned long long last, int rssi)
+{
+    if (last > start && last - start >= VISIT_MIN_S) {
+        char id[40];
+        al_cpy(id, call, sizeof id);
+        al_cat(id, "|", sizeof id);
+        al_cat_u(id, start, sizeof id);
+        p_begin(); p_str(id); p_str(call); p_int(start); p_int(last); p_int(last - start);
+        p_int((unsigned long long)(rssi < 0 ? -rssi : rssi)); p_end();
+        db_exec("INSERT OR REPLACE INTO visits (id, call, start, stop, secs, rssi) VALUES (?,?,?,?,?,?)", 1);
+    }
+    p_begin(); p_str(call); p_end();
+    db_exec("UPDATE spots SET vstart = 0, vlast = 0, vrssi = 0 WHERE call = ?", 1);
+    spot_refresh(call, "");
+}
+
+static int checked_in_today(const char *call)
+{
+    unsigned long long now = now_s();
+    long long z = (long long)zone() * 60;
+    unsigned long long day0 = ci_day(now, zone()) * 86400ULL;
+    if (z > 0 && day0 >= (unsigned long long)z) day0 -= (unsigned long long)z;
+    else if (z < 0) day0 += (unsigned long long)(-z);
+    p_begin(); p_str(call); p_int(day0); p_end();
+    return one_u("SELECT COUNT(*) AS n FROM log WHERE station = ? AND ts >= ?", 1, "n") > 0;
+}
+
+static void do_checkin_auto(const char *call)
+{
+    p_begin(); p_int(now_s()); p_str(call); p_end();
+    db_exec("UPDATE spots SET atry = ? WHERE call = ?", 1);
+    g_quiet = 1;
+    do_checkin(call);
+    g_quiet = 0;
+}
+
+/* An automatic ask's answer is told only when it is a check-in. */
+static int asked_automatically(const char *call, unsigned long long asked_at)
+{
+    p_begin(); p_str(call); p_end();
+    unsigned long long t = one_u("SELECT atry FROM spots WHERE call = ?", 1, "atry");
+    return t && t + 120 >= asked_at && t <= asked_at + 120;
+}
+
+/* One look at who the core heard over Bluetooth: open, extend and close
+ * the visits of every place, and ask for the day's check-in where it is
+ * automatic. [stations] is hal_xprs_stations' answer. */
+static void visits_sample_json(const char *stations)
+{
+    static struct { char call[16]; int age, rssi; } h[NEAR_MAX];
+    int nh = 0;
+    const char *p = stations;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    static char sec[24576];
+    if (al_json_next(p, sec, sizeof sec)) {          /* heard in the last minutes */
+        const char *it = al_json_arr(sec, "items");
+        static char item[1024];
+        while (nh < NEAR_MAX && it && (it = al_json_next(it, item, sizeof item)) != 0) {
+            char id[16], heard[160];
+            al_json(item, "id", id, sizeof id);
+            if (!id[0] || !al_json_obj(item, "heard", heard, sizeof heard)) continue;
+            int age = json_int(heard, "ble", -1), age5 = json_int(heard, "ble5", -1);
+            if (age < 0 || (age5 >= 0 && age5 < age)) age = age5;
+            if (age < 0) continue;
+            al_cpy(h[nh].call, id, sizeof h[nh].call);
+            h[nh].age = age;
+            h[nh].rssi = json_int(item, "rssi", 0);
+            nh++;
+        }
+    }
+    unsigned long long now = now_s();
+    if (!db_query("SELECT call, auto, vstart, vlast, vrssi, atry FROM spots LIMIT 1000", 0)) return;
+    static char rows_[24576];
+    al_cpy(rows_, g_rows, sizeof rows_);
+    p = rows_;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    char o[300], v[24];
+    while ((p = al_json_next(p, o, sizeof o)) != 0) {
+        char call[16];
+        al_json(o, "call", call, sizeof call);
+        unsigned long long start = 0, last = 0, atry = 0;
+        int rssi = 0, is_auto = 0;
+        if (al_json(o, "vstart", v, sizeof v)) start = u_of(v);
+        if (al_json(o, "vlast", v, sizeof v)) last = u_of(v);
+        if (al_json(o, "vrssi", v, sizeof v)) rssi = -(int)u_of(v);
+        if (al_json(o, "atry", v, sizeof v)) atry = u_of(v);
+        if (al_json(o, "auto", v, sizeof v)) is_auto = u_of(v) != 0;
+        int k = 0;
+        while (k < nh && !al_eq(h[k].call, call)) k++;
+        unsigned long long heard_at = k < nh && (unsigned long long)h[k].age <= now ? now - (unsigned long long)h[k].age : 0;
+        int act = ci_visit_step(&start, &last, heard_at, now, VISIT_GAP_S);
+        if (act == CI_V_CLOSE) {
+            visit_close(call, start, last, rssi);
+            start = last = 0;
+            act = ci_visit_step(&start, &last, heard_at, now, VISIT_GAP_S);
+        }
+        if (act == CI_V_OPEN || act == CI_V_EXTEND) {
+            int r = k < nh ? h[k].rssi : 0;
+            if (r && (!rssi || r > rssi)) rssi = r;
+            p_begin(); p_int(start); p_int(last); p_int((unsigned long long)(rssi < 0 ? -rssi : rssi)); p_str(call); p_end();
+            db_exec("UPDATE spots SET vstart = ?, vlast = ?, vrssi = ? WHERE call = ?", 1);
+        }
+        /* The day's check-in, when it is automatic here and the station is
+         * in reach now. */
+        if (is_auto && k < nh && h[k].age <= AUTO_FRESH_S && now >= atry + AUTO_RETRY_S &&
+            !checked_in_today(call)) {
+            int asking = 0;
+            for (int q = 0; q < PEND_MAX; q++) if (g_pend[q].id[0] && al_eq(g_pend[q].station, call)) asking = 1;
+            if (!asking) do_checkin_auto(call);
+        }
+    }
+}
+
+static void visits_sample(void)
+{
+    int32_t n = hal_xprs_stations(g_big, sizeof g_big - 1);
+    if (n <= 0 || n >= (int32_t)sizeof g_big) return;
+    g_big[n] = 0;
+    static char copy[32768];
+    al_cpy(copy, g_big, sizeof copy);
+    visits_sample_json(copy);
+}
+
+/* Seconds in range at [call] since [from] (0: ever), the open visit too. */
+static unsigned long long secs_since(const char *call, unsigned long long from)
+{
+    unsigned long long s;
+    if (call) { p_begin(); p_str(call); p_int(from); p_end(); s = one_u("SELECT SUM(secs) AS n FROM visits WHERE call = ? AND start >= ?", 1, "n"); }
+    else { p_begin(); p_int(from); p_end(); s = one_u("SELECT SUM(secs) AS n FROM visits WHERE start >= ?", 1, "n"); }
+    /* The visits open now. */
+    char sql[160] = "SELECT SUM(vlast - vstart) AS n FROM spots WHERE vstart > 0 AND vstart >= ?";
+    if (call) al_cat(sql, " AND call = ?", sizeof sql);
+    p_begin(); p_int(from); if (call) p_str(call); p_end();
+    return s + one_u(sql, 1, "n");
+}
+
+/* A place's line in a list: "23 visits · 41 h · last today". */
+static void spot_line(char *out, unsigned cap, unsigned long long visits, unsigned long long secs,
+                      unsigned long long checkins, unsigned long long last)
+{
+    char t[40];
+    out[0] = 0;
+    if (visits) {
+        al_cat_u(out, visits, cap);
+        al_cat(out, visits == 1 ? " visit \xc2\xb7 " : " visits \xc2\xb7 ", cap);
+        ci_span(t, sizeof t, secs);
+        al_cat(out, t, cap);
+    } else {
+        al_cat_u(out, checkins, cap);
+        al_cat(out, checkins == 1 ? " check-in" : " check-ins", cap);
+    }
+    if (last) {
+        ago(t, sizeof t, last);
+        al_cat(out, " \xc2\xb7 last ", cap);
+        al_cat(out, t, cap);
+    }
+}
+
+/* The tags the list is filtered by (",coffee,mine,"), and the words searched. */
+static char g_query[64];
+
+/* One place as a row: its badge (else its kind's icon), its name, its
+ * line, and tags: its kind, in range now, the callsign under a name. */
+static void spot_row(void)
+{
+    char call[16], nick[48], type[24], badge[80], tok[88] = "", v[24], line[120], id[24] = "st:", now_[24] = "";
+    unsigned long long visits = 0, secs = 0, checkins = 0, last = 0, vstart = 0, vlast = 0;
+    al_json(g_obj, "call", call, sizeof call);
+    al_json(g_obj, "nick", nick, sizeof nick);
+    al_json(g_obj, "type", type, sizeof type);
+    al_json(g_obj, "badge", badge, sizeof badge);
+    if (al_json(g_obj, "visits", v, sizeof v)) visits = u_of(v);
+    if (al_json(g_obj, "secs", v, sizeof v)) secs = u_of(v);
+    if (al_json(g_obj, "checkins", v, sizeof v)) checkins = u_of(v);
+    if (al_json(g_obj, "last", v, sizeof v)) last = u_of(v);
+    if (al_json(g_obj, "vstart", v, sizeof v)) vstart = u_of(v);
+    if (al_json(g_obj, "vlast", v, sizeof v)) vlast = u_of(v);
+    if (vstart) { secs += vlast - vstart; if (vlast > last) last = vlast; }
+    spot_line(line, sizeof line, visits + (vstart ? 1 : 0), secs, checkins, last);
+    if (vstart) al_cpy(now_, "here now", sizeof now_);
+    const ci_place_t *k = ci_place(type);
+    if (badge[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, badge, sizeof tok); fetch_badge(badge); }
+    else g_icon = k ? k->icon : "cell_tower";
+    g_tag3 = now_;
+    al_cat(id, call, sizeof id);
+    row(id, nick[0] ? nick : call, line, k ? k->name : "", nick[0] ? call : "", tok, call, "", "");
+}
+
+/* The places matching the tags and the search, freshest first. */
+static int spot_rows(void)
+{
+    char sql[700] = "SELECT call, nick, type, badge, visits, secs, checkins, last, vstart, vlast FROM spots WHERE 1 = 1";
+    int np = 0;
+    p_begin();
+    const char *t = g_ftags;
+    while (*t) {
+        char w[40], like[48] = "%,";
+        unsigned k = 0;
+        while (*t == ',') t++;
+        while (*t && *t != ',' && k + 1 < sizeof w) w[k++] = *t++;
+        w[k] = 0;
+        if (!w[0] || al_eq(w, "event") || al_eq(w, "badge")) continue;
+        al_cat(like, w, sizeof like);
+        al_cat(like, ",%", sizeof like);
+        al_cat(sql, " AND tags LIKE ?", sizeof sql);
+        p_str(like);
+        np++;
+    }
+    if (g_query[0]) {
+        char like[80] = "%";
+        al_cat(like, g_query, sizeof like);
+        al_cat(like, "%", sizeof like);
+        al_cat(sql, " AND (lower(call) LIKE lower(?) OR lower(nick) LIKE lower(?) OR lower(tags) LIKE lower(?))", sizeof sql);
+        p_str(like); p_str(like); p_str(like);
+        np++;
+    }
+    p_end();
+    /* Freshest first, a visit going on now counting as now. */
+    al_cat(sql, " ORDER BY (CASE WHEN vlast > last THEN vlast ELSE last END) DESC LIMIT 200", sizeof sql);
+    if (!db_query(sql, np ? 1 : 0)) return 0;
+    static char rows_[24576];
+    al_cpy(rows_, g_rows, sizeof rows_);
+    const char *p = rows_;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    int n = 0;
+    while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) { spot_row(); n++; }
+    return n;
+}
+
+static int ftag_on(const char *label)
+{
+    char k[44] = ",";
+    al_cat(k, label, sizeof k);
+    al_cat(k, ",", sizeof k);
+    for (const char *q = g_ftags; *q; q++) if (al_starts(q, k)) return 1;
+    return 0;
+}
+
+static void ftag_toggle(const char *label)
+{
+    char out[200] = ",";
+    int was = ftag_on(label);
+    /* event and badge are lists of their own, not filters on places: on
+     * alone. */
+    int view = al_eq(label, "event") || al_eq(label, "badge");
+    const char *t = g_ftags;
+    while (*t && !view) {
+        char w[40];
+        unsigned k = 0;
+        while (*t == ',') t++;
+        while (*t && *t != ',' && k + 1 < sizeof w) w[k++] = *t++;
+        w[k] = 0;
+        if (!w[0] || al_eq(w, label) || al_eq(w, "event") || al_eq(w, "badge")) continue;
+        al_cat(out, w, sizeof out);
+        al_cat(out, ",", sizeof out);
+    }
+    if (!was) { al_cat(out, label, sizeof out); al_cat(out, ",", sizeof out); }
+    al_cpy(g_ftags, out, sizeof g_ftags);
+    hal_kv_set("ftags", 5, g_ftags, al_len(g_ftags));
+}
+
+/* A tag as a person reads it: a kind of place by its name, the automatic
+ * ones in words, yours as written. */
+static void tag_name(const char *label, char *out, unsigned cap)
+{
+    const ci_place_t *k = ci_place(label);
+    if (k) { al_cpy(out, k->name, cap); return; }
+    if (al_eq(label, "event")) { al_cpy(out, "Events", cap); return; }
+    if (al_eq(label, "badge")) { al_cpy(out, "Badges", cap); return; }
+    if (al_eq(label, "in-person")) { al_cpy(out, "In person", cap); return; }
+    if (al_eq(label, "by-radio")) { al_cpy(out, "By radio", cap); return; }
+    if (al_eq(label, "auto")) { al_cpy(out, "Automatic", cap); return; }
+    al_cpy(out, label, cap);
+}
+
+/* Every tag in use, with how many places carry it, most first; the
+ * kinds and yours, then the automatic ones. [fn] gets each. */
+typedef void (*tag_fn)(const char *label, unsigned long long places, void *ctx);
+#define TAGS_MAX 120
+static void each_tag(tag_fn fn, void *ctx)
+{
+    static struct { char l[40]; unsigned long long n; } tg[TAGS_MAX];
+    int nt = 0;
+    if (!db_query("SELECT tags FROM spots LIMIT 2000", 0)) return;
+    static char rows_[24576];
+    al_cpy(rows_, g_rows, sizeof rows_);
+    const char *p = rows_;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    char o[500], tags[460];
+    while ((p = al_json_next(p, o, sizeof o)) != 0) {
+        al_json(o, "tags", tags, sizeof tags);
+        const char *t = tags;
+        while (*t) {
+            char w[40];
+            unsigned k = 0;
+            while (*t == ',') t++;
+            while (*t && *t != ',' && k + 1 < sizeof w) w[k++] = *t++;
+            w[k] = 0;
+            if (!w[0]) continue;
+            int i = 0;
+            while (i < nt && !al_eq(tg[i].l, w)) i++;
+            if (i == nt) { if (nt == TAGS_MAX) continue; al_cpy(tg[nt].l, w, sizeof tg[0].l); tg[nt].n = 0; nt++; }
+            tg[i].n++;
+        }
+    }
+    /* Kinds of place first, then yours, then the automatic ones; most
+     * places first within each. */
+    #define TAG_GROUP(l) (ci_place(l) ? 0 : (al_eq(l, "event") || al_eq(l, "badge") || al_eq(l, "in-person") || \
+                                            al_eq(l, "by-radio") || al_eq(l, "auto")) ? 2 : 1)
+    for (int i = 1; i < nt; i++)
+        for (int j = i; j > 0 && (TAG_GROUP(tg[j].l) < TAG_GROUP(tg[j - 1].l) ||
+                                  (TAG_GROUP(tg[j].l) == TAG_GROUP(tg[j - 1].l) && tg[j].n > tg[j - 1].n)); j--) {
+            __typeof__(tg[0]) x = tg[j]; tg[j] = tg[j - 1]; tg[j - 1] = x;
+        }
+    for (int i = 0; i < nt; i++) fn(tg[i].l, tg[i].n, ctx);
+}
+
+/* The tag chips over the list: every tag with its count, on when chosen. */
+static int g_chips_on;    /* chip_of's pass: the chosen ones, then the rest */
+static void chip_of(const char *label, unsigned long long n, void *ctx)
+{
+    char name[48];
+    int *first = (int *)ctx;
+    if (ftag_on(label) != g_chips_on) return;
+    tag_name(label, name, sizeof name);
+    if (!*first) al_cat(g_out, ",", sizeof g_out);
+    *first = 0;
+    al_cat(g_out, "{\"id\":\"", sizeof g_out);
+    al_jesc(g_out, label, sizeof g_out);
+    al_cat(g_out, "\",\"label\":\"", sizeof g_out);
+    al_jesc(g_out, name, sizeof g_out);
+    al_cat(g_out, "\",\"count\":", sizeof g_out);
+    al_cat_u(g_out, n, sizeof g_out);
+    al_cat(g_out, ftag_on(label) ? ",\"on\":true}" : ",\"on\":false}", sizeof g_out);
+}
+static void push_chips(void)
+{
+    int first = 1;
+    al_cpy(g_out, "{\"type\":\"ui.field.set\",\"field\":\"log_tags\",\"value\":[", sizeof g_out);
+    /* The chosen tags first, where they are seen without scrolling. */
+    g_chips_on = 1;
+    each_tag(chip_of, &first);
+    g_chips_on = 0;
+    each_tag(chip_of, &first);
+    al_cat(g_out, "]}", sizeof g_out);
+    say(g_out);
+}
+
+/* The Tags page: each tag, its places, check-ins and time. */
+static void tag_row(const char *label, unsigned long long n, void *ctx)
+{
+    (void)ctx;
+    char name[48], like[48] = "%,", line[120], t[40], id[48] = "tag:";
+    tag_name(label, name, sizeof name);
+    al_cat(like, label, sizeof like);
+    al_cat(like, ",%", sizeof like);
+    p_begin(); p_str(like); p_end();
+    unsigned long long ci = one_u("SELECT SUM(checkins) AS n FROM spots WHERE tags LIKE ?", 1, "n");
+    p_begin(); p_str(like); p_end();
+    unsigned long long s = one_u("SELECT SUM(secs) AS n FROM spots WHERE tags LIKE ?", 1, "n");
+    line[0] = 0;
+    al_cat_u(line, n, sizeof line);
+    al_cat(line, n == 1 ? " place \xc2\xb7 " : " places \xc2\xb7 ", sizeof line);
+    al_cat_u(line, ci, sizeof line);
+    al_cat(line, ci == 1 ? " check-in" : " check-ins", sizeof line);
+    if (s) { ci_span(t, sizeof t, s); al_cat(line, " \xc2\xb7 ", sizeof line); al_cat(line, t, sizeof line); }
+    const ci_place_t *k = ci_place(label);
+    g_icon = k ? k->icon : "label";
+    al_cat(id, label, sizeof id);
+    row(id, name, line, "", "", "", "", "", "");
+}
+static void push_tags_page(void)
+{
+    rows_begin("tags_list");
+    int any = 0;
+    section_begin("", &any);
+    each_tag(tag_row, 0);
+    section_end();
+    rows_end();
+}
+
+/* Your own tag on a place: lower case, a-z 0-9 -, like a tag: on the air. */
+static void tag_add(const char *call, const char *text)
+{
+    char l[40], id[64];
+    ci_label(l, sizeof l, text);
+    if (!l[0] || !call[0]) return;
+    al_cpy(id, call, sizeof id);
+    al_cat(id, "|", sizeof id);
+    al_cat(id, l, sizeof id);
+    p_begin(); p_str(id); p_str(call); p_str(l); p_end();
+    db_exec("INSERT OR REPLACE INTO mytags (id, call, label) VALUES (?,?,?)", 1);
+    spot_refresh(call, "");
+}
+static void tag_remove(const char *call, const char *label)
+{
+    char id[64];
+    al_cpy(id, call, sizeof id);
+    al_cat(id, "|", sizeof id);
+    al_cat(id, label, sizeof id);
+    p_begin(); p_str(id); p_end();
+    db_exec("DELETE FROM mytags WHERE id = ?", 1);
+    spot_refresh(call, "");
+}
+
+/* A prompt naming tags as chips: yours not on [call] yet (add), or yours
+ * on it (remove). */
+static void tag_prompt(const char *call, int remove)
+{
+    char m[2400] = "{\"type\":\"ui.prompt\",\"id\":\"";
+    al_cat(m, remove ? "untag:" : "tag:", sizeof m);
+    al_jesc(m, call, sizeof m);
+    al_cat(m, remove ? "\",\"title\":\"Remove a tag\",\"chips\":[" : "\",\"title\":\"Add a tag\","
+                "\"body\":\"Your own word for this place, like favourite or holiday-2026. "
+                "Its kind of place is a tag already.\",\"input\":{\"hint\":\"favourite\"},\"chips\":[", sizeof m);
+    p_begin(); p_str(call); p_end();
+    const char *sql = remove ? "SELECT DISTINCT label FROM mytags WHERE call = ? ORDER BY label LIMIT 30"
+                             : "SELECT DISTINCT label FROM mytags WHERE call != ? ORDER BY label LIMIT 30";
+    int first = 1;
+    if (db_query(sql, 1)) {
+        const char *p = g_rows;
+        while (*p && *p != '[') p++;
+        if (*p == '[') p++;
+        char o[120];
+        while ((p = al_json_next(p, o, sizeof o)) != 0) {
+            char l[40];
+            al_json(o, "label", l, sizeof l);
+            if (!l[0]) continue;
+            if (!remove) {
+                char id[64];
+                al_cpy(id, call, sizeof id); al_cat(id, "|", sizeof id); al_cat(id, l, sizeof id);
+                p_begin(); p_str(id); p_end();
+                if (one_u("SELECT COUNT(*) AS n FROM mytags WHERE id = ?", 1, "n")) continue;
+            }
+            if (!first) al_cat(m, ",", sizeof m);
+            first = 0;
+            al_cat(m, "{\"label\":\"", sizeof m);
+            al_jesc(m, l, sizeof m);
+            al_cat(m, "\",\"value\":\"", sizeof m);
+            al_jesc(m, l, sizeof m);
+            al_cat(m, "\"}", sizeof m);
+        }
+    }
+    al_cat(m, "]}", sizeof m);
+    say(m);
+}
+
+/* A place's visits, newest first, as rows: when, how long, the signal. */
+static int visit_rows(const char *call)
+{
+    int n = 0;
+    p_begin(); p_str(call); p_end();
+    {
+        /* The one open now. */
+        char v[24];
+        unsigned long long s = 0, l = 0;
+        if (db_one("SELECT vstart FROM spots WHERE call = ?", 1, "vstart", v, sizeof v)) s = u_of(v);
+        p_begin(); p_str(call); p_end();
+        if (db_one("SELECT vlast FROM spots WHERE call = ?", 1, "vlast", v, sizeof v)) l = u_of(v);
+        if (s) {
+            char w[24], d[40], sub_[80] = "since ";
+            when(w, sizeof w, s);
+            al_cat(sub_, w + 11, sizeof sub_);
+            ci_span(d, sizeof d, l - s);
+            g_icon = "bluetooth";
+            row("v:now", "Here now", sub_, d, "", "", "", "", "");
+            n++;
+        }
+    }
+    p_begin(); p_str(call); p_end();
+    if (!db_query("SELECT start, stop, secs, rssi FROM visits WHERE call = ? ORDER BY start DESC LIMIT 300", 1)) return n;
+    const char *p = g_rows;
+    while (*p && *p != '[') p++;
+    if (*p == '[') p++;
+    char o[200];
+    while ((p = al_json_next(p, o, sizeof o)) != 0) {
+        char v[24], ws[24], we[24], d[40], title[48], rs[16] = "";
+        unsigned long long s = 0, e = 0, secs = 0, r = 0;
+        if (al_json(o, "start", v, sizeof v)) s = u_of(v);
+        if (al_json(o, "stop", v, sizeof v)) e = u_of(v);
+        if (al_json(o, "secs", v, sizeof v)) secs = u_of(v);
+        if (al_json(o, "rssi", v, sizeof v)) r = u_of(v);
+        when(ws, sizeof ws, s);
+        when(we, sizeof we, e);
+        al_cpy(title, ws, sizeof title);              /* "2026-11-26 08:10–09:02" */
+        al_cat(title, "\xe2\x80\x93", sizeof title);
+        int same = 1;
+        for (int i = 0; i < 10; i++) if (ws[i] != we[i]) same = 0;
+        al_cat(title, same ? we + 11 : we, sizeof title);
+        ci_span(d, sizeof d, secs);
+        if (r) { al_cpy(rs, "-", sizeof rs); al_cat_u(rs, r, sizeof rs); al_cat(rs, " dBm", sizeof rs); }
+        char id[40] = "v:";
+        al_cat_u(id, s, sizeof id);
+        g_icon = "schedule";
+        row(id, title, "", d, rs, "", "", "", "");
+        n++;
+    }
+    return n;
+}
+
 /* ── About: one check-in, one event, one station ───────────────────────── */
 /* What a tap on a check-in, an event or a station opens: its picture, where
  * it was on a small map ($type:"place"), and every fact the packets carried
@@ -1981,6 +2723,10 @@ static void push_about_event(const char *title)
     d_end();
     field_set_bool("about_station__hidden", from[0] == 0);
     field_set_bool("about_list__hidden", g_mine.n == 0);
+    field_set_bool("a_auto__hidden", 1);
+    field_set_bool("add_tag__hidden", 1);
+    field_set_bool("remove_tag__hidden", 1);
+    field_set_bool("about_visits__hidden", 1);
     al_cpy(g_about, "ev:", sizeof g_about);
     al_cat(g_about, title, sizeof g_about);
     al_cpy(g_sel_station, from, sizeof g_sel_station);
@@ -2010,9 +2756,21 @@ static void push_about_station(const char *call)
     badge_set("a_badge", file[0] ? file : g_mine.badge);
     place_set("a_place", pos, call);
     d_begin("a_info");
+    /* Its kind, from its check-in point's tag:, kept on its place. */
+    char type[24] = "";
+    if (g_evf.found && al_eq(g_evf.title, CI_POINT_TITLE)) ci_point_type(g_evf.wire, type, sizeof type);
+    p_begin(); p_str(call); p_end();
+    int have = one_u("SELECT COUNT(*) AS n FROM spots WHERE call = ?", 1, "n") > 0;
+    if (have) {
+        if (type[0]) spot_refresh(call, type);
+        else { p_begin(); p_str(call); p_end(); db_one("SELECT type FROM spots WHERE call = ?", 1, "type", type, sizeof type); }
+        if (nick[0]) { p_begin(); p_str(nick); p_str(call); p_end(); db_exec("UPDATE spots SET nick = ? WHERE call = ?", 1); }
+    }
+    const ci_place_t *kind = ci_place(type);
     d_section("Station");
     d_item("Callsign", call);
     d_item("Name", nick);
+    d_item("Kind of place", kind ? kind->name : "");
     d_item("About", intro);
     if (open_) { al_cpy(v, "Yes, until ", sizeof v); char w[24]; when(w, sizeof w, al_epoch(u)); al_cat(v, w, sizeof v); }
     d_item("Gives check-ins", open_ ? v : "Not now");
@@ -2042,9 +2800,116 @@ static void push_about_station(const char *call)
         mine_section("You there");
         d_item("Events", evs);
     }
+    /* Time in its Bluetooth range, as the core heard it. */
+    unsigned long long visits = 0, vstart = 0, vlast = 0;
+    int is_auto = 0;
+    char tags[400] = "";
+    if (have) {
+        char r[24];
+        p_begin(); p_str(call); p_end(); visits = one_u("SELECT visits FROM spots WHERE call = ?", 1, "visits");
+        p_begin(); p_str(call); p_end(); vstart = one_u("SELECT vstart FROM spots WHERE call = ?", 1, "vstart");
+        p_begin(); p_str(call); p_end(); vlast = one_u("SELECT vlast FROM spots WHERE call = ?", 1, "vlast");
+        p_begin(); p_str(call); p_end(); is_auto = one_u("SELECT auto FROM spots WHERE call = ?", 1, "auto") != 0;
+        p_begin(); p_str(call); p_end(); db_one("SELECT tags FROM spots WHERE call = ?", 1, "tags", tags, sizeof tags);
+        d_section("Time here");
+        unsigned long long now = now_s();
+        if (vstart) {
+            char w[24], d[40];
+            when(w, sizeof w, vstart);
+            ci_span(d, sizeof d, vlast - vstart);
+            al_cpy(v, "since ", sizeof v);
+            al_cat(v, w + 11, sizeof v);
+            al_cat(v, " (", sizeof v);
+            al_cat(v, d, sizeof v);
+            al_cat(v, ")", sizeof v);
+            d_item("Here now", v);
+        }
+        ci_span(v, sizeof v, secs_since(call, 0));
+        d_item("In all", visits || vstart ? v : "Not measured yet");
+        if (visits || vstart) {
+            ci_span(v, sizeof v, secs_since(call, now > 7 * 86400ULL ? now - 7 * 86400ULL : 0));
+            d_item("Last 7 days", v);
+            ci_span(v, sizeof v, secs_since(call, now > 30 * 86400ULL ? now - 30 * 86400ULL : 0));
+            d_item("Last 30 days", v);
+            v[0] = 0;
+            al_cat_u(v, visits + (vstart ? 1 : 0), sizeof v);
+            d_item("Visits", v);
+            if (visits) {
+                p_begin(); p_str(call); p_end();
+                ci_span(v, sizeof v, one_u("SELECT SUM(secs) AS n FROM visits WHERE call = ?", 1, "n") / visits);
+                d_item("Usual stay", v);
+                p_begin(); p_str(call); p_end();
+                ci_span(v, sizeof v, one_u("SELECT MAX(secs) AS n FROM visits WHERE call = ?", 1, "n"));
+                d_item("Longest", v);
+                /* How often: visits a week, counted over the days since the
+                 * first (a daily place is 7, not 6 for a week begun). */
+                p_begin(); p_str(call); p_end();
+                unsigned long long first = one_u("SELECT MIN(start) AS n FROM visits WHERE call = ?", 1, "n");
+                unsigned long long days = first && now > first ? (now - first + 86399ULL) / 86400ULL : 1;
+                unsigned long long per_wk10 = visits * 70ULL / (days ? days : 1);   /* tenths */
+                v[0] = 0;
+                if (per_wk10 >= 10) {
+                    al_cat_u(v, (per_wk10 + 5) / 10, sizeof v);
+                    al_cat(v, " a week", sizeof v);
+                } else {
+                    al_cat(v, "once every ", sizeof v);
+                    al_cat_u(v, (days + visits * 7 / 2) / (visits * 7), sizeof v);
+                    al_cat(v, " weeks", sizeof v);
+                }
+                d_item("How often", v);
+                /* The hour most visits begin. */
+                p_begin(); p_str(call); p_end();
+                if (db_query("SELECT start FROM visits WHERE call = ? ORDER BY start DESC LIMIT 200", 1)) {
+                    int hours[24] = {0}, best = -1;
+                    const char *q = g_rows;
+                    while (*q && *q != '[') q++;
+                    if (*q == '[') q++;
+                    char o[80];
+                    while ((q = al_json_next(q, o, sizeof o)) != 0) {
+                        char sv[24];
+                        al_json(o, "start", sv, sizeof sv);
+                        long long t = (long long)u_of(sv) + (long long)zone() * 60;
+                        int h = (int)((t % 86400 + 86400) % 86400 / 3600);
+                        hours[h]++;
+                        if (best < 0 || hours[h] > hours[best]) best = h;
+                    }
+                    if (best >= 0) {
+                        v[0] = 0;
+                        al_cat(v, "around ", sizeof v);
+                        al_cat_u(v, (unsigned long long)best, sizeof v);
+                        al_cat(v, ":00", sizeof v);
+                        d_item("Usually arrive", v);
+                    }
+                }
+            }
+        }
+        /* Its tags, as words. */
+        char words[300] = "";
+        const char *t = tags;
+        while (*t) {
+            char w[40], nm[48];
+            unsigned k = 0;
+            while (*t == ',') t++;
+            while (*t && *t != ',' && k + 1 < sizeof w) w[k++] = *t++;
+            w[k] = 0;
+            if (!w[0]) continue;
+            tag_name(w, nm, sizeof nm);
+            if (words[0]) al_cat(words, ", ", sizeof words);
+            al_cat(words, nm, sizeof words);
+        }
+        d_section("Tags");
+        d_item("On this place", words);
+        (void)r;
+    }
     d_end();
     field_set_bool("about_station__hidden", 1);
     field_set_bool("about_list__hidden", g_mine.n == 0);
+    field_set_bool("a_auto__hidden", !have);
+    field_set_bool("a_auto", is_auto);
+    field_set_bool("add_tag__hidden", !have);
+    p_begin(); p_str(call); p_end();
+    field_set_bool("remove_tag__hidden", !have || !one_u("SELECT COUNT(*) AS n FROM mytags WHERE call = ?", 1, "n"));
+    field_set_bool("about_visits__hidden", !visits && !vstart);
     al_cpy(g_about, "st:", sizeof g_about);
     al_cat(g_about, call, sizeof g_about);
     g_sel_station[0] = 0;
@@ -2058,8 +2923,11 @@ static void open_about(const char *what)
         label_name(nice, sizeof nice, what + 3);
         screen_open("About", nice);
     } else if (al_starts(what, "st:")) {
+        char title[48];
         push_about_station(what + 3);
-        screen_open("About", what + 3);
+        /* Its name when it has one, as on the list. */
+        station_nick(what + 3, title, sizeof title);
+        screen_open("About", title[0] ? title : what + 3);
     }
 }
 
@@ -2213,7 +3081,6 @@ static void badges_section(int *any)
         const char *p = g_rows;
         while (*p && *p != '[') p++;
         if (*p == '[') p++;
-        g_tab = "Badges";
         section_begin("Badges", any);
         while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
             char badge[80], st[16], title[32], n[12], last[24], tok[88] = "file:", sub_[64], w[24], id[120];
@@ -2383,6 +3250,7 @@ static void push_station(void)
     field_set_bool("local_only", g_local_only);
     field_set_str("greeting", g_greeting);
     field_set_str("intro", g_intro);
+    field_set_str("place_type", g_ptype[0] ? g_ptype : "none");
     field_set_str("badge_pic", g_badge);
     field_set_str("pick_badge__label", g_badge[0] ? "Change badge" : "Choose badge");
     char pos[40];
@@ -2573,7 +3441,9 @@ static void on_command(void)
         return;
     }
     if (al_eq(cmd, "nearby_checkin") || al_eq(cmd, "nearby_tap")) {
-        if (!al_json(g_buf, "nearby_id", id, sizeof id) || !id[0]) return;
+        /* The button on a row of the one list sends that row as log_id. */
+        if ((!al_json(g_buf, "log_id", id, sizeof id) || !id[0]) &&
+            (!al_json(g_buf, "nearby_id", id, sizeof id) || !id[0])) return;
         /* A station or event further down the list opens its sheet; a
          * station in reach is checked in at. */
         if (al_starts(id, "st:")) point_sheet(id + 3);
@@ -2594,7 +3464,7 @@ static void on_command(void)
         return;
     }
     if (al_eq(cmd, "detail_tap")) {
-        if (!al_json(g_buf, "detail_id", id, sizeof id) || !id[0] || al_eq(id, "none")) return;
+        if (!al_json(g_buf, "detail_id", id, sizeof id) || !id[0] || al_eq(id, "none") || al_starts(id, "v:")) return;
         if (al_starts(id, "st:") || al_starts(id, "ev:")) { open_about(id); return; }
         if (al_starts(id, "day:")) { push_detail(id, 1); return; }
         al_cpy(g_sel, id, sizeof g_sel);
@@ -2602,8 +3472,55 @@ static void on_command(void)
         screen_open("Entry", g_entry_title[0] ? g_entry_title : "Check-in");
         return;
     }
+    if (al_eq(cmd, "log_tags_tap")) {
+        if (al_json(g_buf, "log_tags_id", id, sizeof id) && id[0]) ftag_toggle(id);
+        push_log();
+        return;
+    }
+    if (al_eq(cmd, "log_search")) {
+        al_json(g_buf, "log_query", g_query, sizeof g_query);
+        push_log();
+        return;
+    }
+    if (al_eq(cmd, "tags_open")) {
+        push_tags_page();
+        screen_open("Tags", "Tags");
+        return;
+    }
+    if (al_eq(cmd, "tags_list_tap")) {
+        /* A tag on the Tags page: the list filtered by it alone. */
+        if (!al_json(g_buf, "tags_list_id", id, sizeof id) || !al_starts(id, "tag:")) return;
+        al_cpy(g_ftags, ",", sizeof g_ftags);
+        ftag_toggle(id + 4);
+        push_log();
+        say("{\"type\":\"ui.screen.close\"}");
+        return;
+    }
+    if (al_eq(cmd, "set_auto")) {
+        char v[8];
+        if (!al_starts(g_about, "st:")) return;
+        al_json(g_buf, "a_auto", v, sizeof v);
+        p_begin(); p_int(al_eq(v, "true") ? 1 : 0); p_str(g_about + 3); p_end();
+        db_exec("UPDATE spots SET auto = ? WHERE call = ?", 1);
+        spot_refresh(g_about + 3, "");
+        toast("info", al_eq(v, "true") ? "Checked in automatically here, once a day." : "Check in here by hand.");
+        push_log();
+        return;
+    }
+    if (al_eq(cmd, "add_tag") || al_eq(cmd, "remove_tag")) {
+        if (al_starts(g_about, "st:")) tag_prompt(g_about + 3, al_eq(cmd, "remove_tag"));
+        return;
+    }
+    if (al_eq(cmd, "about_visits")) {
+        char what[24] = "vi:";
+        if (!al_starts(g_about, "st:")) return;
+        al_cat(what, g_about + 3, sizeof what);
+        push_detail(what, 1);
+        return;
+    }
     if (al_eq(cmd, "log_tap")) {
         if (!al_json(g_buf, "log_id", id, sizeof id)) return;
+        if (al_starts(id, "st:") || al_starts(id, "ev:")) { open_about(id); return; }
         /* A badge (<badge>|<station>): what gave it, its event or else its station. */
         for (const char *q = id; *q; q++) if (*q == '|') {
             char b[80], t[32] = "", what[64];
@@ -2678,6 +3595,20 @@ static void on_command(void)
         char pid[32], v[12];
         al_json(g_buf, "prompt_id", pid, sizeof pid);
         al_json(g_buf, "prompt_value", v, sizeof v);
+        if (al_starts(pid, "tag:") || al_starts(pid, "untag:")) {
+            char word[48];
+            int remove = al_starts(pid, "untag:");
+            const char *call = pid + (remove ? 6 : 4);
+            if (!al_json(g_buf, "prompt_value", word, sizeof word) || !word[0])
+                al_json(g_buf, "prompt_input", word, sizeof word);
+            if (!word[0]) return;
+            if (remove) tag_remove(call, word); else tag_add(call, word);
+            char what[24] = "st:";
+            al_cat(what, call, sizeof what);
+            push_about_station(call);
+            push_log();
+            return;
+        }
         if ((al_starts(pid, "pt:") || al_starts(pid, "ev:") || al_starts(pid, "pl:") || al_starts(pid, "sq:")) &&
             al_eq(v, "map") && wst_pos_ok(g_sheet_pos)) {
             char lat[24], m[120] = "{\"type\":\"ui.map.locate\",\"lat\":";
@@ -2773,6 +3704,15 @@ static void on_command(void)
         push_map();
         return;
     }
+    if (al_eq(cmd, "save_type")) {
+        char v[24];
+        al_json(g_buf, "place_type", v, sizeof v);
+        al_cpy(g_ptype, ci_place(v) ? v : "", sizeof g_ptype);
+        hal_kv_set("ptype", 5, g_ptype, al_len(g_ptype));
+        if (g_bot_on) announce_point(0);     /* visitors learn it at once */
+        toast("info", g_ptype[0] ? "Saved." : "No kind of place.");
+        return;
+    }
     if (al_eq(cmd, "set_local")) {
         char v[8];
         al_json(g_buf, "local_only", v, sizeof v);
@@ -2826,6 +3766,9 @@ int32_t module_init(void)
     pend_load();
     listen_update();
     bot_update();
+    spots_backfill();
+    spots_types();
+    visits_sample();
     push_all();
     return 0;
 }
@@ -2835,6 +3778,7 @@ int32_t module_tick(void)
 {
     drain_events();
     point_due();
+    visits_sample();
     /* A station that left Bluetooth reach ten minutes ago leaves the list,
      * though nothing new was heard. */
     if (g_page_seen) push_nearby();
@@ -2851,8 +3795,10 @@ int32_t module_handle_event(void)
     return 0;
 }
 
-/* A minute: the check-in point is renewed hourly, and nothing else here
- * runs on a clock (everything else happens because something arrived). */
-int32_t module_tick_interval_ms(void) { return 60000; }
+/* Three minutes: who the core heard over Bluetooth is read for the time in
+ * range (the end of a visit is the core's exact time, its start at most
+ * this late), and the check-in point is renewed hourly. Nothing else here
+ * runs on a clock: everything else happens because something arrived. */
+int32_t module_tick_interval_ms(void) { return 180000; }
 
 void module_destroy(void) {}

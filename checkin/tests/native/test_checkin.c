@@ -368,7 +368,7 @@ static void test_chaser(void)
             }
         CHECK(a && b && a < b, "the strongest signal first");
     }
-    CHECK(said("\"tab\":\"In reach\",\"title\":\"In reach\"") && said("\"field\":\"log\""),
+    CHECK(said("\"field\":\"log\",\"sections\":[{\"title\":\"In reach\""),
           "In reach is the first section of the one screen");
     {
         char keep[4096];
@@ -376,8 +376,8 @@ static void test_chaser(void)
         snprintf(g_stations, sizeof g_stations, "[{\"title\":\"Heard over the air (0)\",\"items\":[]}]");
         mock_clear();
         cmd("{\"command\":\"ready\"}");
-        CHECK(said("No station in Bluetooth reach") && said("\"note\":true"),
-              "nobody in reach: said so, as a note its chip does not count");
+        CHECK(!said("\"title\":\"In reach\"") && said("\"title\":\"Places\""),
+              "nobody in reach: the list is the places");
         snprintf(g_stations, sizeof g_stations, "%s", keep);
     }
 
@@ -430,7 +430,11 @@ static void test_chaser(void)
     snprintf(want, sizeof want, "file:%s", EREF);
     CHECK(g_fetched_n >= 1 && !strcmp(g_fetched[0], want), "the event's badge is asked of the core by its hash");
     CHECK(said("\"value\":\"1\""), "the logbook counts it");
-    CHECK(said("\"tab\":\"Badges\",\"title\":\"Badges\"") && said(EREF), "the logbook's Badges chip shows it");
+    CHECK(said("{\"id\":\"badge\",\"label\":\"Badges\",\"count\":1"), "the Badges tag counts it");
+    mock_clear();
+    cmd("{\"command\":\"log_tags_tap\",\"log_tags_id\":\"badge\"}");
+    CHECK(said("\"title\":\"Badges\"") && said(EREF), "and shows the badge wall");
+    cmd("{\"command\":\"log_tags_tap\",\"log_tags_id\":\"badge\"}");
 
     /* A certificate that names no place is not a check-in. */
     {
@@ -453,7 +457,11 @@ static void test_chaser(void)
     /* The greeting follows as a message. */
     mock_clear();
     event("xprs.message", "{\"type\":\"message\",\"from\":\"npub1x\",\"call\":\"X3STN1\",\"content\":\"Welcome to the hill, 73!\"}");
-    CHECK(said("Welcome to the hill, 73!"), "the greeting lands on the entry");
+    {
+        char gr[160] = "";
+        db_one("SELECT greeting FROM log WHERE station = 'X3STN1' ORDER BY ts DESC LIMIT 1", 0, "greeting", gr, sizeof gr);
+        CHECK(!strcmp(gr, "Welcome to the hill, 73!"), "the greeting lands on the entry");
+    }
 
     /* The evidence. */
     char id[7];
@@ -494,7 +502,7 @@ static void test_chaser(void)
                           "\"rssi\":-61,\"agoMs\":180000,\"serve\":[\"archive\"],\"sig\":\"verified\"}");
     mock_clear();
     cmd("{\"command\":\"about_station\"}");
-    CHECK(said("\"name\":\"About\",\"title\":\"X3STN1\"") &&
+    CHECK(said("\"name\":\"About\",\"title\":\"Hilltop club\"") &&
           said("\"label\":\"Gives check-ins\",\"value\":\"Yes, until") &&
           said("\"label\":\"Events\",\"value\":\"Field Day 2026\""),
           "and from it, the station that runs it");
@@ -675,6 +683,210 @@ static void test_chaser(void)
     }
 }
 
+/* ── Places: time in range, automatic check-ins, kinds of place, tags ── */
+
+/* [chaser] asks [station] in person and the station certifies: the whole
+ * round, as the core carries it. 1 when the chaser got its check-in. */
+static int round_trip(const char *chaser, const char *station, int automatic)
+{
+    char row_[4096], ask[300], cert[300];
+    as(chaser);
+    int before = g_aired_n;
+    if (!automatic) {
+        char c[120];
+        snprintf(c, sizeof c, "{\"command\":\"nearby_checkin\",\"log_id\":\"%s\"}", station);
+        cmd(c);
+    }
+    if (g_aired_n == before) return 0;
+    snprintf(ask, sizeof ask, "%s", last_aired());
+    as(station);
+    cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
+    ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
+    event("xprs.command", row_);
+    snprintf(cert, sizeof cert, "%s", last_aired());
+    cmd("{\"command\":\"set_bot\",\"bot_on\":false}");
+    as(chaser);
+    result_row(row_, sizeof row_, cert);
+    event("xprs.result", row_);
+    return strstr(cert, "code:200") != 0;
+}
+
+static void heard_ble(const char *call, int age)
+{
+    snprintf(g_stations, sizeof g_stations,
+             "[{\"title\":\"Heard over the air (1)\",\"items\":["
+             "{\"id\":\"%s\",\"title\":\"%s\",\"kind\":\"station\",\"heard\":{\"ble\":%d},\"rssi\":-58}]}]",
+             call, call, age);
+}
+static void heard_nobody(void)
+{
+    snprintf(g_stations, sizeof g_stations, "[{\"title\":\"Heard over the air (0)\",\"items\":[]}]");
+}
+
+static void test_place_rules(void)
+{
+    unsigned long long s = 0, l = 0;
+    CHECK(ci_visit_step(&s, &l, 0, 1000, 600) == CI_V_NONE && !s, "not heard, no visit");
+    CHECK(ci_visit_step(&s, &l, 995, 1000, 600) == CI_V_OPEN && s == 995 && l == 995, "heard: a visit opens then");
+    CHECK(ci_visit_step(&s, &l, 1175, 1180, 600) == CI_V_EXTEND && l == 1175, "heard again: it goes on");
+    CHECK(ci_visit_step(&s, &l, 1175, 1360, 600) == CI_V_NONE && l == 1175, "a short silence: still there");
+    CHECK(ci_visit_step(&s, &l, 1175, 1800, 600) == CI_V_CLOSE && s == 995 && l == 1175,
+          "ten minutes out of range: it ended when last heard");
+    s = l = 0;
+    CHECK(ci_visit_step(&s, &l, 100, 1000, 600) == CI_V_NONE && !s, "an old hearing opens nothing");
+
+    char t[40];
+    ci_span(t, sizeof t, 45 * 60);          CHECK(!strcmp(t, "45 min"), "minutes");
+    ci_span(t, sizeof t, 3 * 3600 + 1200);  CHECK(!strcmp(t, "3 h 20 min"), "hours and minutes");
+    ci_span(t, sizeof t, 2 * 86400 + 4 * 3600); CHECK(!strcmp(t, "2 d 4 h"), "days and hours");
+    ci_span(t, sizeof t, 23 * 86400);       CHECK(!strcmp(t, "3 wk 2 d"), "weeks and days");
+    ci_span(t, sizeof t, 130 * 86400);      CHECK(!strcmp(t, "4 mo 1 wk"), "months and weeks");
+    ci_span(t, sizeof t, 31 * 86400 + 3600); CHECK(!strcmp(t, "1 mo 1 d"), "a month and the days left");
+
+    char w[400], k[24];
+    int n = ci_build_point(w, sizeof w, "X3CAFE", g_now, "38.7100,-9.1400", g_now + 3600, "", "By the river", "coffee");
+    CHECK(n > 0 && strstr(w, "title:check-ins-open tag:checkin,coffee "), "the kind rides on tag:, no new word");
+    ci_point_type(w, k, sizeof k);
+    CHECK(!strcmp(k, "coffee"), "and is read back");
+    ci_build_point(w, sizeof w, "X3CAFE", g_now, "38.7100,-9.1400", g_now + 3600, "", "", "spaceship");
+    CHECK(strstr(w, "tag:checkin ") != 0, "a kind not on the list is left out");
+    CHECK(ci_places_n >= 50 && ci_place("campsite") && ci_place("boat") && ci_place("car") && ci_place("bus"),
+          "some fifty kinds, the moving ones too");
+    CHECK(!ci_place("event") && !ci_place("badge") && !ci_place("auto"),
+          "no kind takes the name of an automatic tag");
+    for (unsigned i = 0; i < ci_places_n; i++) {
+        char lbl[32];
+        ci_label(lbl, sizeof lbl, ci_places[i].id);
+        if (strcmp(lbl, ci_places[i].id)) { CHECK(0, "every kind is a tag: label"); break; }
+    }
+}
+
+static void test_places(void)
+{
+    g_now += 5 * 86400;
+    heard_ble("X3CAFE", 5);
+    as("X3CAFE");
+    g_lat = 387100000; g_lon = -91400000;
+    cmd("{\"command\":\"save_type\",\"place_type\":\"coffee\"}");
+    mock_clear();
+    cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
+    CHECK(strstr(last_aired(), "title:check-ins-open tag:checkin,coffee") != 0,
+          "the station says what kind of place it is on its check-in point");
+    {
+        /* The visitor's archive holds that announcement. */
+        char hist[900];
+        snprintf(hist, sizeof hist, "[{\"id\":\"cf0001\",\"wire\":\"%s\"}]", last_aired());
+        strcpy(g_history, hist);
+    }
+    cmd("{\"command\":\"set_bot\",\"bot_on\":false}");
+
+    /* The first check-in is asked by hand. */
+    mock_clear();
+    CHECK(round_trip("X1CHSR", "X3CAFE", 0), "first check-in, by hand");
+    CHECK(said("First check-in at X3CAFE") && said("Next time here you are checked in automatically"),
+          "and the person is told the next ones are automatic");
+    mock_clear();
+    cmd("{\"command\":\"ready\"}");
+    CHECK(said("\"id\":\"st:X3CAFE\"") && said("\"Coffee\""), "it is a place, of its kind");
+    CHECK(said("\"field\":\"log_tags\"") && said("{\"id\":\"coffee\",\"label\":\"Coffee\",\"count\":1"),
+          "its kind is a tag over the list, counted");
+
+    /* Time in its Bluetooth range: read from the core every few minutes. */
+    unsigned long long t0 = g_now;
+    heard_ble("X3CAFE", 5);
+    module_tick();
+    g_now += 180; heard_ble("X3CAFE", 10); module_tick();
+    g_now += 180; heard_ble("X3CAFE", 10); module_tick();
+    mock_clear();
+    cmd("{\"command\":\"ready\"}");
+    CHECK(said("here now"), "in range: here now");
+    g_now += 900; heard_nobody(); module_tick();
+    unsigned long long secs = (t0 + 360 - 10) - (t0 - 5);
+    CHECK(one_u("SELECT COUNT(*) AS n FROM visits WHERE call = 'X3CAFE'", 0, "n") == 1 &&
+          one_u("SELECT secs FROM visits WHERE call = 'X3CAFE'", 0, "secs") == secs,
+          "out of range ten minutes: one visit, ending when last heard");
+    mock_clear();
+    cmd("{\"command\":\"ready\"}");
+    CHECK(said("1 visit \xc2\xb7 5 min"), "the place says its visits and the time (355 s)");
+    CHECK(said("\"id\":\"time\",\"label\":\"Time\""), "and a tile counts all the time");
+
+    /* Passing by is not a visit. */
+    g_now += 3600; heard_ble("X3CAFE", 1); module_tick();
+    g_now += 60; heard_nobody(); g_now += 700; module_tick();
+    CHECK(one_u("SELECT COUNT(*) AS n FROM visits WHERE call = 'X3CAFE'", 0, "n") == 1, "a minute in range is passing by");
+
+    /* The next day it checks in by itself, once. */
+    g_now += 86400;
+    heard_ble("X3CAFE", 5);
+    mock_clear();
+    as("X1CHSR");
+    module_tick();
+    CHECK(g_aired_n == 1 && strstr(last_aired(), "cmd:checkin") && strstr(last_aired(), "d:X3CAFE") &&
+          !said("Asking X3CAFE"), "in reach the next day: asked automatically, quietly");
+    {
+        char row_[4096], ask[300], cert[300];
+        snprintf(ask, sizeof ask, "%s", last_aired());
+        as("X3CAFE");
+        cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
+        ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
+        event("xprs.command", row_);
+        snprintf(cert, sizeof cert, "%s", last_aired());
+        cmd("{\"command\":\"set_bot\",\"bot_on\":false}");
+        as("X1CHSR");
+        mock_clear();
+        result_row(row_, sizeof row_, cert);
+        event("xprs.result", row_);
+        CHECK(said("Checked in automatically at X3CAFE"), "and told when it is in");
+    }
+    mock_clear();
+    g_now += 600; module_tick();
+    CHECK(g_aired_n == 0, "once a day");
+
+    /* The person turns it off for this place. */
+    cmd("{\"command\":\"log_tap\",\"log_id\":\"st:X3CAFE\"}");
+    CHECK(said("\"field\":\"a_auto\",\"value\":true") && said("\"label\":\"Kind of place\",\"value\":\"Coffee\"") &&
+          said("\"title\":\"Time here\"") && said("\"label\":\"Visits\""),
+          "its page: automatic on, its kind, the time spent there");
+    cmd("{\"command\":\"set_auto\",\"a_auto\":false}");
+    g_now += 86400;
+    heard_ble("X3CAFE", 5);
+    mock_clear();
+    module_tick();
+    CHECK(g_aired_n == 0, "off: no automatic check-in");
+
+    /* Tags of your own, and the list filtered by them. */
+    cmd("{\"command\":\"add_tag\"}");
+    CHECK(said("\"id\":\"tag:X3CAFE\"") && said("\"input\""), "Add a tag asks for a word");
+    mock_clear();
+    cmd("{\"command\":\"prompt\",\"prompt_id\":\"tag:X3CAFE\",\"prompt_input\":\"Morning Spot\"}");
+    CHECK(said("{\"id\":\"morning-spot\",\"label\":\"morning-spot\",\"count\":1"), "a tag of your own, written as a label");
+    mock_clear();
+    cmd("{\"command\":\"log_tags_tap\",\"log_tags_id\":\"morning-spot\"}");
+    CHECK(said("\"id\":\"st:X3CAFE\"") && said("\"on\":true"), "the list filtered by it");
+    CHECK(said("\"field\":\"log_tags\",\"value\":[{\"id\":\"morning-spot\""), "a chosen tag comes first, in sight");
+    mock_clear();
+    cmd("{\"command\":\"log_tags_tap\",\"log_tags_id\":\"in-person\"}");
+    CHECK(said("\"id\":\"st:X3CAFE\""), "two tags: both must hold");
+    mock_clear();
+    cmd("{\"command\":\"log_search\",\"log_query\":\"nothing-like-this\"}");
+    CHECK(!said("\"id\":\"st:X3CAFE\""), "the search narrows too");
+    cmd("{\"command\":\"log_search\",\"log_query\":\"\"}");
+    mock_clear();
+    cmd("{\"command\":\"tags_open\"}");
+    CHECK(said("\"field\":\"tags_list\"") && said("\"id\":\"tag:coffee\"") && said("1 place"),
+          "the Tags page: every tag, its places");
+    mock_clear();
+    cmd("{\"command\":\"tags_list_tap\",\"tags_list_id\":\"tag:coffee\"}");
+    CHECK(said("{\"id\":\"coffee\",\"label\":\"Coffee\",\"count\":1,\"on\":true}") &&
+          said("{\"id\":\"morning-spot\",\"label\":\"morning-spot\",\"count\":1,\"on\":false}"),
+          "a tag there filters the list by it alone");
+    cmd("{\"command\":\"log_tap\",\"log_id\":\"st:X3CAFE\"}");
+    cmd("{\"command\":\"prompt\",\"prompt_id\":\"untag:X3CAFE\",\"prompt_value\":\"morning-spot\"}");
+    CHECK(!one_u("SELECT COUNT(*) AS n FROM mytags", 0, "n"), "and it can be taken off");
+    cmd("{\"command\":\"log_tags_tap\",\"log_tags_id\":\"coffee\"}");
+    strcpy(g_history, "[]");
+    heard_nobody();
+}
 
 
 int main(void)
@@ -682,6 +894,8 @@ int main(void)
     test_rules();
     test_station();
     test_chaser();
+    test_place_rules();
+    test_places();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
