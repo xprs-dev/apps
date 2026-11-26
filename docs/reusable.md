@@ -44,10 +44,12 @@
   service announcements from anyone), `wst_begin`/`wst_step` (the archive
   walked a few pages a tick, newest first, `since:` an hour before the newest
   held, a whole walk every six hours), `wst_heard` (what this device hears
-  now), `wst_named` (what `hal_xprs_names` found). The map: `wst_draw` (one
-  marker per point, one per square with how many, the freshest 1500) and
-  `wst_status`. The list: `wst_filter_t` with `q`, `area` and tags
-  (`serve:archive`, `source:solar`, `reach:local`, `placed`, `key`),
+  now), `wst_named` (what `hal_xprs_names` found). The map: `wst_draw` /
+  `wst_draw_f(filter)` (one marker per station, the freshest 1500, with
+  `kind` archive/person/station and the actions Visit (an archiver) or
+  Open, and Message; the host groups and fans them out) and `wst_status`. The list: `wst_filter_t` with `q`, `area` and tags
+  (`serve:archive`, `source:solar`, `reach:local`, `placed`, `key`,
+  `kind:people`, `kind:other`: the portal's All/Archivers/People/Other),
   `wst_list`, `wst_count`, `wst_chips` (the tags with their counts, as a
   `$type:"chips"` value), `wst_row`, `wst_row_tags`. Any wapp that maps or
   lists stations uses it; a new kind of station is a new tag, no code.

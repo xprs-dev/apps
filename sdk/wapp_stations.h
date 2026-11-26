@@ -70,9 +70,9 @@ typedef struct {
     int (*skip)(const char *call);
     /* Each place drawn, for the wapp's framing of its map. May be 0. */
     void (*placed)(const char *pos);
-    /* Markers carry what their popup offers: a station "Open" (and
-     * "Message" when it published a key), a square "Show all N here" with
-     * the freshest few named; the host sends marker_action. */
+    /* Markers carry what their popup offers: an archiver "Visit", any
+     * other station "Open", and "Message" when it published a key; the
+     * host sends marker_action. */
     int actions;
     /* A walk of the archive finished; [changed] when it brought anything. */
     void (*done)(int changed);
@@ -103,19 +103,25 @@ void wst_heard(const char *call, const char *reach, unsigned long long ts);
 void wst_named(const char *call, const char *nick, unsigned long long ts);
 
 /* ── the map ──────────────────────────────────────────────────────────── */
-/* Every placed station as a ui.map.marker: one per point ("pl:<call>"),
- * one per square for those that say only their square ("sq:<mid>", with
- * how many). At most 1500, the freshest. Does not clear the map first. */
+/* Every placed station as a ui.map.marker "pl:<call>", the freshest 1500,
+ * with its kind ("archive", "person" or "station": the host draws
+ * archivers apart, above the rest) and, with opts.actions, "Visit" (an
+ * archiver) or "Open", and "Message" when it published a key. The host
+ * groups near ones and fans out those on one point. Does not clear the map
+ * first. wst_draw_f draws only those matching [f] (its search and tags, not
+ * its area). */
 void wst_draw(void);
+struct wst_filter;
+void wst_draw_f(const struct wst_filter *f);
 /* The pills over the map: "N stations", "Updated <when>". */
 void wst_status(void);
 /* How many are on the map (placed and recent). */
 int  wst_count_placed(void);
 
 /* ── the list ─────────────────────────────────────────────────────────── */
-typedef struct {
+typedef struct wst_filter {
     char q[40];          /* part of a callsign or a name, any case */
-    char area[40];       /* only the stations in this square (its mid) */
+    char area[40];       /* only the stations at this point (a pos) */
     char tags[8][28];    /* every one of these */
     int  ntags;
 } wst_filter_t;

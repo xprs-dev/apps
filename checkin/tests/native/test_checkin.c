@@ -602,8 +602,9 @@ static void test_places(void)
     CHECK(said("\"id\":\"pl_at\"") && !said("sq:38.5000"), "the map says how fresh its copy is, before the archive is read");
     mock_clear();
     module_tick();   /* the walk goes on behind the page */
-    CHECK(said("\"id\":\"sq:38.5000,-9.5000\"") && said("\"label\":\"2 stations\"") && said("within 111 km"),
-          "two stations in one square: one marker with how many, and how big the square is");
+    CHECK(said("\"id\":\"pl:X3AAA1\"") && said("\"id\":\"pl:X3AAA2\"") &&
+          said("\"lat\":38.5000,\"lon\":-9.5000") && said("within 111 km") && !said("sq:"),
+          "two stations in one square: a marker each at its middle (the map fans them out), and how big the square is");
     CHECK(said("\"id\":\"pl:X3BBB1\"") && said("\"lat\":40.4168,\"lon\":-3.7038") && said("Plaza"),
           "a station at its point, with its name");
     CHECK(!said("MT0001") && !said("pl:X1CHSR"), "not other networks' nodes, not this station");
@@ -614,7 +615,7 @@ static void test_places(void)
     strcpy(g_identities, "[]");
     mock_clear();
     cmd("{\"command\":\"ready\"}");
-    CHECK(said("\"id\":\"pl:X3BBB1\"") && said("\"id\":\"sq:38.5000,-9.5000\"") && said("\"label\":\"Updated "),
+    CHECK(said("\"id\":\"pl:X3BBB1\"") && said("\"id\":\"pl:X3AAA1\"") && said("\"label\":\"Updated "),
           "the map opens on the kept copy, saying how old it is");
     CHECK(g_id_queries == q0, "and nothing was read from the archive to draw it");
     module_tick();
@@ -663,7 +664,7 @@ static void test_places(void)
 
     /* Two rows exactly as the live archive gave them on 2026-11-25 (every
      * field the host sends, nick:- file:- acc: sig: m:-), both in the
-     * 49,8 square: one marker, "2 stations". */
+     * 49,8 square: a marker each at its middle. */
     {
         static const char *real[2][4] = {
             {"d79e2f", "1795602150", "X1R5J9", "t:identity f:X1R5J9 ts:2026-11-25_10:22:30 nick:- file:- pos:49%s,8%s acc:100000 sig:i,dJ#>3c#^8/07)*9#.((?i0fQ9fF/fk/R>vvtvynN*J2l5;_d51,TiVgTcV m:-"},
@@ -684,8 +685,8 @@ static void test_places(void)
         mock_clear();
         cmd("{\"command\":\"ready\"}");
         module_tick();
-        CHECK(said("\"id\":\"sq:49.5000,8.5000\"") && said("\"label\":\"2 stations\""),
-              "the live archive's two stations: one marker in their square");
+        CHECK(said("\"id\":\"pl:X1R5J9\"") && said("\"id\":\"pl:X1Q6Y6\"") && said("\"lat\":49.5000,\"lon\":8.5000"),
+              "the live archive's two stations: both at their square's middle");
         strcpy(g_identities, "[]");
     }
 }

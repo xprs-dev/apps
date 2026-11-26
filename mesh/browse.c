@@ -234,13 +234,16 @@ static void push_list(void)
     if (*p == '[') p++;
     int listed = 0;
     while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
-        char call[16], nick[48], pos[40], key[80], sub[200] = "", tags[120], a[24];
+        char call[16], nick[48], pos[40], key[80], serve[96] = "", sub[200] = "", tags[120], a[24];
         if (!al_json(g_obj, "call", call, sizeof call) || !call[0]) continue;
         /* Room for this row and the closing of the message, or stop. */
         if (al_len(g_out) > sizeof g_out - 900) break;
         al_json(g_obj, "nick", nick, sizeof nick);
         al_json(g_obj, "pos", pos, sizeof pos);
         al_json(g_obj, "key", key, sizeof key);
+        al_json(g_obj, "serve", serve, sizeof serve);
+        int archive = 0;
+        for (const char *q = serve; *q && !archive; q++) archive = al_starts(q, ",archive,");
         unsigned long long last = 0;
         {
             char v[24];
@@ -274,7 +277,10 @@ static void push_list(void)
         if (pos[0]) al_cat(g_out, ",\"On the map\"", sizeof g_out);
         if (h >= 0 && g_heard[h].api) al_cat(g_out, ",\"Browse\"", sizeof g_out);
         al_cat(g_out, "]", sizeof g_out);
-        if (key[0]) al_cat(g_out, ",\"action\":\"st_msg\",\"actionLabel\":\"Message\"", sizeof g_out);
+        /* The row's button, as the portal's: an archiver is visited, any
+         * other station that can be messaged is written to. */
+        if (archive) al_cat(g_out, ",\"action\":\"st_visit\",\"actionLabel\":\"Visit\"", sizeof g_out);
+        else if (key[0]) al_cat(g_out, ",\"action\":\"st_msg\",\"actionLabel\":\"Message\"", sizeof g_out);
         al_cat(g_out, "}", sizeof g_out);
         listed++;
     }
@@ -302,7 +308,7 @@ static void push_map(void)
 {
     g_map_dirty = 0;
     say("{\"type\":\"ui.map.markers.clear\"}");
-    wst_draw();
+    wst_draw_f(&g_f);                /* the search and chips apply to the map too */
     wst_status();
     if (g_fitted) return;
     g_fitted = 1;
@@ -336,7 +342,7 @@ static void walked(int changed)
 
 /* Show one station or square on the map: the drawer folds (the host does)
  * and the map goes there, closer for a point than for a square. */
-static void locate(const char *pos, long half)
+static void locate(const char *pos, long half, const char *call)
 {
     char m[160] = "{\"type\":\"ui.map.locate\",\"lat\":";
     unsigned i = 0;
@@ -350,6 +356,12 @@ static void locate(const char *pos, long half)
     al_cat(m, ",\"zoom\":", sizeof m);
     /* A square a degree wide fits at zoom 7, a tenth at 10; a point, 14. */
     al_cat_u(m, !half ? 14 : half > 30000 ? 7 : half > 3000 ? 10 : 12, sizeof m);
+    if (call && call[0]) {
+        /* Its marker, opened (the portal's mapFocus). */
+        al_cat(m, ",\"id\":\"pl:", sizeof m);
+        al_cat(m, call, sizeof m);
+        al_cat(m, "\"", sizeof m);
+    }
     al_cat(m, "}", sizeof m);
     say(m);
 }
@@ -844,7 +856,20 @@ int browse_command(const char *cmd, const char *full)
             push_list();
             return 1;
         }
+        {
+            /* On the map: its marker, centred and opened, the drawer down
+             * (the portal's mapFocus). Nowhere: its page. */
+            static char row[1024];
+            char pos[40] = "";
+            if (wst_row(id, row, sizeof row)) al_json(row, "pos", pos, sizeof pos);
+            if (pos[0]) { locate(pos, (long)num(row, "half"), id); return 1; }
+        }
         open_station(id);
+        return 1;
+    }
+    /* The row's Visit button: the archiver's page, as its visitor. */
+    if (al_eq(cmd, "st_visit")) {
+        if (al_json(full, "stations_id", id, sizeof id) && id[0]) open_station(id);
         return 1;
     }
     /* The row's Message button: Chat's conversation with it. */
@@ -867,12 +892,13 @@ int browse_command(const char *cmd, const char *full)
             ask_names(1);
         }
         push_list();
+        g_map_dirty = 1;
         return 1;
     }
     if (al_eq(cmd, "st_tags_tap")) {
         if (!al_json(full, "st_tags_id", id, sizeof id) || !id[0]) return 1;
         if (al_eq(id, "area")) g_f.area[0] = 0;
-        else wst_filter_tag(&g_f, id);
+        else { wst_filter_tag(&g_f, id); g_map_dirty = 1; }
         g_shown = 50;
         push_list();
         return 1;
@@ -882,15 +908,21 @@ int browse_command(const char *cmd, const char *full)
         char act[16] = "";
         if (!al_json(full, "id", id, sizeof id)) return 1;
         al_json(full, "action", act, sizeof act);
-        if (al_starts(id, "pl:") && al_eq(act, "open")) { open_station(id + 3); return 1; }
+        if (al_starts(id, "pl:") && (al_eq(act, "open") || al_eq(act, "visit"))) { open_station(id + 3); return 1; }
         if (al_starts(id, "pl:") && al_eq(act, "message")) { message(id + 3); return 1; }
-        if (al_starts(id, "sq:") && al_eq(act, "area")) {
-            /* Show all N here: the list, filtered to the square. */
-            al_cpy(g_f.area, id + 3, sizeof g_f.area);
-            g_shown = 50;
-            push_list();
-            say("{\"type\":\"ui.drawer\",\"state\":\"half\"}");
-        }
+        return 1;
+    }
+    /* Too many on one point to fan out: the host names them, and the list
+     * shows the stations at that point (they share it: one square). */
+    if (al_eq(cmd, "markers_here")) {
+        static char row[1024];
+        char first[24] = "", pos[40] = "";
+        if (!al_json(full, "id", first, sizeof first) || !al_starts(first, "pl:")) return 1;
+        if (!wst_row(first + 3, row, sizeof row) || !al_json(row, "pos", pos, sizeof pos) || !pos[0]) return 1;
+        al_cpy(g_f.area, pos, sizeof g_f.area);
+        g_shown = 50;
+        push_list();
+        say("{\"type\":\"ui.drawer\",\"state\":\"half\"}");
         return 1;
     }
     if (al_eq(cmd, "st_stats_tap")) return 1;
@@ -916,7 +948,7 @@ int browse_command(const char *cmd, const char *full)
             /* Back to the map: the panel closes, the map goes there. */
             g_view = V_LIST;
             say("{\"type\":\"ui.screen.close\"}");
-            locate(pos, half);
+            locate(pos, half, g_call);
             return 1;
         }
         if (al_eq(id, "host:toggle")) {

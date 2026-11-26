@@ -360,9 +360,15 @@ int main(void) {
         check(cap_contains("\"id\":\"pl:X3ARCH\"") && cap_contains("\"lat\":38.7200,\"lon\":-9.1400") &&
               cap_contains("{\"id\":\"message\",\"label\":\"Message\"}"),
               "a station at its point, offering Open and Message (it published a key)");
-        check(cap_contains("\"id\":\"sq:38.5000,-9.5000\"") && cap_contains("\"label\":\"2 stations\"") &&
-              cap_contains("Show all 2 here") && cap_contains("X3SQR2 Twin"),
-              "two in one square: one marker naming them, Show all 2 here");
+        check(cap_contains("\"id\":\"pl:X3SQR1\"") && cap_contains("\"id\":\"pl:X3SQR2\"") &&
+              cap_contains("\"lat\":38.5000,\"lon\":-9.5000") && cap_contains("Somewhere within 111 km") &&
+              !cap_contains("sq:"),
+              "two in one square: a marker each at its middle, for the map to fan out");
+        check(cap_contains("\"id\":\"pl:X3ARCH\"") && cap_contains("\"kind\":\"archive\"") &&
+              cap_contains("{\"id\":\"visit\",\"label\":\"Visit\"}"),
+              "an archiver is marked as one, and offers Visit");
+        check(cap_contains("\"title\":\"X3ARCH\"") && cap_contains("\"action\":\"st_visit\",\"actionLabel\":\"Visit\""),
+              "its row's button is Visit too");
         check(cap_contains("Hill \\u00b7 Archivers \\u00b7 Relays \\u00b7 Solar") ||
               cap_contains("Hill \xc2\xb7 Archivers \xc2\xb7 Relays \xc2\xb7 Solar"),
               "a row says what the station serves and runs on");
@@ -406,11 +412,11 @@ int main(void) {
         module_handle_event();
 
         cap_clear();
-        inbox_set("{\"command\":\"marker_action\",\"id\":\"sq:38.5000,-9.5000\",\"action\":\"area\"}");
+        inbox_set("{\"command\":\"markers_here\",\"id\":\"pl:X3SQR1\",\"ids\":[\"pl:X3SQR1\",\"pl:X3SQR2\"]}");
         module_handle_event();
         check(cap_contains("\"title\":\"2 of 8 stations\"") && cap_contains("\"id\":\"area\"") &&
               cap_contains("\"type\":\"ui.drawer\",\"state\":\"half\""),
-              "Show all here: the drawer opens on the square's stations");
+              "a crowd too big to fan out: the drawer opens on the stations at that point");
         cap_clear();
         inbox_set("{\"command\":\"st_tags_tap\",\"fields\":{\"st_tags_id\":\"area\"}}");
         module_handle_event();
@@ -431,6 +437,36 @@ int main(void) {
         module_handle_event();
         check(cap_contains("\"type\":\"ui.map.locate\",\"lat\":38.7200,\"lon\":-9.1400,\"zoom\":14"),
               "Show on map goes to it");
+        cap_clear();
+        inbox_set("{\"command\":\"marker_action\",\"id\":\"pl:X3ARCH\",\"action\":\"visit\"}");
+        module_handle_event();
+        check(cap_contains("\"name\":\"Station\",\"title\":\"X3ARCH\"") && cap_contains("\"type\":\"ui.people.set\",\"field\":\"s_offers\""),
+              "Visit: the archiver's page, asked what it offers its visitors");
+        cap_clear();
+        inbox_set("{\"command\":\"st_visit\",\"fields\":{\"stations_id\":\"X3ARCH\"}}");
+        module_handle_event();
+        check(cap_contains("\"name\":\"Station\",\"title\":\"X3ARCH\""), "and from its row");
+        cap_clear();
+        inbox_set("{\"command\":\"stations_tap\",\"fields\":{\"stations_id\":\"X3ARCH\"}}");
+        module_handle_event();
+        check(cap_contains("\"type\":\"ui.map.locate\",\"lat\":38.7200,\"lon\":-9.1400,\"zoom\":14,\"id\":\"pl:X3ARCH\"") &&
+              !cap_contains("\"name\":\"Station\""),
+              "a row on the map: its marker, centred and opened");
+        cap_clear();
+        inbox_set("{\"command\":\"st_tags_tap\",\"fields\":{\"st_tags_id\":\"serve:archive\"}}");
+        module_handle_event();
+        module_tick();
+        check(cap_contains("\"id\":\"pl:X3ARCH\"") && !cap_contains("\"id\":\"pl:X3SQR1\"") &&
+              cap_contains("\"type\":\"ui.map.markers.clear\""),
+              "the Archivers chip: only archivers on the map");
+        cap_clear();
+        inbox_set("{\"command\":\"st_tags_tap\",\"fields\":{\"st_tags_id\":\"serve:archive\"}}");
+        module_handle_event();
+        module_tick();
+        check(cap_contains("\"id\":\"pl:X3SQR1\""), "off again: every station");
+        check(cap_contains("\"id\":\"kind:people\",\"label\":\"People\"") &&
+              cap_contains("\"id\":\"kind:other\",\"label\":\"Other stations\""),
+              "the portal's kinds as chips: People, Other stations");
         cap_clear();
         inbox_set("{\"command\":\"st_msg\",\"fields\":{\"stations_id\":\"X1KEYD\"}}");
         module_handle_event();

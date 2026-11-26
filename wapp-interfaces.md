@@ -915,14 +915,16 @@ Wapp to host:
 |---|---|
 | `{"type":"ui.map.viewport","lat","lon","zoom"}` | move the map |
 | `{"type":"ui.map.locate","lat","lon"}` | show one place: switch to the map's screen, close any open panel, centre on it and zoom in (a list's "Show on map") |
-| `{"type":"ui.map.marker","id","lat","lon","label","color"?,"detail"?,"actions"?}` | add or move a pin (`color` as `#RRGGBB`); `actions` `[{"id","label"}]` are buttons in its popup, a press sends `{"command":"marker_action","id","action"}` |
+| `{"type":"ui.map.marker","id","lat","lon","label","color"?,"detail"?,"actions"?,"kind"?}` | add or move a pin (`color` as `#RRGGBB`); `actions` `[{"id","label"}]` are buttons in its popup, a press sends `{"command":"marker_action","id","action"}`; `kind:"archive"` draws the portal's yellow archiver square, grouped apart from the other pins and above them. Near pins are grouped per zoom level and slide apart as the map zooms in; a group's tap zooms to where it parts, and pins on one point fan out on legs |
 | `{"type":"ui.map.markers.clear"}` | remove every pin |
-| `{"type":"ui.map.locate","lat","lon","zoom"?}` | show one place: the map's tab, centred, zoomed in (`zoom` when the wapp knows how big the place is); folds a drawer |
+| `{"type":"ui.map.locate","lat","lon","zoom"?,"id"?}` | show one place: the map's tab, centred, zoomed in (`zoom` when the wapp knows how big the place is); folds a drawer; with a marker's `id`, opens its popup (fanned out first when it shares its point: the portal's mapFocus) |
 | `{"type":"ui.drawer","state":"peek\|half\|full"}` | move the drawer of a map screen whose map group says `"drawer": true`: its `$type:"people"` field, with the screen's search box and `$type:"chips"` fields, in a drawer over the map (a side panel on a wide screen) |
 | `{"type":"ui.map.prefetch","bbox"?:[s,w,n,e],"minZoom","maxZoom","max"?}` | save an area's tiles for off-grid use; without `bbox`, the area on screen. At most 1500 tiles, two at a time, one save at a time: a tile server is shared and OpenStreetMap's refuses bulk downloads, so save what a person asked for, not the world |
 
 Host to wapp: `{"type":"setViewport","lat","lon","zoom"}` after every pan,
-`{"command":"marker_tap","id"}` when a pin is tapped, and
+`{"command":"marker_tap","id"}` when a pin is tapped,
+`{"command":"markers_here","id","ids"}` when a group on one point holds more
+than a fan can show (40): list them (`id` is the first), and
 `{"type":"map.prefetch","state":"running|done|busy","done","total","held"}`
 while an area is saved.
 

@@ -212,6 +212,7 @@ static const char *const TAG_NAMES[][2] = {
     {"source:solar", "Solar"}, {"source:battery", "Battery"}, {"source:mains", "Mains power"},
     {"reach:local", "Nearby"}, {"reach:regional", "Regional"}, {"reach:global", "Global"},
     {"placed", "On the map"}, {"key", "Can be messaged"},
+    {"kind:people", "People"}, {"kind:other", "Other stations"},
 };
 
 void wst_tag_name(const char *tag, char *out, unsigned cap)
@@ -582,7 +583,7 @@ void wst_step(void)
 static char g_draw[196608];
 
 static void marker(const char *id, const char *pos, const char *label, const char *detail,
-                   const char *actions)
+                   const char *actions, const char *kind)
 {
     char lat[24], lon[24], m[1400];
     unsigned i = 0, k = 0;
@@ -603,104 +604,85 @@ static void marker(const char *id, const char *pos, const char *label, const cha
     al_cat(m, "\",\"detail\":\"", sizeof m);
     al_jesc(m, detail, sizeof m);
     al_cat(m, "\"", sizeof m);
+    if (kind && kind[0]) { al_cat(m, ",\"kind\":\"", sizeof m); al_cat(m, kind, sizeof m); al_cat(m, "\"", sizeof m); }
     if (actions && actions[0]) { al_cat(m, ",\"actions\":", sizeof m); al_cat(m, actions, sizeof m); }
     al_cat(m, "}", sizeof m);
     say(m);
 }
 
-#define SQ_NAMES 6
-void wst_draw(void)
+static void where_of(const wst_filter_t *f, char *w, unsigned cap);
+
+/* What a station is on the map, as the portal's filter has it: an archiver
+ * (it keeps messages: serve:archive) whatever else it is, a person (an X1
+ * callsign), or another station. */
+static const char *kind_of(const char *call, const char *serve)
 {
-    /* The freshest DRAW_MAX, then ordered by place so a square's stations
-     * are neighbours (freshest first within it). */
-    p_begin(); p_str(g_me); p_int(recent_floor()); p_end();
-    if (query_("SELECT * FROM (SELECT call, nick, pos, half, last, key FROM places"
-               " WHERE pos != '' AND call != ? AND last >= ? ORDER BY last DESC LIMIT 1500)"
-               " ORDER BY pos, half, last DESC", 1, g_draw, sizeof g_draw) <= 0) return;
+    for (const char *s = serve; *s; s++)
+        if (al_starts(s, ",archive,")) return "archive";
+    return al_starts(call, "X1") ? "person" : "station";
+}
+
+void wst_draw_f(const wst_filter_t *f)
+{
+    /* Every station that says where it is, one marker each, the freshest
+     * DRAW_MAX: the host groups the near ones and fans out the ones on one
+     * spot. The list's search and chips apply (not its area). */
+    char sql[1100] = "SELECT call, nick, pos, half, last, key, serve, src FROM places", w[600];
+    wst_filter_t g;
+    if (f) { g = *f; g.area[0] = 0; }
+    where_of(f ? &g : 0, w, sizeof w);
+    p_int(recent_floor());
+    p_end();
+    al_cat(sql, w, sizeof sql);
+    al_cat(sql, " AND pos != '' AND last >= ? ORDER BY last DESC LIMIT 1500", sizeof sql);
+    if (query_(sql, 1, g_draw, sizeof g_draw) <= 0) return;
     const char *p = rows_of(g_draw);
     unsigned long long now = now_s();
-    char gpos[40] = "", gcall[16] = "", gnick[48] = "", gkey[4] = "", names[400] = "";
-    long ghalf = 0;
-    int gn = 0;
-    unsigned long long gseen = 0;
-    for (;;) {
-        char call[16] = "", nick[48] = "", pos[40] = "", key[80] = "";
-        long half = 0;
-        unsigned long long seen = 0;
-        int more = (p = al_json_next(p, g_obj, sizeof g_obj)) != 0;
-        if (more) {
-            al_json(g_obj, "call", call, sizeof call);
-            al_json(g_obj, "nick", nick, sizeof nick);
-            al_json(g_obj, "pos", pos, sizeof pos);
-            al_json(g_obj, "key", key, sizeof key);
-            half = (long)json_u(g_obj, "half");
-            seen = json_u(g_obj, "last");
-            if ((g_o.skip && g_o.skip(call)) || !wst_pos_ok(pos)) continue;
-            if (gn && al_eq(pos, gpos) && half && half == ghalf) {
-                gn++;
-                if (seen > gseen) gseen = seen;
-                if (gn <= SQ_NAMES) {
-                    al_cat(names, "\n", sizeof names);
-                    al_cat(names, call, sizeof names);
-                    if (nick[0]) { al_cat(names, " ", sizeof names); al_cat(names, nick, sizeof names); }
-                }
-                continue;
-            }
+    while ((p = al_json_next(p, g_obj, sizeof g_obj)) != 0) {
+        char call[16] = "", nick[48] = "", pos[40] = "", key[80] = "", serve[96] = "", tags[160] = "";
+        al_json(g_obj, "call", call, sizeof call);
+        al_json(g_obj, "nick", nick, sizeof nick);
+        al_json(g_obj, "pos", pos, sizeof pos);
+        al_json(g_obj, "key", key, sizeof key);
+        al_json(g_obj, "serve", serve, sizeof serve);
+        long half = (long)json_u(g_obj, "half");
+        unsigned long long seen = json_u(g_obj, "last");
+        if ((g_o.skip && g_o.skip(call)) || !wst_pos_ok(pos)) continue;
+        const char *kind = kind_of(call, serve);
+        /* The popup: name, what it serves and runs on, how near the point
+         * is, how fresh. */
+        char id[24] = "pl:", detail[400] = "", a[24], sq[24], acts[200] = "";
+        al_cat(id, call, sizeof id);
+        if (nick[0]) al_cpy(detail, nick, sizeof detail);
+        wst_row_tags(g_obj, tags, sizeof tags);
+        if (tags[0]) {
+            if (detail[0]) al_cat(detail, "\n", sizeof detail);
+            al_cat(detail, tags, sizeof detail);
         }
-        if (gn) {
-            /* Draw the group just closed. */
-            char id[64], label[32] = "", sq[24] = "", a[24], detail[600] = "", acts[200] = "";
-            if (gn == 1) {
-                al_cpy(id, "pl:", sizeof id);
-                al_cat(id, gcall, sizeof id);
-                al_cpy(label, gcall, sizeof label);
-                if (gnick[0]) al_cpy(detail, gnick, sizeof detail);
-                if (g_o.actions)
-                    al_cpy(acts, gkey[0] ? "[{\"id\":\"open\",\"label\":\"Open\"},{\"id\":\"message\",\"label\":\"Message\"}]"
-                                         : "[{\"id\":\"open\",\"label\":\"Open\"}]", sizeof acts);
-            } else {
-                al_cpy(id, "sq:", sizeof id);
-                al_cat(id, gpos, sizeof id);
-                al_cat_u(label, (unsigned long long)gn, sizeof label);
-                al_cat(label, " stations", sizeof label);
-                if (g_o.actions) {
-                    al_cpy(detail, names + 1, sizeof detail);   /* past the first newline */
-                    if (gn > SQ_NAMES) {
-                        al_cat(detail, "\n+", sizeof detail);
-                        al_cat_u(detail, (unsigned long long)(gn - SQ_NAMES), sizeof detail);
-                        al_cat(detail, " more", sizeof detail);
-                    }
-                    al_cpy(acts, "[{\"id\":\"area\",\"label\":\"Show all ", sizeof acts);
-                    al_cat_u(acts, (unsigned long long)gn, sizeof acts);
-                    al_cat(acts, " here\"}]", sizeof acts);
-                }
-            }
-            if (ghalf) {
-                wst_dist_text(ghalf * 2, sq, sizeof sq);
-                if (detail[0]) al_cat(detail, gn > 1 ? "\n" : " \xC2\xB7 ", sizeof detail);
-                al_cat(detail, "within ", sizeof detail);
-                al_cat(detail, sq, sizeof detail);
-            }
-            wst_ago(a, sizeof a, gseen, now);
-            if (detail[0]) al_cat(detail, " \xC2\xB7 ", sizeof detail);
-            al_cat(detail, a, sizeof detail);
-            marker(id, gpos, label, detail, acts);
-            if (g_o.placed) g_o.placed(gpos);
+        if (detail[0]) al_cat(detail, "\n", sizeof detail);
+        if (half) {
+            wst_dist_text(half * 2, sq, sizeof sq);
+            al_cat(detail, "Somewhere within ", sizeof detail);
+            al_cat(detail, sq, sizeof detail);
+            al_cat(detail, " \xC2\xB7 ", sizeof detail);
         }
-        if (!more) break;
-        al_cpy(gpos, pos, sizeof gpos);
-        al_cpy(gcall, call, sizeof gcall);
-        al_cpy(gnick, nick, sizeof gnick);
-        al_cpy(gkey, key[0] ? "1" : "", sizeof gkey);
-        names[0] = 0;
-        al_cat(names, "\n", sizeof names);
-        al_cat(names, call, sizeof names);
-        if (nick[0]) { al_cat(names, " ", sizeof names); al_cat(names, nick, sizeof names); }
-        ghalf = half;
-        gseen = seen;
-        gn = 1;
+        wst_ago(a, sizeof a, seen, now);
+        al_cat(detail, a, sizeof detail);
+        /* What it offers: an archiver is visited (its rooms, groups and
+         * chat, as its visitor), any other station opened; Message when
+         * it published a key to seal to. */
+        if (g_o.actions) {
+            al_cpy(acts, al_eq(kind, "archive") ? "[{\"id\":\"visit\",\"label\":\"Visit\"}"
+                                                : "[{\"id\":\"open\",\"label\":\"Open\"}", sizeof acts);
+            if (key[0]) al_cat(acts, ",{\"id\":\"message\",\"label\":\"Message\"}", sizeof acts);
+            al_cat(acts, "]", sizeof acts);
+        }
+        marker(id, pos, call, detail, acts, kind);
+        if (g_o.placed) g_o.placed(pos);
     }
 }
+
+void wst_draw(void) { wst_draw_f(0); }
 
 int wst_count_placed(void)
 {
@@ -771,7 +753,7 @@ static void where_of(const wst_filter_t *f, char *w, unsigned cap)
         al_cat(w, " AND (lower(call) LIKE ? OR lower(nick) LIKE ?)", cap);
         p_str(like); p_str(like);
     }
-    if (f && f->area[0]) { al_cat(w, " AND pos = ? AND half > 0", cap); p_str(f->area); }
+    if (f && f->area[0]) { al_cat(w, " AND pos = ?", cap); p_str(f->area); }
     for (int i = 0; f && i < f->ntags; i++) {
         const char *t = f->tags[i];
         if (al_eq(t, "placed")) al_cat(w, " AND pos != ''", cap);
@@ -782,6 +764,10 @@ static void where_of(const wst_filter_t *f, char *w, unsigned cap)
             al_cat(v, ",%", sizeof v);
             al_cat(w, " AND serve LIKE ?", cap);
             p_str(v);
+        } else if (al_eq(t, "kind:people")) {
+            al_cat(w, " AND call LIKE 'X1%' AND serve NOT LIKE '%,archive,%'", cap);
+        } else if (al_eq(t, "kind:other")) {
+            al_cat(w, " AND call NOT LIKE 'X1%' AND serve NOT LIKE '%,archive,%'", cap);
         } else if (al_starts(t, "source:")) { al_cat(w, " AND src = ?", cap); p_str(t + 7); }
         else if (al_starts(t, "reach:")) {
             al_cat(w, " AND reach = ? AND hts >= ?", cap);
@@ -880,6 +866,12 @@ int wst_chips(const wst_filter_t *f, char *out, unsigned cap)
     p_begin(); p_str(g_me); p_end();
     chips_of_group("SELECT src, COUNT(*) AS n FROM places WHERE call != ? AND src != ''"
                    " GROUP BY src", "src", "source:", 0);
+    p_begin(); p_str(g_me); p_end();
+    chip_add("kind:people", one_int("SELECT COUNT(*) AS n FROM places WHERE call != ? AND call LIKE 'X1%'"
+                                    " AND serve NOT LIKE '%,archive,%'", 1));
+    p_begin(); p_str(g_me); p_end();
+    chip_add("kind:other", one_int("SELECT COUNT(*) AS n FROM places WHERE call != ? AND call NOT LIKE 'X1%'"
+                                   " AND serve NOT LIKE '%,archive,%'", 1));
     p_begin(); p_str(g_me); p_end();
     chip_add("placed", one_int("SELECT COUNT(*) AS n FROM places WHERE call != ? AND pos != ''", 1));
     p_begin(); p_str(g_me); p_end();
