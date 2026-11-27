@@ -1,6 +1,7 @@
 {
   "id":              "tools.xprs.terminal",
-  "version":         "1.0.3",
+  "version":         "1.0.4",
+  "launcher":        false,
   "kind":            "app",
   "title":           "Terminal",
   "description":     "A sandboxed terminal with built-in commands.",

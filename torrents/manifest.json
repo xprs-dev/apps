@@ -1,6 +1,7 @@
 {
   "id":              "tools.xprs.torrents",
-  "version":         "0.6.4",
+  "version":         "0.6.5",
+  "launcher":        false,
   "kind":            "app",
   "title":           "Torrents",
   "description":     "Share whole folders as torrents over Reticulum.",

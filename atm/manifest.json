@@ -1,6 +1,7 @@
 {
   "id":              "tools.xprs.atm",
-  "version":         "0.2.2",
+  "version":         "0.2.3",
+  "launcher":        false,
   "kind":            "app",
   "title":           "ATM",
   "description":     "Run a coin and hand it out.",
