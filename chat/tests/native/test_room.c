@@ -17,6 +17,7 @@ void inbox_set(const char*); void event_push(const char*, const char*);
 /* XPRS.md 7.8: what the mock HAL was asked, and what it should answer. */
 const char* mock_edit_ask(void); const char* mock_withdraw_ask(void); const char* mock_moderate_ask(void);
 void mock_edit_clear(void); void mock_set_roles(const char*); void mock_set_moderation(const char*);
+void mock_public_reset(int listed); void mock_public_removed(const char* id); const char* mock_moderate_ask(void);
 int log_count(const char*); void log_clear(void);
 void mock_set_time(uint64_t); void mock_kv_set(const char*, const char*); int mock_kv_exists(const char*);
 const char* mock_last_wire(void); void mock_set_history(const char*); void mock_query_cap(uint32_t);
@@ -865,6 +866,82 @@ TEST(a_moderators_edit_replaces_the_text_and_says_who) {
   { const char *m = cap_find("ui.convo.history");
     CHECK(m && strstr(m, "912 345 678") && strstr(m, "number removed")); }
   mock_set_groups("[]");
+}
+
+/* 10.10.3: Regional and Global are moderated by the keys published at
+ * xprs.dev. The core judges; the wapp shows what was removed, and offers
+ * Delete on other people's messages to a listed moderator. */
+static int row_says(const char *room, const char *what) {
+  char want[40]; snprintf(want, sizeof(want), "\"id\":\"%s\"", room);
+  for (int i = 0; i < cap_n(); i++) { const char *m = cap_nth(i);
+    if (strstr(m, "ui.convo.upsert") && strstr(m, want) && strstr(m, what)) return 1; }
+  return 0;
+}
+static int bubble_deleted(const char *mid) {
+  char want[40]; snprintf(want, sizeof(want), "\"mid\":\"%s\"", mid);
+  int gone = 0;
+  for (int i = 0; i < cap_n(); i++) { const char *m = cap_nth(i);
+    if (strstr(m, want) && (strstr(m, "ui.convo.msg") || strstr(m, "ui.convo.edit")))
+      gone = strstr(m, "\"deleted\":true") != 0; }
+  return gone;
+}
+TEST(a_public_rooms_moderator_removes_and_everybody_sees_it_go) {
+  fresh();
+  mock_public_reset(0);
+  mock_edit_clear();
+  local_packet("X1PEER", "pub111", "buy my coins", "regional");
+  local_packet("X1PEER", "pub222", "more coins", "global");
+  local_packet("X1PEER", "pub333", "coins here too", "local");
+  /* Not listed: no authority is offered, and the core refuses the act. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#REGIONAL\"}");
+  module_handle_event();
+  CHECK(!row_says("#REGIONAL", "\"mod\""));
+  inbox_set("{\"command\":\"rooms_unsend\",\"rooms_convo\":\"#REGIONAL\",\"rooms_mid\":\"pub111\"}");
+  module_handle_event();
+  CHECK(strstr(mock_moderate_ask(), "*|pub111||2") != 0);
+  CHECK(!bubble_deleted("pub111"));
+  /* A listed moderator elsewhere removes it: the core says so, the bubble goes. */
+  mock_public_removed("pub111");
+  cap_clear();
+  event_push("core.moderation", "{}"); module_handle_event();
+  CHECK(bubble_deleted("pub111"));
+  /* And it stays gone when the room is opened again. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#REGIONAL\"}");
+  module_handle_event();
+  CHECK(bubble_deleted("pub111"));
+  /* Our key is put on the list: Delete is offered, removal only. */
+  mock_public_reset(1);
+  mock_public_removed("pub111");
+  cap_clear();
+  event_push("core.moderation", "{}"); module_handle_event();
+  CHECK(row_says("#REGIONAL", "\"mod\":\"remove\""));
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#GLOBAL\"}");
+  module_handle_event();
+  CHECK(row_says("#GLOBAL", "\"mod\":\"remove\""));
+  mock_edit_clear();
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_unsend\",\"rooms_convo\":\"#GLOBAL\",\"rooms_mid\":\"pub222\"}");
+  module_handle_event();
+  CHECK(strstr(mock_moderate_ask(), "*|pub222||2") != 0);
+  CHECK(bubble_deleted("pub222"));
+  /* Correcting somebody else's words there is nobody's. */
+  mock_edit_clear();
+  inbox_set("{\"command\":\"rooms_edit\",\"rooms_convo\":\"#GLOBAL\",\"rooms_mid\":\"pub222\",\"rooms_input\":\"nicer words\"}");
+  module_handle_event();
+  CHECK(!mock_moderate_ask()[0]);
+  /* The Local room is its station's: no authority there, and nothing asked. */
+  cap_clear();
+  mock_edit_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
+  module_handle_event();
+  CHECK(!row_says("#LOCAL", "\"mod\""));
+  inbox_set("{\"command\":\"rooms_unsend\",\"rooms_convo\":\"#LOCAL\",\"rooms_mid\":\"pub333\"}");
+  module_handle_event();
+  CHECK(!mock_moderate_ask()[0] && !bubble_deleted("pub333"));
+  mock_public_reset(0);
 }
 
 TEST(moderation_is_final_for_the_author_and_ranked) {
@@ -2481,6 +2558,7 @@ int main(void) {
   run_somebody_elses_message_in_a_1to1_is_not_ours_to_correct();
   run_a_group_post_is_corrected_with_a_wire_the_core_signs();
   run_a_moderators_edit_replaces_the_text_and_says_who();
+  run_a_public_rooms_moderator_removes_and_everybody_sees_it_go();
   run_moderation_is_final_for_the_author_and_ranked();
   run_a_voided_moderator_edit_brings_the_original_back_but_a_removal_stays_gone();
   run_a_moderator_acts_through_the_core_and_a_member_cannot();

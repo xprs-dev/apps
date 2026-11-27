@@ -25,7 +25,7 @@ static char g_self[16] = "";
 static char g_open[48] = "";     /* the conversation on screen, or "" */
 static char g_jump[24] = "";     /* late words a tapped notification asked for */
 static char g_top[48] = "";      /* first row of the rail as last drawn */
-static int  g_open_mod;          /* we are a moderator or the admin of the open group */
+static int  g_open_mod;          /* 1: a moderator or the admin of the open group; 2: may remove in the open public room */
 static int  g_local_on = 1;
 static int  g_idx = -1;
 static int  g_said_nodb = 0;
@@ -44,6 +44,12 @@ static void room_flush_reads(int h);
 
 static int is_xgroup(const char *id) {
   return id[0] == '#' && id[1] == 'X' && id[2] == '5' && s_len(id) == 7;
+}
+/* Regional and Global: the rooms that belong to no station and no group,
+ * whose moderators are the keys published at xprs.dev (XPRS.md 10.10.3).
+ * The core names them together as the group "*". */
+static int is_pubroom(const char *id) {
+  return s_eq(id, "#REGIONAL") || s_eq(id, "#GLOBAL");
 }
 /* A group that can be passed on as a link: `#X5...` (a closed or public
  * group, by its callsign) or `#NAME` (an open group). The three rooms by
@@ -248,6 +254,9 @@ static void emit_upsert(const char *id, int bump, int select) {
   /* The host offers moderation on other people's messages only where we have
    * the authority (10.4.1). Whether an act binds is judged per message. */
   if (g_open_mod && s_eq(id, g_open) && is_xgroup(id)) s_cat(m, ",\"mod\":true", sizeof(m));
+  /* In Regional and Global the authority is to remove, not to correct
+   * (10.10.3): said as such, so the host offers Delete alone. */
+  else if (g_open_mod == 2 && s_eq(id, g_open) && is_pubroom(id)) s_cat(m, ",\"mod\":\"remove\"", sizeof(m));
   /* A group closed to new posts takes none from a member (10.4.2): the host
    * shows a note where the message box was. */
   if (room_no_post(id)) s_cat(m, ",\"nopost\":true", sizeof(m));
@@ -284,8 +293,8 @@ static char g_vq[32768];     /* the versions of one message */
 static char g_ht[16384];     /* scratch for trimming a history */
 
 void room_set_mod(int mod, int say) {
-  if (g_open_mod == (mod ? 1 : 0)) return;
-  g_open_mod = mod ? 1 : 0;
+  if (g_open_mod == mod) return;
+  g_open_mod = mod;
   /* [say]: the room is already on screen, so its row is restated. Before a
    * room is opened it is not: the open itself states the row, once. */
   if (say && g_open[0]) emit_upsert(g_open, 0, 0);
@@ -1190,11 +1199,15 @@ int room_message_sender(const char *room, const char *mid, char *sender, unsigne
  * moderator) is dropped, so the version it replaced comes back into view. A
  * removal cannot come back: its text is already gone. */
 void room_moderation_sync(const char *room) {
-  if (!is_xgroup(room) || !room_known(room)) return;
+  int pub = is_pubroom(room);
+  if ((!is_xgroup(room) && !pub) || !room_known(room)) return;
   int h = room_handle(room);
   if (h < 0) return;
   static char buf[20000];
-  int n = (int)hal_xprs_group_moderation(room + 1, s_len(room + 1), buf, sizeof(buf) - 1);
+  /* The public rooms' acts are the core's verdict too (a listed key, at the
+   * act's own date); they are removals only and nobody voids them. */
+  int n = pub ? (int)hal_xprs_group_moderation("*", 1, buf, sizeof(buf) - 1)
+              : (int)hal_xprs_group_moderation(room + 1, s_len(room + 1), buf, sizeof(buf) - 1);
   if (n < 0 || n >= (int)sizeof(buf)) return;
   buf[n] = 0;
   static char seen[64][12]; int nseen = 0, over = 0;
@@ -1215,7 +1228,7 @@ void room_moderation_sync(const char *room) {
     room_version_add(room, target, id, s_eq(kind, "edit") ? VER_MOD_EDIT : VER_MOD_REMOVE,
                      signer, ts, text, 0, "", "", s_eq(srole, "admin") ? 4 : 3);
   }
-  if (over) return;   /* too many to tell what is missing: keep what we have */
+  if (over || pub) return;   /* too many to tell what is missing: keep what we have */
   /* What we kept that the core no longer reports was voided. */
   static char held[8192];
   if (db_query(h, "SELECT vid,root FROM versions WHERE kind>=2", 0, held, sizeof(held)) <= 0) return;
