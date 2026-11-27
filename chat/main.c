@@ -1088,12 +1088,28 @@ static void edit_message(const char *id, const char *orig, const char *text_in) 
                    xprs_is_station(id) ? "sent" : "", 0);
 }
 
+/* Regional and Global (10.10.3): their moderators are the keys published
+ * at xprs.dev, and the core says whether this profile's is one. */
+static int pubroom_is(const char *id) { return s_eq(id, XROOM_REGIONAL) || s_eq(id, XROOM_GLOBAL); }
+static int pubroom_mod(void) {
+  return hal_xprs_group_role_at("*", 1, g_call, s_len(g_call), (uint32_t)hal_time_epoch()) >= 3;
+}
+
 static void unsend_message(const char *id, const char *orig) {
   if (!id[0] || !orig[0] || !room_renderable(id)) return;
   char author[24] = "";
   if (!room_message_sender(id, orig, author, sizeof(author))) { notify("warning", wtr("msg.gone", "That message is gone")); return; }
   uint64_t now = hal_time_epoch();
   if (!is_self_call(author)) {
+    if (pubroom_is(id)) {
+      /* The core signs with our key and refuses when it is not listed. */
+      int rc = hal_xprs_group_moderate("*", 1, orig, s_len(orig), "", 0, 2);
+      if (rc == -2) { notify("warning", wtr("msg.only_author_delete", "Only its author can delete this")); return; }
+      if (rc != 0) { notify("warning", wtr("msg.could_not_delete", "Could not delete")); return; }
+      room_moderation_sync(XROOM_REGIONAL);
+      room_moderation_sync(XROOM_GLOBAL);
+      return;
+    }
     if (!xgroup_is(id)) { notify("warning", wtr("msg.only_author_delete", "Only its author can delete this")); return; }
     int mine = my_role_in(id);
     int theirs = (int)hal_xprs_group_role_at(id + 1, s_len(id + 1), author, s_len(author), (uint32_t)now);
@@ -1514,9 +1530,18 @@ static void drain_core_events(void) {
       const char *open = room_open_id();
       if (xgroup_is(open)) {
         push_group_members(open);
-        room_set_mod(my_role_in(open) >= 3, 1);
+        room_set_mod(my_role_in(open) >= 3 ? 1 : 0, 1);
         room_moderation_sync(open);
       }
+      continue;
+    }
+    if (s_eq(topic, "core.moderation")) {
+      /* A listed moderator removed something in the public rooms, or the
+       * list changed (10.10.3): the core's verdict is read again. */
+      room_moderation_sync(XROOM_REGIONAL);
+      room_moderation_sync(XROOM_GLOBAL);
+      const char *open = room_open_id();
+      if (pubroom_is(open)) room_set_mod(pubroom_mod() ? 2 : 0, 1);
       continue;
     }
     if (s_eq(topic, "core.names")) { if (g_search_live) search_render(); continue; }
@@ -2373,10 +2398,11 @@ static void do_open(const char *buf) {
   char convo[48] = ""; cmd_field(buf, "convo", convo, sizeof(convo));
   if (!convo[0]) return;
   /* Whether the host offers moderation, stated by the row the open sends. */
-  room_set_mod(xgroup_is(convo) && my_role_in(convo) >= 3, 0);
+  room_set_mod(xgroup_is(convo) ? (my_role_in(convo) >= 3 ? 1 : 0)
+                                : (pubroom_is(convo) && pubroom_mod()) ? 2 : 0, 0);
   /* And the acts of authority already in force on this group's posts, folded
    * in BEFORE the tail is drawn, so the first paint is the corrected one. */
-  if (xgroup_is(convo)) room_moderation_sync(convo);
+  if (xgroup_is(convo) || pubroom_is(convo)) room_moderation_sync(convo);
   open_group_follow(convo, 1);
   room_open(convo);
   /* Opening the room is the one moment somebody is asking to SEE it. The
@@ -2461,7 +2487,7 @@ static int g_catchup_pending;
 void module_init(void) {
   static const char *topics[] = { "xprs.message", "xprs.reaction", "xprs.status.tx",
                                   "core.groups", "xprs.unlock", "xprs.redacted",
-                                  "xprs.status", "core.names" };
+                                  "xprs.status", "core.names", "core.moderation" };
   for (unsigned i = 0; i < sizeof(topics) / sizeof(topics[0]); i++)
     hal_event_subscribe(topics[i], s_len(topics[i]));
   char id[16];

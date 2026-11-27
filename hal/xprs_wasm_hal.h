@@ -2041,6 +2041,17 @@ int32_t hal_xprs_withdraw(const char *to, uint32_t to_len,
  * what the admin voided; whether an act binds the publication's author is for
  * the holder of the original, with hal_xprs_group_role_at. Bytes written,
  * negated size if `out` is small. */
+/* The public rooms (Regional and Global, XPRS.md 10.10.3) are named here as
+ * the group "*": they belong to no station and no group, and their
+ * moderators are the keys published at https://xprs.dev/moderators.json,
+ * which the core reads and judges by. For "*":
+ *  - hal_xprs_group_moderation lists what those moderators removed (kind
+ *    "remove" only, `id` is "*"+target, `signer` empty, `ts` 0);
+ *  - hal_xprs_group_role_at answers 3 for this station's own callsign when
+ *    its profile's key is listed, 0 for anybody else;
+ *  - hal_xprs_group_moderate takes kind 2 only and signs with the profile's
+ *    key; -2 when that key is not listed.
+ * The topic `core.moderation` says when either answer may have changed. */
 __attribute__((import_module("hal"), import_name("xprs_group_moderation")))
 int32_t hal_xprs_group_moderation(const char *group, uint32_t group_len,
                                   char *out, uint32_t out_cap);

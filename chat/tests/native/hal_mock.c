@@ -277,8 +277,22 @@ int32_t hal_xprs_withdraw(const char* to,uint32_t tl,const char* orig,uint32_t o
   snprintf(g_withdraw_ask,sizeof(g_withdraw_ask),"%.*s|%.*s",(int)tl,to,(int)ol,orig);
   return 0;
 }
+/* The public rooms, the group "*" (XPRS.md 10.10.3): what the listed
+ * moderators removed, and whether this station's own key is listed. As the
+ * core does, a removal this station signs is known here at once. */
+static char g_pub_removed[400]; static int g_pub_listed;
+void mock_public_reset(int listed){ g_pub_removed[0]=0; g_pub_listed=listed; }
+void mock_public_removed(const char* id){
+  size_t n=strlen(g_pub_removed);
+  snprintf(g_pub_removed+n,sizeof(g_pub_removed)-n,"%s{\"id\":\"*%s\",\"kind\":\"remove\",\"target\":\"%s\",\"signer\":\"\",\"srole\":\"mod\",\"ts\":0,\"text\":\"\"}",n?",":"",id,id);
+}
+static int mock_is_public(const char* g,uint32_t gl){ return gl==1&&g[0]=='*'; }
 int32_t hal_xprs_group_moderation(const char* g,uint32_t gl,char* o,uint32_t cap){
   if(g_hk_moderation) return g_hk_moderation(g,gl,o,cap);
+  if(mock_is_public(g,gl)){
+    int w=snprintf(o,cap,"[%s]",g_pub_removed);
+    return w>=(int)cap ? -w : w;
+  }
   uint32_t n=strlen(g_moderation);
   if(n>cap) return -(int32_t)n;
   memcpy(o,g_moderation,n);
@@ -286,6 +300,7 @@ int32_t hal_xprs_group_moderation(const char* g,uint32_t gl,char* o,uint32_t cap
 }
 int32_t hal_xprs_group_role_at(const char* g,uint32_t gl,const char* c,uint32_t cl,uint32_t ts){
   if(g_hk_role_at) return g_hk_role_at(g,gl,c,cl,ts);
+  if(mock_is_public(g,gl)) return (g_pub_listed && cl==6 && !strncmp(c,"X1TEST",6)) ? 3 : 0;
   (void)g;(void)gl;(void)ts;
   const char* p=g_roles;
   while(*p){
@@ -301,6 +316,13 @@ int32_t hal_xprs_group_role_at(const char* g,uint32_t gl,const char* c,uint32_t 
 int32_t hal_xprs_group_moderate(const char* g,uint32_t gl,const char* tg,uint32_t tgl,const char* t,uint32_t l,uint32_t kind){
   if(g_hk_moderate) return g_hk_moderate(g,gl,tg,tgl,t,l,kind);
   snprintf(g_moderate_ask,sizeof(g_moderate_ask),"%.*s|%.*s|%.*s|%u",(int)gl,g,(int)tgl,tg,(int)l,t,kind);
+  if(mock_is_public(g,gl)){
+    if(kind!=2) return -1;
+    if(!g_pub_listed) return -2;
+    char id[16]; snprintf(id,sizeof(id),"%.*s",(int)tgl,tg);
+    mock_public_removed(id);
+    return 0;
+  }
   return 0;
 }
 /* hal_xprs_names: who is known by name (the core's archive names, filled by

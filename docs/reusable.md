@@ -90,3 +90,12 @@
   map (a count, a time) that stays off the app bar's channel chips, which
   show only items that are on. Shown on a map with `"chat": false` too
   (top left, under the search box if there is one).
+
+- **Moderation in rooms that belong to nobody** (Chat, XPRS.md 10.10.3): the
+  three closed-group verbs (`hal_xprs_group_moderation`,
+  `hal_xprs_group_role_at`, `hal_xprs_group_moderate`) answer for the group
+  `"*"`, the public rooms. The core holds the list and the verdict; the wapp
+  folds removals in with the code it has for a closed group
+  (`room_moderation_sync`), listens to `core.moderation`, and declares
+  `"mod":"remove"` on the room's row so the host offers Delete alone. A wapp
+  showing other public publications can do the same.
