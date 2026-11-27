@@ -32,8 +32,8 @@
         "name": "@group.circle",
         "children": [
           { "$": "field", "name": "edit_pic", "$type": "image", "label": "@field.picture", "tip": "@field.picture_tip" },
-          { "$": "field", "name": "edit_name", "$type": "string", "label": "@field.name", "hint": "@field.circle_name_hint", "max": 40 },
-          { "$": "field", "name": "edit_desc", "$type": "string", "label": "@field.description", "hint": "@field.circle_desc_hint", "multiline": true, "lines": 4, "max": 250 }
+          { "$": "field", "name": "edit_name", "apply": "edit_save", "$type": "string", "label": "@field.name", "hint": "@field.circle_name_hint", "max": 40 },
+          { "$": "field", "name": "edit_desc", "apply": "edit_save", "$type": "string", "label": "@field.description", "hint": "@field.circle_desc_hint", "multiline": true, "lines": 4, "max": 250 }
         ]
       },
       {
@@ -43,8 +43,7 @@
         "children": [
           { "$": "action", "name": "manage_roles", "label": "@action.manage_roles", "icon": "tune" }
         ]
-      },
-      { "$": "action", "name": "edit_save", "label": "@action.save", "icon": "save", "style": "primary" }
+      }
     ]
   },
   {
@@ -64,12 +63,11 @@
         "$": "group",
         "name": "@group.role",
         "children": [
-          { "$": "field", "name": "role_name", "$type": "string", "label": "@field.name", "hint": "@field.role_name_hint", "max": 40 },
-          { "$": "field", "name": "role_desc", "$type": "string", "label": "@field.description", "hint": "@field.role_desc_hint", "multiline": true, "lines": 3, "max": 200 },
-          { "$": "field", "name": "role_default", "$type": "bool", "label": "@field.role_default" }
+          { "$": "field", "name": "role_name", "apply": "role_save", "$type": "string", "label": "@field.name", "hint": "@field.role_name_hint", "max": 40 },
+          { "$": "field", "name": "role_desc", "apply": "role_save", "$type": "string", "label": "@field.description", "hint": "@field.role_desc_hint", "multiline": true, "lines": 3, "max": 200 },
+          { "$": "field", "name": "role_default", "apply": "role_save", "$type": "bool", "label": "@field.role_default" }
         ]
       },
-      { "$": "action", "name": "role_save", "label": "@action.save_role", "icon": "save", "style": "primary" },
       { "$": "action", "name": "role_delete", "label": "@action.delete_role", "icon": "delete" }
     ]
   },
@@ -113,11 +111,11 @@
         "$": "group",
         "name": "@group.folder",
         "children": [
-          { "$": "field", "name": "folder_name", "$type": "string", "label": "@field.name", "hint": "@field.folder_name_hint", "max": 48 },
-          { "$": "field", "name": "folder_desc", "$type": "string", "label": "@field.description", "hint": "@field.folder_desc_hint", "multiline": true, "lines": 3, "max": 200 },
-          { "$": "field", "name": "folder_icon", "$type": "icon", "label": "@field.icon" },
+          { "$": "field", "name": "folder_name", "apply": "folder_save", "$type": "string", "label": "@field.name", "hint": "@field.folder_name_hint", "max": 48 },
+          { "$": "field", "name": "folder_desc", "apply": "folder_save", "$type": "string", "label": "@field.description", "hint": "@field.folder_desc_hint", "multiline": true, "lines": 3, "max": 200 },
+          { "$": "field", "name": "folder_icon", "apply": "folder_save", "$type": "icon", "label": "@field.icon" },
           {
-            "$": "field", "name": "folder_type", "$type": "enum", "label": "@field.type",
+            "$": "field", "name": "folder_type", "apply": "folder_save", "$type": "enum", "label": "@field.type",
             "tip": "@field.type_tip",
             "children": [
               { "$": "option", "name": "chat", "label": "@option.chat" },
@@ -129,7 +127,6 @@
           }
         ]
       },
-      { "$": "action", "name": "folder_save", "label": "@action.save_folder", "icon": "save", "style": "primary" },
       { "$": "action", "name": "folder_delete", "label": "@action.delete_folder", "icon": "delete" }
     ]
   },

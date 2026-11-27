@@ -32,10 +32,9 @@
     "icon": "edit",
     "tip": "Edit the open (or selected) folder's metadata. Reached from a folder's ... menu.",
     "children": [
-      { "$": "field", "name": "edit_name", "$type": "string", "label": "Name", "max": 100, "hint": "folder name", "tip": "Up to 100 characters." },
-      { "$": "field", "name": "edit_desc", "$type": "string", "label": "Description", "max": 250, "multiline": true, "lines": 4, "hint": "what's in this folder", "tip": "Up to 250 characters." },
-      { "$": "field", "name": "edit_tags", "$type": "string", "label": "Tags", "max": 50, "hint": "e.g. music, live, 2024", "tip": "Comma or space separated; 50 characters total." },
-      { "$": "action", "name": "folder_save", "label": "Save", "icon": "save", "style": "primary", "tip": "Sign and publish the new metadata." }
+      { "$": "field", "name": "edit_name", "apply": "folder_save", "$type": "string", "label": "Name", "max": 100, "hint": "folder name", "tip": "Up to 100 characters." },
+      { "$": "field", "name": "edit_desc", "apply": "folder_save", "$type": "string", "label": "Description", "max": 250, "multiline": true, "lines": 4, "hint": "what's in this folder", "tip": "Up to 250 characters." },
+      { "$": "field", "name": "edit_tags", "apply": "folder_save", "$type": "string", "label": "Tags", "max": 50, "hint": "e.g. music, live, 2024", "tip": "Comma or space separated; 50 characters total." }
     ]
   },
   {
@@ -49,11 +48,10 @@
         "name": "provide",
         "tip": "Two transports: Blossom HTTP for devices on the same local network, and BitTorrent for anyone across the internet.",
         "children": [
-          { "$": "field", "name": "blossom_on", "$type": "bool", "label": "Share on the local network (Blossom)", "default": true, "tip": "Serve GET /<sha256> over HTTP so nearby devices can scan this port and fetch your files. NOSTR-Blossom compatible." },
-          { "$": "field", "name": "blossom_port", "$type": "string", "label": "HTTP port", "default": "3457" },
-          { "$": "field", "name": "uploads_on", "$type": "bool", "label": "Accept uploads (PUT /upload)", "default": false, "tip": "Allow others to store files on this device. Uploads are keyed by their own hash, so nobody can overwrite an existing file." },
-          { "$": "field", "name": "seed_on", "$type": "bool", "label": "Seed over BitTorrent (internet)", "default": true, "tip": "Create a deterministic torrent for every archived file and announce it to well-known public trackers + the DHT, so devices on other networks can fetch it from the swarm via its magnet link." },
-          { "$": "action", "name": "share_apply", "label": "Apply sharing", "style": "primary", "tip": "Start/stop the transports with the settings above." }
+          { "$": "field", "name": "blossom_on", "apply": "share_apply", "$type": "bool", "label": "Share on the local network (Blossom)", "default": true, "tip": "Serve GET /<sha256> over HTTP so nearby devices can scan this port and fetch your files. NOSTR-Blossom compatible." },
+          { "$": "field", "name": "blossom_port", "apply": "share_apply", "$type": "string", "label": "HTTP port", "default": "3457" },
+          { "$": "field", "name": "uploads_on", "apply": "share_apply", "$type": "bool", "label": "Accept uploads (PUT /upload)", "default": false, "tip": "Allow others to store files on this device. Uploads are keyed by their own hash, so nobody can overwrite an existing file." },
+          { "$": "field", "name": "seed_on", "apply": "share_apply", "$type": "bool", "label": "Seed over BitTorrent (internet)", "default": true, "tip": "Create a deterministic torrent for every archived file and announce it to well-known public trackers + the DHT, so devices on other networks can fetch it from the swarm via its magnet link." }
         ]
       },
       { "$": "field", "name": "share_log", "$type": "log", "label": "Status", "tip": "Server and swarm activity." }

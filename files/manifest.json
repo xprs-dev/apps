@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.files",
-  "version":         "0.9.4",
+  "version":         "0.9.5",
   "kind":            "system",
   "title":           "Share",
   "description":     "Share files and folders with other people.",

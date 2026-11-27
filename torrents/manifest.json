@@ -1,6 +1,6 @@
 {
   "id":              "tools.xprs.torrents",
-  "version":         "0.6.5",
+  "version":         "0.6.6",
   "launcher":        false,
   "kind":            "app",
   "title":           "Torrents",

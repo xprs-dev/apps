@@ -27,9 +27,21 @@
             "label": "@field.font_family",
             "default": "RobotoMono",
             "children": [
-              { "$": "option", "name": "RobotoMono", "label": "Roboto Mono" },
-              { "$": "option", "name": "Courier", "label": "Courier" },
-              { "$": "option", "name": "monospace", "label": "Monospace" }
+              {
+                "$": "option",
+                "name": "RobotoMono",
+                "label": "Roboto Mono"
+              },
+              {
+                "$": "option",
+                "name": "Courier",
+                "label": "Courier"
+              },
+              {
+                "$": "option",
+                "name": "monospace",
+                "label": "Monospace"
+              }
             ]
           },
           {
@@ -50,9 +62,21 @@
             "label": "@field.color_scheme",
             "default": "dark",
             "children": [
-              { "$": "option", "name": "dark", "label": "@option.dark" },
-              { "$": "option", "name": "light", "label": "@option.light" },
-              { "$": "option", "name": "solarized", "label": "@option.solarized" }
+              {
+                "$": "option",
+                "name": "dark",
+                "label": "@option.dark"
+              },
+              {
+                "$": "option",
+                "name": "light",
+                "label": "@option.light"
+              },
+              {
+                "$": "option",
+                "name": "solarized",
+                "label": "@option.solarized"
+              }
             ]
           }
         ]
@@ -82,51 +106,6 @@
             "tip": "@field.buffer_size_tip"
           }
         ]
-      },
-      {
-        "$": "action",
-        "name": "save",
-        "label": "@action.save_settings",
-        "style": "primary",
-        "tip": "@action.save_settings_tip",
-        "children": [
-          {
-            "$": "icon",
-            "emoji": "V",
-            "text": "[save]"
-          },
-          {
-            "$": "request",
-            "method": "POST",
-            "endpoint": "/settings",
-            "children": [
-              {
-                "$": "body",
-                "fontSize": { "$fn": "field", "args": ["fontSize"] },
-                "fontFamily": { "$fn": "field", "args": ["fontFamily"] },
-                "lineHeight": { "$fn": "field", "args": ["lineHeight"] },
-                "colorScheme": { "$fn": "field", "args": ["colorScheme"] },
-                "showTimestamps": { "$fn": "field", "args": ["showTimestamps"] },
-                "maxLines": { "$fn": "field", "args": ["maxLines"] }
-              }
-            ]
-          },
-          {
-            "$": "result",
-            "children": [
-              { "$": "200", "type": "toast", "message": "Settings saved.", "level": "success" },
-              { "$": "4xx", "type": "toast", "message": { "$fn": "response", "args": ["error"] }, "level": "warning" },
-              { "$": "5xx", "type": "toast", "message": "Could not save settings.", "level": "error" }
-            ]
-          }
-        ]
-      },
-      {
-        "$": "action",
-        "name": "cancel",
-        "label": "@action.cancel",
-        "style": "secondary",
-        "tip": "@action.cancel_tip"
       }
     ]
   }

@@ -157,10 +157,9 @@
         "name": "seeding",
         "tip": "Pin to keep a full copy and seed it.",
         "children": [
-          { "$": "field", "name": "pin_on_open", "$type": "bool", "label": "Pin what I download", "default": true, "tip": "After opening a link, keep a full copy and seed it. Turn this off to download without joining the swarm - it works, but a network of pure leechers holds nothing." },
-          { "$": "field", "name": "share_author", "$type": "bool", "label": "Put my identity in shared links", "default": false, "tip": "OFF by default. When on, links you copy include your npub so people know who published it. Leave it off to share anonymously - the folder key alone is enough to download." },
-          { "$": "field", "name": "rescan_min", "$type": "string", "label": "Rescan my folders every (minutes)", "default": "15", "tip": "How often a torrent shared from disk is re-scanned, so files you add or delete on disk are published to the swarm. 0 = never (rescan by hand from Manage)." },
-          { "$": "action", "name": "settings_apply", "label": "Apply", "icon": "save", "style": "primary", "tip": "Save these settings." }
+          { "$": "field", "name": "pin_on_open", "apply": "settings_apply", "$type": "bool", "label": "Pin what I download", "default": true, "tip": "After opening a link, keep a full copy and seed it. Turn this off to download without joining the swarm - it works, but a network of pure leechers holds nothing." },
+          { "$": "field", "name": "share_author", "apply": "settings_apply", "$type": "bool", "label": "Put my identity in shared links", "default": false, "tip": "OFF by default. When on, links you copy include your npub so people know who published it. Leave it off to share anonymously - the folder key alone is enough to download." },
+          { "$": "field", "name": "rescan_min", "apply": "settings_apply", "$type": "string", "label": "Rescan my folders every (minutes)", "default": "15", "tip": "How often a torrent shared from disk is re-scanned, so files you add or delete on disk are published to the swarm. 0 = never (rescan by hand from Manage)." }
         ]
       },
       { "$": "field", "name": "settings_log", "$type": "log", "label": "This device", "tip": "What this device is currently holding and serving." }

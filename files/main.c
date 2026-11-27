@@ -1357,10 +1357,8 @@ void module_handle_event(void) {
       if (s_len(desc) > 250) desc[250] = 0;
       if (s_len(tags) > 50) tags[50] = 0;
       folder_setmeta3(g_sel_folder, name, desc, tags);
-      const char *m = "{\"type\":\"ui.screen.close\"}";
-      hal_msg_send(m, s_len(m));
+      /* Kept as typed (the fields' "apply"): the screen stays, Back leaves. */
       g_info_hash = 0;
-      notify("info", "Saved");
       render_mfolders();
     }
   } else if (s_eq(cmd, "folder_manage")) {
@@ -1445,8 +1443,7 @@ void module_handle_event(void) {
     if (pb[0]) { int p = to_int(pb); if (p > 0 && p < 65536) g_port = p; }
     share_save();
     share_apply();
-    render_status();
-    notify("info", "Sharing settings applied");
+    render_status();   /* applied as changed: the status shows the result */
   } else if (s_eq(cmd, "prompt")) {
     do_prompt_result(buf);
   }

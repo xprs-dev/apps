@@ -32,16 +32,15 @@
         "$": "group",
         "name": "@group.ai",
         "children": [
-          {"$": "field", "name": "ai_provider", "$type": "enum", "label": "@field.provider", "default": "claude", "children": [
+          {"$": "field", "name": "ai_provider", "apply": "save_settings", "$type": "enum", "label": "@field.provider", "default": "claude", "children": [
             {"$": "option", "name": "claude", "label": "Claude"},
             {"$": "option", "name": "openai", "label": "Codex / OpenAI"},
             {"$": "option", "name": "opencode", "label": "OpenCode Zen"},
             {"$": "option", "name": "compatible", "label": "@option.compatible"}
           ]},
-          {"$": "field", "name": "ai_model", "$type": "string", "label": "@field.model", "hint": "@field.model_hint"},
-          {"$": "field", "name": "ai_base_url", "$type": "string", "label": "@field.base_url", "hint": "@field.base_url_hint"},
-          {"$": "field", "name": "ai_key", "$type": "secret", "label": "@field.key", "hint": "@field.key_hint"},
-          {"$": "action", "name": "save_settings", "label": "@action.save", "style": "primary", "icon": "save"},
+          {"$": "field", "name": "ai_model", "apply": "save_settings", "$type": "string", "label": "@field.model", "hint": "@field.model_hint"},
+          {"$": "field", "name": "ai_base_url", "apply": "save_settings", "$type": "string", "label": "@field.base_url", "hint": "@field.base_url_hint"},
+          {"$": "field", "name": "ai_key", "apply": "save_settings", "$type": "secret", "label": "@field.key", "hint": "@field.key_hint"},
           {"$": "action", "name": "forget_key", "label": "@action.forget_key", "icon": "delete", "confirm": true, "confirm-label": "@action.forget_key_confirm"}
         ]
       }

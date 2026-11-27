@@ -288,7 +288,8 @@ void module_handle_event(void) {
     jstr(buf, "role_name", nm, sizeof(nm));
     jstr(buf, "role_desc", de, sizeof(de));
     if (g_panel[0]) circle_role_save(g_panel, g_role, nm, de, def);
-    g_role[0] = 0;
+    /* Kept as typed: the next edit renames this role, not a new one. */
+    if (nm[0]) s_cpy(g_role, nm, sizeof(g_role));
   } else if (s_eq(cmd, "role_delete")) {
     if (g_panel[0] && g_role[0]) circle_role_remove(g_panel, g_role);
     g_role[0] = 0;

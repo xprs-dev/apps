@@ -78,7 +78,13 @@ int main(void){
   ok("rail carries the emoji icon raw (not a Material name)", cr && strstr(cr,"\xF0\x9F\x93\xB0"));
   ok("rail is navigation-only (no Add/Settings/Access/Up controls)",
      cr && !strstr(cr,"__add") && !strstr(cr,"__edit") && !strstr(cr,"__access") && !strstr(cr,"__up"));
-  ok("saving a root folder returns to the circle (screen.close)", cap_contains("ui.screen.close"));
+  ok("saving keeps the editor open (kept as typed; Back leaves)", !cap_contains("ui.screen.close"));
+  /* the next edit of the same editor updates that folder, never a second one */
+  cap_clear();
+  run("{\"command\":\"folder_save\",\"folder_name\":\"News\",\"folder_type\":\"chat\",\"folder_icon\":\"\xF0\x9F\x93\xB0\",\"folder_desc\":\"press room\"}");
+  cr=cap_find("\"field\":\"conv_rail\"");
+  { const char* a=cr?strstr(cr,"\"name\":\"News\""):0;
+    ok("a second save edits the folder it created (one 'News')", a && !strstr(a+1,"\"name\":\"News\"")); }
 
   /* resolve the News id from the rail */
   char fid[40]="";

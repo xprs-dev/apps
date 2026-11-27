@@ -931,7 +931,7 @@ void module_handle_event(void) {
                 sb_putn(&s_key, sb_str(&v), v.n);
                 kv_save("ai_key", &s_key);
             }
-            toast(t("msg.saved", "Saved."));
+            /* Kept as typed (the fields' "apply"): no toast per edit. */
         } else if (cmd_is(&cmd, "forget_key")) {
             sb_clear(&s_key);
             hal_kv_delete("ai_key", 6);

@@ -1878,8 +1878,7 @@ void module_handle_event(void) {
       if (v >= 0 && v < 10000) g_rescan_min = v;
     }
     settings_save();
-    render_settings();
-    notify("info", "Saved");
+    render_settings();   /* applied as changed: no "Saved" toast per edit */
   } else if (s_eq(cmd, "torrents_tap")) {
     char id[600] = "";
     jstr(buf, "torrents_id", id, sizeof(id));

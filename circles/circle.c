@@ -1192,8 +1192,7 @@ void circle_save_edit(const char *circleId, const char *name, const char *desc) 
   char d[260]; s_cpy(d, desc, sizeof(d)); if (s_len(d) > 250) d[250] = 0;
   meta_set(h, "description", d);
   convo_upsert(c_id[i], c_name[i], "", 0);
-  broadcast_keyset(i);
-  notify("info", wtr("msg.saved", "Saved"));
+  broadcast_keyset(i);   /* kept as typed (the fields' "apply"): no toast */
 }
 
 /* ── roles ────────────────────────────────────────────────────────────── */
@@ -1257,7 +1256,8 @@ void circle_role_save(const char *circleId, const char *oldName,
   int i = idx_by_id(circleId); if (i < 0) return;
   if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_manage_roles", "Only the owner can manage roles")); return; }
   int h = handle_for(i); if (h < 0) return;
-  if (!newName[0]) { notify("error", wtr("msg.role_needs_a_name", "Role needs a name")); return; }
+  /* Kept as typed: a role with no name yet is simply not saved yet. */
+  if (!newName[0]) return;
   char par[400] = "[\""; jesc(par, sizeof(par), newName); s_cat(par, "\",\"", sizeof(par));
   jesc(par, sizeof(par), desc); s_cat(par, "\"]", sizeof(par));
   db_exec(h, "INSERT OR REPLACE INTO roles(name,description,created) VALUES(?,?,0)", par);
@@ -1272,9 +1272,7 @@ void circle_role_save(const char *circleId, const char *oldName,
   }
   if (makeDefault) meta_set(h, "default_role", newName);
   broadcast_keyset(i);
-  roles_populate(i);
-  screen_open("@screen.roles");
-  notify("info", wtr("msg.role_saved", "Role saved"));
+  roles_populate(i);   /* the list behind this screen; Back returns to it */
 }
 
 void circle_role_remove(const char *circleId, const char *roleName) {
@@ -2105,7 +2103,8 @@ void circle_folder_save(const char *circleId, const char *name, const char *desc
   int i = idx_by_id(circleId); if (i < 0) return;
   if (!owned(i)) { notify("error", wtr("msg.only_the_owner_can_manage_folders", "Only the owner can manage folders")); return; }
   int h = handle_for(i); if (h < 0) return;
-  if (!name[0]) { notify("error", wtr("msg.folder_needs_a_name", "Folder needs a name")); return; }
+  /* Kept as typed: a folder with no name yet is simply not saved yet. */
+  if (!name[0]) return;
   char ty[16]; s_cpy(ty, type[0] ? type : "chat", sizeof(ty));
   char ic[256]; s_cpy(ic, icon, sizeof(ic));   /* empty → host shows folder icon */
   if (g_edit[0]) {
@@ -2130,12 +2129,12 @@ void circle_folder_save(const char *circleId, const char *name, const char *desc
                "VALUES(?,?,?,?,?,?,?,?,?,?,?)", par);
     unsigned char key[32]; hal_crypto_random((char *)key, 32); folder_key_store(i, fid, 1, key);
     folder_distribute_key(i, fid, 1);
+    /* Created once: the next edit updates this folder, not a second one. */
+    s_cpy(g_edit, fid, sizeof(g_edit));
   }
   broadcast_keyset(i);
   rail_build(i, "conv_rail", "");        /* keep the in-circle rail fresh */
-  notify("info", wtr("msg.folder_saved", "Folder saved"));
-  if (g_browse[0]) circle_folder_view(circleId, g_browse); /* back to the folder */
-  else screen_close();                      /* created at root → back to circle chat */
+  /* Kept as typed: the editor stays open, and Back leaves it. */
 }
 static void folder_remove_internal(int i, const char *folderId) {
   int h = handle_for(i); if (h < 0) return;
