@@ -77,8 +77,8 @@
     "$": "field",
     "name": "reaches",
     "$type": "people",
-    "layout": "list",
-    "empty": "It has not said which stations it hears."
+    "empty": "It has not said which stations it hears.",
+    "inline": true
    },
    {
     "$": "field",
@@ -168,6 +168,36 @@
     "confirm": true,
     "confirm-label": "Forget this station?",
     "confirm-text": "It leaves the list. It is not changed, and it comes back if it is heard again."
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "Detail",
+  "icon": "info",
+  "hidden": true,
+  "children": [
+   {
+    "$": "field",
+    "name": "tile_info",
+    "$type": "details",
+    "empty": "",
+    "layout": "rows"
+   },
+   {
+    "$": "action",
+    "name": "tile_room_stop",
+    "label": "Stop taking new people",
+    "icon": "block",
+    "confirm": true,
+    "confirm-label": "Stop taking new people?",
+    "confirm-text": "The people it already keeps messages for stay. Newcomers choose another archiver."
+   },
+   {
+    "$": "action",
+    "name": "tile_room_take",
+    "label": "Take new people again",
+    "icon": "person_add"
    }
   ]
  },

@@ -541,6 +541,8 @@ static void tile(const char *id, const char *label, const char *value,
     if (hint && hint[0]) { dv_cat(g_out, ",\"hint\":\"", sizeof g_out); dv_jesc(g_out, hint, sizeof g_out); dv_cat(g_out, "\"", sizeof g_out); }
     if (progress && progress[0]) { dv_cat(g_out, ",\"progress\":", sizeof g_out); dv_cat(g_out, progress, sizeof g_out); }
     if (alert) dv_cat(g_out, ",\"alert\":true", sizeof g_out);
+    /* Every figure opens what is behind it (push_tile). */
+    dv_cat(g_out, ",\"tap\":true", sizeof g_out);
     dv_cat(g_out, "}", sizeof g_out);
 }
 
@@ -660,6 +662,8 @@ static void det_end(void)
 }
 
 static void stats_tiles(void);
+static void push_tile(const char *id);
+static char g_tile[12];             /* the tile whose details are open */
 static void item_full(const char *id, const char *title, const char *sub,
                       const char *tags, int dim, const char *icon,
                       const char *picture, int *first);
@@ -860,6 +864,8 @@ static void push_hub(void)
     flag_hidden("open_identity", !s->mine || soft);
     flag_hidden("crash", !s->mine || !s->crash[0]);
     flag_hidden("forget", self);
+    /* A tile opened over this page follows the same answers. */
+    if (dv_eq(g_screen, "Detail")) push_tile(g_tile);
 }
 
 static void item_full(const char *id, const char *title, const char *sub,
@@ -1117,6 +1123,127 @@ static void stats_tiles(void)
     if (s->crash[0]) tile("crash", "Crashed in", s->crash, "", "tap Crash report", "", 1);
     tiles_end();
     g_empty = "?";
+}
+
+/* ── A tile, opened: what is behind its number ───────────────────────── */
+
+static void row_num(const char *label, const char *key, const char *mine)
+{
+    char v[48] = "";
+    dv_json(g_host, key, v, sizeof v);
+    det_row(label, v[0] ? v : mine);
+}
+
+/* The Detail screen for tile [id] of the selected station: every fact this
+ * device holds behind that figure, where it came from, and the switch that
+ * changes it when there is one. Nothing is asked here: opening the station
+ * already asked, and an answer redraws this as it lands (push_hub). */
+static void push_tile(const char *id)
+{
+    if (g_sel < 0 || g_sel >= g_nst) return;
+    st_t *s = &g_st[g_sel];
+    int have = host_facts(s);
+    char v[160], w[4][16], serve[48];
+    serve_of(s, have, serve, sizeof serve);
+    int arch = has_word(serve, "archive");
+    int closed = dv_eq(s->pol_room, "no");
+    dv_cpy(g_tile, id, sizeof g_tile);
+    det_begin("tile_info");
+    if (dv_eq(id, "room")) {
+        det_section("Disk");
+        det_row("Free for other people", s->room[0] ? s->room
+                : s->mine ? (s->asking ? "asking..." : "not reported") : "only its owners are told");
+        det_row("Takes new people", !arch ? "no: it keeps nobody's messages" : closed ? "no" : "yes");
+        if (arch) det_row("Who decided", closed ? "its owner, or its own limit on how many it keeps for"
+                                             : "nobody has closed it; it closes itself when full");
+        det_row("People it already keeps for", arch ? "stay, whatever this says: only newcomers go elsewhere" : "");
+        det_section("What it does for others");
+        det_row("Keeps their messages", serve[0] ? (arch ? "yes, it is an archiver" : "no") : "not said yet");
+        det_row("Serves", serve[0] ? serve : "");
+        row_num("Records it holds", "count", s->count);
+        row_num("Mail waiting for people", "mail", s->mail);
+        det_section("Where this comes from");
+        det_row("Free space", s->mine ? "its answer to your diagnostics ask (size:)" : "not shared with others");
+        det_row("Room", "its own announcement and policy (room:, XPRS.md 13.0.2)");
+        flag_hidden("tile_room_stop", !s->mine || !arch || closed);
+        flag_hidden("tile_room_take", !s->mine || !arch || !closed);
+    } else if (dv_eq(id, "count") || dv_eq(id, "mail")) {
+        det_section(dv_eq(id, "count") ? "Records" : "Mail held");
+        row_num("Records", "count", s->count);
+        det_row("What records are", "messages, posts and descriptions of files it keeps for the network (13.0.1)");
+        row_num("Mail waiting", "mail", s->mail);
+        det_row("What mail is", "messages for people who are away, handed over when they come in reach (9.12)");
+        det_row("Keeps for others", serve[0] ? (arch ? "yes" : "no") : "");
+        det_row("Takes new people", arch ? (closed ? "no" : "yes") : "");
+    } else if (dv_eq(id, "peers")) {
+        char list[400] = "";
+        det_section("Reaches");
+        row_num("Stations it hears", "peers", s->peers);
+        if (have) dv_json_list(g_host, "hears", list, sizeof list);
+        det_row("By callsign", list[0] ? list : "it has not said");
+        det_row("Note", "a beacon names as many as fit in one packet; the count is all of them");
+    } else if (dv_eq(id, "signal") || dv_eq(id, "bearers")) {
+        char b[12] = "", lanes[64] = "", via[64] = "";
+        det_section("How this device hears it");
+        bearer_of(s, have, b, sizeof b);
+        det_row("Last heard over", bearer_name(b));
+        if (have) {
+            ago_words(host_num("agoMs"), v, sizeof v);
+            det_row("Last heard", v);
+            dv_json(g_host, "rssi", v, sizeof v);
+            if (v[0] && !dv_eq(v, "0")) { dv_cat(v, " dBm", sizeof v); det_row("Signal", v); }
+            dv_json_list(g_host, "bearers", lanes, sizeof lanes);
+            det_row("Every lane it came in on", lanes);
+            dv_json(g_host, "hops", v, sizeof v);
+            det_row("Hops", v);
+            dv_json(g_host, "via", via, sizeof via);
+            det_row("Through", via[0] ? via : "directly");
+            dv_json(g_host, "packets", v, sizeof v);
+            det_row("Packets heard", v);
+            dv_json(g_host, "sig", v, sizeof v);
+            det_row("Signatures", dv_eq(v, "forged") ? "forged: somebody is using its callsign" : v);
+        } else det_row("Last heard", "not this hour");
+    } else if (dv_eq(id, "up") || dv_eq(id, "life")) {
+        det_section("Running");
+        row_num("Since its last restart", "uptime", s->uptime);
+        row_num("Across every restart", "lifetime", s->life);
+        det_row("Last reset", s->reset);
+    } else if (dv_eq(id, "fw") || dv_eq(id, "lora")) {
+        det_section("Firmware");
+        fw_of(s, have, v, sizeof v);
+        det_row("Runs", v[0] ? v : (s->soft ? "the XPRS app or server" : ""));
+        det_row("Newest published", g_latest);
+        if (behind(v)) det_row("Update", s->mine ? "available: Update firmware on the station's page" : "available to its owner");
+        if (installed_words(s->call, v, sizeof v)) det_row("Installed", v);
+        if (s->lora[0]) {
+            det_section("LoRa");
+            det_row("Shares its channel with", dv_eq(s->lora, "meshtastic") ? "Meshtastic"
+                  : dv_eq(s->lora, "meshcore") ? "MeshCore" : "XPRS only");
+            det_row("Channel", s->freq);
+        }
+    } else if (dv_eq(id, "heap")) {
+        det_section("Memory");
+        int n = slashes(s->heap, w);
+        det_row("Free now (KB)", n > 0 ? w[0] : "");
+        det_row("Largest free block (KB)", n > 1 ? w[1] : "");
+        det_row("Lowest since start (KB)", n > 2 ? w[2] : "");
+    } else if (dv_eq(id, "health")) {
+        det_section("Health");
+        health_words(s->health, v, sizeof v);
+        det_row("Parts", v);
+        det_row("Up / required (bits)", s->health);
+        det_row("Last reset", s->reset);
+        det_row("OTA slot", s->slot);
+    } else if (dv_eq(id, "radio") || dv_eq(id, "sent")) {
+        det_section("Radio (ESP-NOW)");
+        det_row("Heard / sent / cancelled / dropped", s->radio);
+    } else if (dv_eq(id, "crash") || dv_eq(id, "reset") || dv_eq(id, "slot")) {
+        det_section("Restarts");
+        det_row("Last reset", s->reset);
+        det_row("Crashed in", s->crash);
+        det_row("OTA slot", s->slot);
+    }
+    det_end();
 }
 
 /* ── What to listen to ────────────────────────────────────────────────── */
@@ -2559,7 +2686,7 @@ void st_command(void)
         dv_cpy(was, g_screen, sizeof was);
         g_screen[0] = 0;
         if ((dv_eq(was, "WiFi") || dv_eq(was, "Settings") || dv_eq(was, "Callsign") ||
-             dv_eq(was, "Administrators") || dv_eq(was, "History")) && g_sel >= 0 && g_sel < g_nst) {
+             dv_eq(was, "Administrators") || dv_eq(was, "Detail") || dv_eq(was, "History")) && g_sel >= 0 && g_sel < g_nst) {
             push_hub();
             screen_open("Station", g_st[g_sel].nick[0] ? g_st[g_sel].nick : g_st[g_sel].call);
         } else if (dv_eq(was, "Firmware") && g_dev[0]) {
@@ -2738,6 +2865,16 @@ void st_command(void)
         screen_open("Callsign", s->call);
         return;
     }
+    if (dv_eq(cmd, "st_station_tap") || dv_eq(cmd, "st_diag_tap")) {
+        /* A tile is a summary: tapping it opens what is behind it. */
+        char id[12] = "", title[40];
+        fields(dv_eq(cmd, "st_station_tap") ? "st_station_id" : "st_diag_id", id, sizeof id);
+        if (!id[0]) return;
+        push_tile(id);
+        dv_cpy(title, s->nick[0] ? s->nick : s->call, sizeof title);
+        screen_open("Detail", title);
+        return;
+    }
     if (dv_eq(cmd, "open_checkin")) {
         /* The check-in point is the station's own setting (XPRS.md 11.9.1),
          * set from the Check-in wapp, which this opens on this station. */
@@ -2830,11 +2967,13 @@ void st_command(void)
         } else do_wifi(s, ssid, pass);
         for (unsigned i = 0; pass[i]; i++) pass[i] = 0;
         field_set("wifi_pass", "");
-    } else if (dv_eq(cmd, "room_stop") || dv_eq(cmd, "room_take")) {
+    } else if (dv_eq(cmd, "tile_room_stop") || dv_eq(cmd, "tile_room_take") ||
+               dv_eq(cmd, "room_stop") || dv_eq(cmd, "room_take")) {
+        int stop = dv_eq(cmd, "room_stop") || dv_eq(cmd, "tile_room_stop");
         /* 13.0.2: whether it takes new people. Those it already keeps for
          * stay kept; newcomers go to an archiver with room. */
         if (!s->mine) log_line(s->call, "Only its owner can change that");
-        else do_set(s, dv_eq(cmd, "room_stop") ? "room:no" : "room:yes", "set");
+        else do_set(s, stop ? "room:no" : "room:yes", "set");
     } else if (dv_eq(cmd, "wifi_off")) {
         if (!s->mine) log_line(s->call, "Claim it first");
         else do_set(s, "wifi:off", "wifi");

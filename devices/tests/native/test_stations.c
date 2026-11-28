@@ -1075,7 +1075,7 @@ static void test_station_facts_and_update_over_the_air(void)
     const char *info = cap_last("\"field\":\"info\"");
     const char *tl = cap_last("\"field\":\"st_station\"");
     const char *po = cap_last("\"field\":\"st_policy\"");
-    CHECK(tl && strstr(tl, "{\"id\":\"fw\",\"label\":\"Firmware\",\"value\":\"0.3.1\",\"hint\":\"0.4.0 is available\",\"alert\":true}"),
+    CHECK(tl && strstr(tl, "{\"id\":\"fw\",\"label\":\"Firmware\",\"value\":\"0.3.1\",\"hint\":\"0.4.0 is available\",\"alert\":true,\"tap\":true}"),
           "what it runs and what is newer, as a tile: %s", tl ? tl : "");
     CHECK(info && strstr(info, "\"label\":\"Installed\",\"value\":\"today, from this device\""), "when this device installed it");
     CHECK(tl && strstr(tl, "\"label\":\"Lifetime\",\"value\":\"5day\""), "how long it has run");
