@@ -77,6 +77,10 @@ typedef struct {
     char fw[24], uptime[16], peers[8], heap[20], reset[16];
     char health[16], slot[16], radio[48], crash[32], mail[8];
     char count[12], room[12];     /* records held, room left: an owner's ask */
+    char life[16];
+    int  soft;                    /* a phone or a computer, not a board: it
+                                   * answered the diagnostics ask with what it
+                                   * holds and none of a board's own figures */
     char pol_owner[40], pol_use[12], pol_first[40], pol_serve[40];
     char bearer[8];
     int  rssi;
@@ -683,8 +687,15 @@ static void push_hub(void)
     /* The phone or computer in the person's hand has no firmware to report
      * to itself, and is not "heard" by itself. */
     int self = is_this_device(s);
+    int soft = self || s->soft;
     fw_of(s, have, w, sizeof w);
-    if (!self || w[0]) {
+    if (soft) {
+        det_section("Kind");
+        det_row("This is", self ? "the device in your hand" : "a phone or a computer");
+        if (s->count[0]) det_row("Keeps", s->count);
+        if (s->room[0]) det_row("Room left", s->room);
+        if (s->mail[0]) det_row("Mail held", s->mail);
+    } else if (!self || w[0]) {
         det_section("Firmware");
         if (w[0]) { dv_cpy(v, "XPRS ", sizeof v); dv_cat(v, w, sizeof v); }
         else dv_cpy(v, s->asking ? "asking..." : "not reported yet", sizeof v);
@@ -707,7 +718,7 @@ static void push_hub(void)
     else reach_words(s, have, v, sizeof v);
     det_row("Heard over", v);
     if (s->mine && s->pol_owner[0] && !dv_eq(s->pol_owner, "none"))
-        det_row("Administrators", s->pol_owner);
+        det_row("Admins", s->pol_owner);
     det_row("Owner", s->mine ? "You" : s->unowned ? "Nobody yet" : s->theirs ? "Somebody else" : "");
     {
         int on_lan = 0;
@@ -746,12 +757,14 @@ static void push_hub(void)
     /* A phone or a computer administering itself has no WiFi to be given,
      * no board settings and no firmware to be sent: its owner is holding
      * it. What is left is who else may administer it. */
-    flag_hidden("open_wifi", !s->mine || self);
-    flag_hidden("open_name", !s->mine || self);
+    /* The same holds for somebody's phone run from afar: its WiFi, name and
+     * key are set on the phone. */
+    flag_hidden("open_wifi", !s->mine || soft);
+    flag_hidden("open_name", !s->mine || soft);
     flag_hidden("open_admins", !s->mine);
-    flag_hidden("open_identity", !s->mine || self);
+    flag_hidden("open_identity", !s->mine || soft);
     flag_hidden("forget", self);
-    if (self) flag_hidden("update", 1);
+    if (soft) flag_hidden("update", 1);
 }
 
 static void item_full(const char *id, const char *title, const char *sub,
@@ -896,11 +909,12 @@ static void push_stats(void)
     /* 15.5: what the core heard the station say about itself. */
     tiles_begin("st_station");
     v[0] = 0; if (have) dv_json(g_host, "fw", v, sizeof v);
-    tile("fw", "Firmware", v[0] ? v : s->fw, "", "", "", 0);
+    if (!(s->soft || is_this_device(s)) || v[0] || s->fw[0])
+        tile("fw", "Firmware", v[0] ? v : s->fw, "", "", "", 0);
     v[0] = 0; if (have) dv_json(g_host, "uptime", v, sizeof v);
     tile("up", "Up", v[0] ? v : s->uptime, "", "since its last restart", "", 0);
     v[0] = 0; if (have) dv_json(g_host, "lifetime", v, sizeof v);
-    tile("life", "Lifetime", v, "", "across every restart", "", 0);
+    tile("life", "Lifetime", v[0] ? v : s->life, "", "across every restart", "", 0);
     v[0] = 0; if (have) dv_json(g_host, "peers", v, sizeof v);
     tile("peers", "Peers", v[0] ? v : s->peers, "", "stations it reaches", "", 0);
     v[0] = 0; if (have) dv_json(g_host, "mail", v, sizeof v);
@@ -1260,9 +1274,12 @@ static void take_state(st_t *s, const char *wire)
     /* What a station holds, in the words of 13.0 and 15.5. A phone or a
      * server says these to its owner in answer to the diagnostics ask. */
     if (dv_field(wire, "count", v, sizeof v)) dv_cpy(s->count, v, sizeof s->count);
+    if (dv_field(wire, "lifetime", v, sizeof v)) dv_cpy(s->life, v, sizeof s->life);
     if (dv_field(wire, "size", v, sizeof v)) dv_cpy(s->room, v, sizeof s->room);
     if (dv_field(wire, "mail", v, sizeof v)) dv_cpy(s->mail, v, sizeof s->mail);
-    if (dv_field(wire, "zm", v, sizeof v)) dv_cpy(s->heap, v, sizeof s->heap);
+    if (dv_field(wire, "zm", v, sizeof v)) { dv_cpy(s->heap, v, sizeof s->heap); s->soft = 0; }
+    else if (dv_field(wire, "count", v, sizeof v) && dv_field(wire, "uptime", v, sizeof v) &&
+             !dv_field(wire, "fw", v, sizeof v) && !dv_field(wire, "wifi", v, sizeof v)) s->soft = 1;
     if (dv_field(wire, "zr", v, sizeof v)) dv_cpy(s->reset, v, sizeof s->reset);
     if (dv_field(wire, "zh", v, sizeof v)) dv_cpy(s->health, v, sizeof s->health);
     if (dv_field(wire, "zp", v, sizeof v)) dv_cpy(s->slot, v, sizeof s->slot);
@@ -2456,6 +2473,13 @@ void st_command(void)
          * read. One request, answered by an observation. */
         if (!g_me[0]) who_am_i();
         if (host_facts(st) && !st->ask_pol && !(st->pend_id[0] && !st->pend_final)) do_ask(st);
+        /* One that is ours is also asked how it is doing: the answer is what
+         * tells a board from a phone, and so what this page offers. Not the
+         * device in the person's hand, which has nothing to learn by asking. */
+        if (st->mine && !is_this_device(st) && (!st->pend_id[0] || st->pend_final)) {
+            if (st->pend_id[0]) done_pending(st);
+            do_cmd(st, "cmd:zdiag", "zdiag");
+        }
         push_hub();
         screen_open("Station", st->nick[0] ? st->nick : id);
         return;
@@ -2603,7 +2627,12 @@ void st_command(void)
 
     /* One command at a time. Once the station has taken one (a 202) it is
      * working on its own, and a new one may go. */
-    if (s->pend_id[0] && !s->pend_final) { log_line(s->call, "Still waiting for its last answer"); return; }
+    if (s->pend_id[0] && !s->pend_final) {
+        /* Reading how it is doing never holds a person's own command back:
+         * the ask is given up, and made again the next time the page opens. */
+        if (dv_eq(s->pend_what, "zdiag")) done_pending(s);
+        else { log_line(s->call, "Still waiting for its last answer"); return; }
+    }
     if (s->pend_id[0]) done_pending(s);
 
     if (dv_eq(cmd, "pick_callsign")) {
