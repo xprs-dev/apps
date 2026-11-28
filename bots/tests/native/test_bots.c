@@ -279,7 +279,6 @@ int main(void)
     CHECK(ui_has("X1RUI9") && !ui_has("X1EFGH"), "the search narrows both lists");
     g_ui_n = 0;
     message("{\"command\":\"pick_done\"}");
-    message("{\"command\":\"screen_closed\"}");
     CHECK(ui_has("\"ui.screen.open\",\"name\":\"Bot\"") && ui_has("\"field\":\"b_list\",\"value\":\"X1RUI9\""),
           "Done returns to the bot's page with the chosen people in it");
     message("{\"command\":\"b_save\",\"fields\":{\"b_nick\":\"Weather\",\"b_about\":\"\","

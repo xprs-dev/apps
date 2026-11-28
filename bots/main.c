@@ -988,9 +988,12 @@ static void on_command(void)
         return;
     }
     if (b_eq(cmd, "pick_done")) {
-        /* The host answers the close with `screen_closed`, which is what
-         * ends the picking: the bot's page stays selected under it. */
-        say("{\"type\":\"ui.screen.close\"}");
+        /* Back to the bot's page, which opening the picker replaced (the
+         * host says `screen_closed` only for its own back arrow, so this
+         * button does the same work itself). */
+        g_picking = 0;
+        open_bot(g_sel);
+        field_str("b_list", g_chosen);
         return;
     }
     if (b_eq(cmd, "b_start")) { update_on(g_sel, 1); return; }
