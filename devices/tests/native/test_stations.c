@@ -1227,7 +1227,23 @@ static void test_this_device_is_listed_as_yours(void)
     CHECK(cap_count("\"field\":\"open_wifi__hidden\",\"value\":true") >= 1, "no WiFi for a phone");
     CHECK(cap_count("\"field\":\"open_identity__hidden\",\"value\":true") >= 1, "no Callsign");
     CHECK(cap_count("\"field\":\"forget__hidden\",\"value\":true") >= 1, "and it cannot be forgotten");
-    (void)aired;
+    /* Nothing hears its own beacons: its figures are its own answer. */
+    CHECK(strstr(last_aired(), " d:X3PH0N") && strstr(last_aired(), " cmd:zdiag"),
+          "the device is asked how it is doing, like any station of ours: %s", last_aired());
+    {
+        char id[7];
+        last_id(id);
+        cap_clear();
+        result("X3PH0N", id, "code:200 uptime:3h lifetime:9day peers:5 count:812 size:2GB mail:6 "
+                             "owner:X1ME77 use:all first:none serve:archive room:yes");
+        const char *t = cap_last("\"field\":\"st_station\"");
+        CHECK(t && strstr(t, "\"label\":\"Records\",\"value\":\"812\"") &&
+              strstr(t, "\"label\":\"Disk free\",\"value\":\"2GB\"") &&
+              strstr(t, "\"label\":\"Up\",\"value\":\"3h\""), "and shows them: %s", t ? t : "-");
+        const char *po = cap_last("\"field\":\"st_policy\"");
+        CHECK(po && strstr(po, "yes, it is an archiver") && strstr(po, "\"label\":\"New people\",\"value\":\"taken\""),
+              "with what it does for others: %s", po ? po : "-");
+    }
 }
 
 static void test_administrators_are_set_by_an_owner(void)

@@ -2718,9 +2718,11 @@ void st_command(void)
         if (!g_me[0]) who_am_i();
         if (host_facts(st) && !st->ask_pol && !(st->pend_id[0] && !st->pend_final)) { do_ask(st); st->asking = 1; }
         /* One that is ours is also asked how it is doing: the answer is what
-         * tells a board from a phone, and so what this page offers. Not the
-         * device in the person's hand, which has nothing to learn by asking. */
-        if (st->mine && !is_this_device(st) && (!st->pend_id[0] || st->pend_final)) {
+         * tells a board from a phone, and so what this page offers. The
+         * device in the person's hand too: nothing hears a station's own
+         * beacons, so its figures are only ever its answer (the core hands
+         * the ask to the device itself, XprsCommandCourier.toSelf). */
+        if (st->mine && (!st->pend_id[0] || st->pend_final)) {
             if (st->pend_id[0]) done_pending(st);
             do_cmd(st, "cmd:zdiag", "zdiag");
             st->asking = 1;
@@ -2745,7 +2747,7 @@ void st_command(void)
         g_sel = i;
         st_t *st = &g_st[i];
         if (!st->ask_pol && !(st->pend_id[0] && !st->pend_final)) { do_ask(st); st->asking = 1; }
-        if (st->mine && !is_this_device(st) && (!st->pend_id[0] || st->pend_final)) {
+        if (st->mine && (!st->pend_id[0] || st->pend_final)) {
             if (st->pend_id[0]) done_pending(st);
             do_cmd(st, "cmd:zdiag", "zdiag");
         }
