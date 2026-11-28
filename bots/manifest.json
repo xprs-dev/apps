@@ -1,0 +1,28 @@
+{
+  "id": "tools.xprs.bots",
+  "version": "0.1.0",
+  "kind": "app",
+  "title": "Bots",
+  "description": "Bots: programs with a callsign of their own that answer commands and messages.",
+  "summary": "A bot is a program with its own X2 callsign, so everybody can tell it is not a person. Create one, give it the command words it understands and what it answers to each, and start it. It answers commands from you or from the people you allow, replies to messages, and can let the AI you set up write the reply. The bot's key stays inside XPRS. To keep bots answering with XPRS closed, long-press Bots on the home screen and turn on Run in background.",
+  "icon": "media/icons/bots.svg",
+  "color": "#455A64",
+  "tags": ["xprs", "bots", "automation", "x2", "ai"],
+  "entry_ui": "screens/home.ui.json",
+  "tick_interval_ms": 0,
+  "permissions": ["bots.run"],
+  "platforms": ["android", "linux", "windows", "macos"],
+  "hardware": ["N/A", "intel", "arm"],
+  "provides": {
+    "functions": [],
+    "events": [],
+    "variables": [],
+    "functionalities": []
+  },
+  "requires": {
+    "hal": ["bots", "event", "kv", "log", "msg"],
+    "events": [],
+    "libraries": [],
+    "variables": []
+  }
+}

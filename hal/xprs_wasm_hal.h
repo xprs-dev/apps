@@ -1567,6 +1567,41 @@ __attribute__((import_module("hal"), import_name("xprs_names")))
 int32_t hal_xprs_names(const char *query, uint32_t query_len,
                        char *out, uint32_t out_cap);
 
+/* ── Bots (XPRS.md 3.3; permission `bots.run`) ───────────────────────────
+ *
+ * A bot is a station with an X2 callsign of its own. The core creates and
+ * holds its key, signs what it says, and applies the gate of 11.4 (a
+ * command is signed, fresh, not carried, from somebody on the bot's list;
+ * a repeat is answered again and acted on once) and the budget of 30.2 to
+ * what is addressed to it. A wapp reaches only the bots it created.
+ *
+ * hal_bots takes a JSON request:
+ *   {"op":"list"}                       writes [{"call","nick","about","on",
+ *                                       "allow","perHour"}] into out
+ *   {"op":"create","nick":"weather"}    0; the list changes on `core.bots`
+ *   {"op":"update","call":"X2..","nick","about","on","allow","perHour"}
+ *                                       0; `allow` is owner, all, or callsigns
+ *   {"op":"remove","call":"X2.."}       0
+ * Returns bytes written (list), 0 (queued), -1 (malformed), -2 (not a bot
+ * of this wapp), or the negated size needed.
+ *
+ * What passes the gate arrives on the topic `xprs.bot`, one event a packet:
+ *   {"bot":"X2..","id":"747ae8","type":"command|message|request",
+ *    "from":"X1..","ts":"..","sig":"verified|unverified|unsigned",
+ *    "sealed":false,"bearer":"ble","text":"words of a message",
+ *    "fields":[["t","command"],["f","X1.."],["cmd","forecast"],...]}
+ * A sealed message arrives opened, in "text".
+ *
+ * hal_bot_say airs one wire as a running bot: `f:` names it, the core adds
+ * `ts:` and the signature and chooses how it travels. A `t:result` is
+ * remembered for its command; the answer to a sealed message leaves sealed.
+ * 0 queued, -1 does not parse, -2 not a running bot of this wapp, -3 not a
+ * bot's to say, -4 could not be sealed. */
+__attribute__((import_module("hal"), import_name("bots")))
+int32_t hal_bots(const char *req, uint32_t req_len, char *out, uint32_t out_cap);
+__attribute__((import_module("hal"), import_name("bot_say")))
+int32_t hal_bot_say(const char *wire, uint32_t wire_len);
+
 /* What an ADDRESS names, by the core's one rule: "user" (X1), "bot" (X2, a program,
  * XPRS.md 3.3), "station" (X3 or a licence), "device" (X4), "foreign" (a node of another network,
  * MT/MC and eight hex, XPRS.md 3.2), "closed" (an X5 closed group) or "open"
