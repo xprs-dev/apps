@@ -16,7 +16,7 @@ int32_t module_handle_event(void);
 /* ── the stand-in host ────────────────────────────────────────────────── */
 static char g_list[2048] = "[]";
 static char g_last_req[1024];
-static char g_said[8][1024];
+static char g_said[32][1024];
 static int g_said_n;
 static char g_ui[64][8192];
 static int g_ui_n;
@@ -43,7 +43,7 @@ int32_t hal_bots(const char *req, uint32_t n, char *out, uint32_t cap)
 
 int32_t hal_bot_say(const char *w, uint32_t n)
 {
-    if (g_said_n < 8) snprintf(g_said[g_said_n++], sizeof g_said[0], "%.*s", (int)n, w);
+    if (g_said_n < 32) snprintf(g_said[g_said_n++], sizeof g_said[0], "%.*s", (int)n, w);
     return 0;
 }
 
@@ -193,6 +193,11 @@ int main(void)
           "a message starting with a word gets the reply as a message");
     packet("message", "666666", "X1EFGH", "", "hello there");
     CHECK(strstr(last_said(), "r:666666 m:I only know commands. Write help."), "any other message gets the fixed line");
+    packet("message", "676767", "X1EFGH", "", "/");
+    CHECK(strstr(last_said(), "r:676767 m:I know: /forecast /open /help"),
+          "a bare slash is answered with the menu, as slash words");
+    packet("message", "686868", "X1EFGH", "", "/start");
+    CHECK(strstr(last_said(), "r:686868 m:I know: /forecast /open /help"), "and so is /start");
     int before = g_said_n;
     packet("message", "777777", "X2OTHR", "", "forecast");
     CHECK(g_said_n == before, "another bot's message is never answered");
