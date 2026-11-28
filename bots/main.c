@@ -7,7 +7,9 @@
  *
  *   - a command word it was taught   ->  t:result code:200 m:<the reply>
  *   - a word it does not know        ->  t:result code:404
- *   - cmd:help, or the word help     ->  the words it knows
+ *   - cmd:help; the message /, /help or /start
+ *                                    ->  the words it knows, written
+ *                                        /word so a chat shows buttons
  *   - cmd:interpret (11.5)           ->  the AI's answer, when the owner
  *                                        switched the AI on; 404 otherwise
  *   - a message whose first word is a command word -> the reply, as a message
@@ -274,8 +276,9 @@ static int rule_for(const char *word, char *out, unsigned cap)
     return 0;
 }
 
-/* "I know: a, b, c" from the taught words. */
-static void known_words(char *out, unsigned cap)
+/* The taught words: "I know: a, b, c" for a command's answer, and for a
+ * message "I know: /a /b /help", the form a chat turns into buttons. */
+static void known_words(char *out, unsigned cap, int slash)
 {
     const char *p = g_rules;
     int any = 0;
@@ -287,13 +290,18 @@ static void known_words(char *out, unsigned cap)
         while (n && (w[n - 1] == ' ' || w[n - 1] == '\t')) n--;
         w[n] = 0;
         if (*p == '=' && n) {
-            if (any) b_cat(out, ", ", cap);
+            if (any) b_cat(out, slash ? " " : ", ", cap);
+            if (slash) {
+                b_cat(out, "/", cap);
+                for (unsigned i = 0; i < n; i++) w[i] = b_low(w[i]);
+            }
             b_cat(out, w, cap);
             any = 1;
         }
         while (*p && *p != '\n') p++;
     }
     if (!any) b_cpy(out, "I was not taught any command yet", cap);
+    else if (slash) b_cat(out, " /help", cap);
 }
 
 /* ── What happened lately, for the bot's page ─────────────────────────── */
@@ -444,7 +452,7 @@ static void on_packet(const char *row)
             return;
         }
         if (b_eq_nocase(cmd, "help")) {
-            known_words(reply, sizeof reply);
+            known_words(reply, sizeof reply, 0);
             send_result(bot, from, id, "200", reply);
             log_add(bot, from, "help");
             return;
@@ -483,8 +491,12 @@ static void on_packet(const char *row)
             log_add(bot, from, word);
             return;
         }
-        if (b_eq_nocase(word, "help")) {
-            known_words(reply, sizeof reply);
+        /* "/", "/help" and "/start" ask what it can do. */
+        const char *lead = text;
+        while (*lead == ' ') lead++;
+        if (b_eq_nocase(word, "help") || b_eq_nocase(word, "start") ||
+            (!word[0] && *lead == '/')) {
+            known_words(reply, sizeof reply, 1);
             send_message(bot, from, id, reply);
             log_add(bot, from, "help");
             return;

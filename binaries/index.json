@@ -67,7 +67,7 @@
   {"file":"bluetooth/bluetooth-0.2.1.wapp","id":"tools.xprs.bluetooth","version":"0.2.1","size":8348,"title":"Bluetooth","description":"Bluetooth - the BLE street mesh: devices within reach and how far messages can travel."},
   {"file":"bluetooth/bluetooth-0.2.2.wapp","id":"tools.xprs.bluetooth","version":"0.2.2","size":8769,"title":"Bluetooth","description":"See the phones and devices in Bluetooth range."},
   {"file":"bluetooth/bluetooth-0.2.3.wapp","id":"tools.xprs.bluetooth","version":"0.2.3","size":8821,"title":"Bluetooth","description":"See the phones and devices in Bluetooth range."},
-  {"file":"bots/bots-0.1.0.wapp","id":"tools.xprs.bots","version":"0.1.0","size":28461,"title":"Bots","description":"Bots: programs with a callsign of their own that answer commands and messages."},
+  {"file":"bots/bots-0.1.0.wapp","id":"tools.xprs.bots","version":"0.1.0","size":29033,"title":"Bots","description":"Bots: programs with a callsign of their own that answer commands and messages."},
   {"file":"chat/chat-0.10.0.wapp","id":"tools.xprs.chat","version":"0.10.0","size":207351,"title":"Chat","description":"Group and private chats with the stations around you."},
   {"file":"chat/chat-0.10.1.wapp","id":"tools.xprs.chat","version":"0.10.1","size":207553,"title":"Chat","description":"Group and private chats with the stations around you."},
   {"file":"chat/chat-0.10.10.wapp","id":"tools.xprs.chat","version":"0.10.10","size":220833,"title":"Chat","description":"Group and private chats with the stations around you."},
