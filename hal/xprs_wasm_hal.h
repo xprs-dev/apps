@@ -1464,7 +1464,7 @@ int32_t hal_archive_set_pref(const char *kv, uint32_t kv_len);
  *   [{"title":"Heard over the air (n)","items":[{id,title,subtitle,tags}]},
  *    {"title":"Heard this hour (m)","items":[...]},
  *    {"title":"On Reticulum (k)","items":[...]}]
- * Each item also carries "kind": "user", "station" or "device" (XPRS.md 3,
+ * Each item also carries "kind": "user", "bot", "station" or "device" (XPRS.md 3,
  * decided by the core: a wapp listing devices reads it, never a prefix). */
 __attribute__((import_module("hal"), import_name("xprs_stations")))
 int32_t hal_xprs_stations(char *out, uint32_t out_cap);
@@ -1567,8 +1567,8 @@ __attribute__((import_module("hal"), import_name("xprs_names")))
 int32_t hal_xprs_names(const char *query, uint32_t query_len,
                        char *out, uint32_t out_cap);
 
-/* What an ADDRESS names, by the core's one rule: "user" (X1), "station" (X2,
- * X3 or a licence), "device" (X4), "foreign" (a node of another network,
+/* What an ADDRESS names, by the core's one rule: "user" (X1), "bot" (X2, a program,
+ * XPRS.md 3.3), "station" (X3 or a licence), "device" (X4), "foreign" (a node of another network,
  * MT/MC and eight hex, XPRS.md 3.2), "closed" (an X5 closed group) or "open"
  * (an open group's name, 7.3: LISBOA). A wapp filing a conversation asks
  * this rather than testing a prefix of its own. A node of another network
