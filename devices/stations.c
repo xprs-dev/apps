@@ -509,6 +509,8 @@ static void set_now(st_t *s, const char *text)
         one_line("now", "Now", s->now);
         one_line("wifi_now", "Now", s->now);
         one_line("admins_now", "Now", s->now);
+        one_line("settings_now", "Now", s->now);
+        one_line("callsign_now", "Now", s->now);
     }
 }
 
@@ -961,7 +963,7 @@ static void push_stats(void)
     /* The firmware's own words (cmd:zdiag, its owner only). */
     tiles_begin("st_diag");
     int board = s->heap[0] || s->reset[0] || s->health[0] || s->slot[0] || s->radio[0] || s->crash[0];
-    if (!board) {
+    if (!board && (s->soft || is_this_device(s))) {
         /* A phone or a server answers the same ask with what it holds
          * (shown above); the board's own figures are not its to give. */
         tile("kind", "Kind", is_this_device(s) ? "This device" : s->count[0] || s->room[0] ? "Phone or computer" : "",
@@ -2815,6 +2817,11 @@ void st_init(void)
         sub(&g_sub_flash, 1, "core.flash");
         hal_flash_scan();
         fresh_visit();
+        /* And ask the stations in earshot whose they are. This waited for
+         * a `ready` the host does not send to every page it opens, so a
+         * person's own board was listed only after Look again (bench,
+         * 2026-11-28). */
+        discover();
         /* And keep the published firmwares here while it is open. */
         g_prefetch = 1;
     }

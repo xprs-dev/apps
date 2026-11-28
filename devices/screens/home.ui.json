@@ -519,6 +519,12 @@
     "label": "Save",
     "style": "primary",
     "icon": "save"
+   },
+   {
+    "$": "field",
+    "name": "settings_now",
+    "$type": "details",
+    "empty": ""
    }
   ]
  },
@@ -610,6 +616,12 @@
     "confirm": true,
     "confirm-label": "Go back to its derived callsign?",
     "confirm-text": "The station restarts under the callsign its key derives."
+   },
+   {
+    "$": "field",
+    "name": "callsign_now",
+    "$type": "details",
+    "empty": ""
    }
   ]
  },
