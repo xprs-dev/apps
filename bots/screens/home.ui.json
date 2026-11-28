@@ -55,17 +55,33 @@
       },
       {
         "$": "group",
-        "name": "Who may command it",
+        "name": "Who it is there for",
         "children": [
           {
-            "$": "field", "name": "b_allow", "$type": "enum", "label": "Commands are taken from", "default": "owner",
+            "$": "field", "name": "b_reach", "$type": "enum", "label": "How far it reaches", "default": "global",
+            "children": [
+              { "$": "option", "name": "global", "label": "Everywhere: announced like a person, answers over the internet too" },
+              { "$": "option", "name": "regional", "label": "The region: radio and nearby, never the internet" },
+              { "$": "option", "name": "local", "label": "Here: only stations around it (Bluetooth, WiFi)" }
+            ]
+          },
+          {
+            "$": "field", "name": "b_talk", "$type": "enum", "label": "It answers messages from", "default": "all",
+            "children": [
+              { "$": "option", "name": "all", "label": "Anybody" },
+              { "$": "option", "name": "list", "label": "Me and the people below" },
+              { "$": "option", "name": "owner", "label": "Only me" }
+            ]
+          },
+          {
+            "$": "field", "name": "b_allow", "$type": "enum", "label": "It takes commands from", "default": "owner",
             "children": [
               { "$": "option", "name": "owner", "label": "Only me" },
-              { "$": "option", "name": "list", "label": "Me and the callsigns below" },
+              { "$": "option", "name": "list", "label": "Me and the people below" },
               { "$": "option", "name": "all", "label": "Anybody" }
             ]
           },
-          { "$": "field", "name": "b_list", "$type": "string", "label": "Callsigns", "hint": "X1ABCD, X1EFGH", "max": 120 }
+          { "$": "field", "name": "b_list", "$type": "string", "label": "The people I chose", "hint": "X1ABCD, X1EFGH", "max": 120 }
         ]
       },
       { "$": "action", "name": "b_save", "label": "Save", "style": "primary", "icon": "check" },

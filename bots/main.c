@@ -144,6 +144,8 @@ typedef struct {
     char nick[32];
     char about[100];
     char allow[160];
+    char talk[160];
+    char reach[12];
     int on;
 } bot_t;
 
@@ -190,6 +192,8 @@ static void load_bots(void)
             j_get(p, "nick", b->nick, sizeof b->nick);
             j_get(p, "about", b->about, sizeof b->about);
             j_get(p, "allow", b->allow, sizeof b->allow);
+            j_get(p, "talk", b->talk, sizeof b->talk);
+            j_get(p, "reach", b->reach, sizeof b->reach);
             j_get(p, "on", on, sizeof on);
             b->on = b_eq(on, "true");
             g_n++;
@@ -619,6 +623,10 @@ static void draw_state(bot_t *b)
     details_begin("b_info", "");
     detail("Callsign", b->call);
     detail("State", b->on ? "Running: it answers" : "Stopped");
+    detail("Announced", !b->on ? "" :
+           b_eq(b->reach, "local") ? "To the stations around it" :
+           b_eq(b->reach, "regional") ? "On the radio around it, not the internet" :
+           "Everywhere, like a person");
     details_end("b_info");
     field_flag("b_start", "__hidden", b->on);
     field_flag("b_stop", "__hidden", !b->on);
@@ -642,13 +650,13 @@ static void open_bot(const char *call)
     field_str("b_hello", g_hello);
     field_flag("b_ai", "", g_ai);
     field_str("b_prompt", g_prompt);
-    if (b_eq(b->allow, "owner") || b_eq(b->allow, "all")) {
-        field_str("b_allow", b->allow);
-        field_str("b_list", "");
-    } else {
-        field_str("b_allow", "list");
-        field_str("b_list", b->allow);
-    }
+    /* One list of chosen people serves both questions. */
+    int allow_list = !(b_eq(b->allow, "owner") || b_eq(b->allow, "all"));
+    int talk_list = !(b_eq(b->talk, "owner") || b_eq(b->talk, "all") || !b->talk[0]);
+    field_str("b_allow", allow_list ? "list" : b->allow);
+    field_str("b_talk", talk_list ? "list" : (b->talk[0] ? b->talk : "all"));
+    field_str("b_list", talk_list ? b->talk : allow_list ? b->allow : "");
+    field_str("b_reach", b->reach[0] ? b->reach : "global");
     draw_state(b);
 }
 
@@ -662,10 +670,12 @@ static void update_on(const char *call, int on)
 
 static void save_bot(const char *call)
 {
-    static char nick[40], about[120], how[12], list[160], ai[8];
+    static char nick[40], about[120], how[12], who[12], reach[12], list[160], ai[8];
     j_get(g_msg, "b_nick", nick, sizeof nick);
     j_get(g_msg, "b_about", about, sizeof about);
     j_get(g_msg, "b_allow", how, sizeof how);
+    j_get(g_msg, "b_talk", who, sizeof who);
+    j_get(g_msg, "b_reach", reach, sizeof reach);
     j_get(g_msg, "b_list", list, sizeof list);
     j_get(g_msg, "b_rules", g_rules, sizeof g_rules);
     j_get(g_msg, "b_hello", g_hello, sizeof g_hello);
@@ -679,20 +689,21 @@ static void save_bot(const char *call)
     kv_write("ai", call, g_ai ? "1" : "0");
 
     /* Callsigns however they were typed: upper case, commas between. */
-    char allow[160] = "";
-    if (b_eq(how, "all")) b_cpy(allow, "all", sizeof allow);
-    else if (b_eq(how, "list")) {
-        for (const char *p = list; *p;) {
-            char c[12]; unsigned k = 0;
-            while (*p == ' ' || *p == ',' || *p == ';') p++;
-            while (*p && *p != ' ' && *p != ',' && *p != ';') { if (k + 1 < sizeof c) c[k++] = b_up(*p); p++; }
-            c[k] = 0;
-            if (!k) continue;
-            if (allow[0]) b_cat(allow, ",", sizeof allow);
-            b_cat(allow, c, sizeof allow);
-        }
+    char people[160] = "";
+    for (const char *p = list; *p;) {
+        char c[12]; unsigned k = 0;
+        while (*p == ' ' || *p == ',' || *p == ';') p++;
+        while (*p && *p != ' ' && *p != ',' && *p != ';') { if (k + 1 < sizeof c) c[k++] = b_up(*p); p++; }
+        c[k] = 0;
+        if (!k) continue;
+        if (people[0]) b_cat(people, ",", sizeof people);
+        b_cat(people, c, sizeof people);
     }
-    if (!allow[0]) b_cpy(allow, "owner", sizeof allow);
+    /* "The people I chose" with nobody chosen is only me. */
+    char allow[160], talk[160];
+    b_cpy(allow, b_eq(how, "all") ? "all" : (b_eq(how, "list") && people[0]) ? people : "owner", sizeof allow);
+    b_cpy(talk, b_eq(who, "owner") ? "owner" : b_eq(who, "list") ? (people[0] ? people : "owner") : "all", sizeof talk);
+    if (!b_eq(reach, "local") && !b_eq(reach, "regional")) b_cpy(reach, "global", sizeof reach);
 
     b_cpy(g_io, "{\"op\":\"update\",\"call\":\"", sizeof g_io);
     b_cat(g_io, call, sizeof g_io);
@@ -702,6 +713,10 @@ static void save_bot(const char *call)
     b_jesc(g_io, about, sizeof g_io);
     b_cat(g_io, "\",\"allow\":\"", sizeof g_io);
     b_jesc(g_io, allow, sizeof g_io);
+    b_cat(g_io, "\",\"talk\":\"", sizeof g_io);
+    b_jesc(g_io, talk, sizeof g_io);
+    b_cat(g_io, "\",\"reach\":\"", sizeof g_io);
+    b_cat(g_io, reach, sizeof g_io);
     b_cat(g_io, "\"}", sizeof g_io);
     if (hal_bots(g_io, b_len(g_io), 0, 0) == 0) snack("Saved");
     else snack("Could not save");

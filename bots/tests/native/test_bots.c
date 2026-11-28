@@ -157,10 +157,12 @@ int main(void)
     message("{\"command\":\"b_save\",\"fields\":{\"b_nick\":\"Weather\",\"b_about\":\"Says \\\"rain\\\"\","
             "\"b_rules\":\"forecast = Rain from 16:00\\nOpen=The office opens at nine\","
             "\"b_hello\":\"I only know commands. Write help.\",\"b_ai\":false,\"b_prompt\":\"\","
-            "\"b_allow\":\"list\",\"b_list\":\"x1abcd; X1EFGH\"}}");
+            "\"b_allow\":\"list\",\"b_talk\":\"owner\",\"b_reach\":\"local\",\"b_list\":\"x1abcd; X1EFGH\"}}");
     CHECK(strstr(g_last_req, "\"nick\":\"Weather\""), "Save sends the name to the core");
     CHECK(strstr(g_last_req, "\"about\":\"Says \\\"rain\\\"\""), "a quote in a field survives");
     CHECK(strstr(g_last_req, "\"allow\":\"X1ABCD,X1EFGH\""), "the allow list is tidied to callsigns");
+    CHECK(strstr(g_last_req, "\"talk\":\"owner\""), "who it answers goes to the core");
+    CHECK(strstr(g_last_req, "\"reach\":\"local\""), "and so does how far it reaches");
     CHECK(ui_has("\"ui.snack\",\"text\":\"Saved\""), "and says Saved");
 
     /* Stopped: it answers nothing. */

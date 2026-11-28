@@ -1577,10 +1577,15 @@ int32_t hal_xprs_names(const char *query, uint32_t query_len,
  *
  * hal_bots takes a JSON request:
  *   {"op":"list"}                       writes [{"call","nick","about","on",
- *                                       "allow","perHour"}] into out
+ *                                       "allow","talk","reach","perHour"}]
  *   {"op":"create","nick":"weather"}    0; the list changes on `core.bots`
- *   {"op":"update","call":"X2..","nick","about","on","allow","perHour"}
- *                                       0; `allow` is owner, all, or callsigns
+ *   {"op":"update","call":"X2..","nick","about","on","allow","talk",
+ *    "reach","perHour"}                 0. `allow` (who may command it) and
+ *                                       `talk` (who it answers) are owner,
+ *                                       all, or callsigns; `reach` is
+ *                                       global, regional or local (9.11):
+ *                                       how far it is announced, and the
+ *                                       widest bearer it takes packets from
  *   {"op":"remove","call":"X2.."}       0
  * Returns bytes written (list), 0 (queued), -1 (malformed), -2 (not a bot
  * of this wapp), or the negated size needed.
