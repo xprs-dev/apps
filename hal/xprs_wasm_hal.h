@@ -73,6 +73,31 @@ uint32_t hal_identity_device(char *buf, uint32_t buf_len);
 __attribute__((import_module("hal"), import_name("xprs_owned")))
 int32_t hal_xprs_owned(char *out, uint32_t out_cap);
 
+/* People I know: what the person holding this phone wrote down about
+ * somebody (the app's People screens; core PeopleBook). Private to this
+ * phone; a wapp reads it to show the names its owner uses, never airs it.
+ *
+ * hal_people_get: the person any of whose IDs is `id` (a callsign, an MT/MC
+ * node, or the X1 the book made for them), as
+ *   {"id":"X1TAXA","ids":["MT1A2B3C4D"],"nick":"Rui","note":"...",
+ *    "tags":["repeater"],"place":{"lat":45.65,"lon":0.15,"r":5}}
+ * (`nick`, `note`, `tags`, `place` only when written; `r` in km). Returns
+ * bytes written, 0 when nobody in the book has that ID, -2 when out_cap is
+ * too small.
+ *
+ * hal_people_find: everybody carrying `tag` (empty: any) whose nickname, an
+ * ID, a tag or the note contains `query` (empty: any), newest change first,
+ * as a JSON array of the objects above, as many as fit. 0 for nobody.
+ *
+ * Subscribe to `core.people` to hear that a nickname, note, tag or place
+ * changed. */
+__attribute__((import_module("hal"), import_name("people_get")))
+int32_t hal_people_get(const char *id, uint32_t id_len, char *out, uint32_t out_cap);
+
+__attribute__((import_module("hal"), import_name("people_find")))
+int32_t hal_people_find(const char *tag, uint32_t tag_len, const char *query,
+                        uint32_t query_len, char *out, uint32_t out_cap);
+
 /* This device's public key — the active profile's Nostr public key in bech32
  * form ("npub1..."), written into buf. Returns bytes written (0 if none).
  * Lets a wapp publish its identity key so peers can map callsign -> pubkey
