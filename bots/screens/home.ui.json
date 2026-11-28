@@ -44,13 +44,13 @@
         "name": "What it answers",
         "children": [
           {
-            "$": "field", "name": "b_rules", "$type": "text",
+            "$": "field", "name": "b_rules", "$type": "text", "multiline": true, "lines": 8,
             "label": "Command words and replies, one per line",
             "hint": "forecast = Rain from 16:00"
           },
           { "$": "field", "name": "b_hello", "$type": "string", "label": "Reply to any other message", "hint": "leave empty to stay silent", "max": 160 },
           { "$": "field", "name": "b_ai", "$type": "bool", "label": "Let the AI answer other messages", "default": false },
-          { "$": "field", "name": "b_prompt", "$type": "text", "label": "What the AI should know and do", "hint": "You answer questions about our hiking club. We meet on Saturdays." }
+          { "$": "field", "name": "b_prompt", "$type": "text", "multiline": true, "lines": 5, "label": "What the AI should know and do", "hint": "You answer questions about our hiking club. We meet on Saturdays." }
         ]
       },
       {
@@ -60,9 +60,9 @@
           {
             "$": "field", "name": "b_reach", "$type": "enum", "label": "How far it reaches", "default": "global",
             "children": [
-              { "$": "option", "name": "global", "label": "Everywhere: announced like a person, answers over the internet too" },
-              { "$": "option", "name": "regional", "label": "The region: radio and nearby, never the internet" },
-              { "$": "option", "name": "local", "label": "Here: only stations around it (Bluetooth, WiFi)" }
+              { "$": "option", "name": "global", "label": "Everywhere, like a person" },
+              { "$": "option", "name": "regional", "label": "The region: radio, no internet" },
+              { "$": "option", "name": "local", "label": "Here: Bluetooth and WiFi only" }
             ]
           },
           {
@@ -81,13 +81,32 @@
               { "$": "option", "name": "all", "label": "Anybody" }
             ]
           },
-          { "$": "field", "name": "b_list", "$type": "string", "label": "The people I chose", "hint": "X1ABCD, X1EFGH", "max": 120 }
+          { "$": "field", "name": "b_list", "$type": "string", "label": "The people I chose", "hint": "X1ABCD, X1EFGH", "max": 120 },
+          { "$": "action", "name": "pick_open", "label": "Choose from people I know", "icon": "people" }
         ]
       },
       { "$": "action", "name": "b_save", "label": "Save", "style": "primary", "icon": "check" },
       { "$": "field", "name": "b_log", "$type": "details", "empty": "" },
       { "$": "action", "name": "b_delete", "label": "Delete this bot", "icon": "delete" },
       { "$": "action", "name": "back", "label": "Back", "icon": "close" }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "People",
+    "icon": "people",
+    "hidden": true,
+    "search": true,
+    "toolbar": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "pick",
+        "$type": "people",
+        "empty_title": "Nobody to choose yet",
+        "empty": "People you wrote down in People, and people heard lately, are listed here. A callsign can also be typed on the bot's page."
+      },
+      { "$": "action", "name": "pick_done", "label": "Done", "style": "primary", "icon": "check" }
     ]
   }
 ]

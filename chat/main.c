@@ -1297,6 +1297,9 @@ static void on_core_packet(const char *topic, const char *row) {
    * says, not a lock (XPRS.md 10.7). */
   /* Somebody outside the group asking to join (10.3): the core hands it only
    * to the group's admin and moderators. Kept as a request, not a post. */
+    /* A hidden-text reply aired by an older build carries its reply marker
+     * in the words ("+432195 ..."): show the reply, not the marker. */
+    if (obf && !parent[0]) strip_reply6(m, parent);
   if (closed && jbool(row, "request")) { join_request_note(gid, from, m, ts); return; }
   /* A post in the clear is public by its nature (10.7.1): anybody who opened
    * the group reads it. A private group's posts are sealed, and only its
@@ -1458,7 +1461,12 @@ static void on_xr_redacted(const char *row) {
    * composer looking like it swallowed the message. */
   if (!jbool_def(row, "ok", 1)) { notify("warning", wtr("msg.could_not_send", "Could not send")); return; }
   if (!convo[0] || !id[0]) return;
-  admit(convo, id, "out", g_call, m, "", "", "verified", 0, 0, "", "", 0, 1, "");
+  char parent[8] = "";
+  jstr(row, "parent", parent, sizeof(parent));
+  /* Sent before the core took the marker as `r:`: the words still begin
+   * with it. */
+  if (!parent[0]) strip_reply6(m, parent);
+  admit(convo, id, "out", g_call, m, parent, "", "verified", 0, 0, "", "", 0, 1, "");
 }
 
 /* ── Statuses at the head of the list (XPRS.md 27) ────────────────────

@@ -660,6 +660,213 @@ static void open_bot(const char *call)
     draw_state(b);
 }
 
+/* ── Choosing people (the owner's People list, and who was heard) ──────── */
+#define PICK_MAX 80
+static struct { char call[12]; char name[40]; int known; } g_pick[PICK_MAX];
+static int g_pick_n;
+static char g_chosen[160];       /* the callsigns chosen, comma-separated */
+static int g_picking;            /* the picker is the screen on top */
+static char g_big[32768];        /* the host's lists */
+
+static int chosen_has(const char *call)
+{
+    const char *p = g_chosen;
+    unsigned n = b_len(call);
+    while (*p) {
+        const char *e = p;
+        while (*e && *e != ',') e++;
+        if ((unsigned)(e - p) == n) {
+            unsigned i = 0;
+            while (i < n && p[i] == call[i]) i++;
+            if (i == n) return 1;
+        }
+        p = *e ? e + 1 : e;
+    }
+    return 0;
+}
+
+static void chosen_toggle(const char *call)
+{
+    if (chosen_has(call)) {
+        char out[160] = "";
+        const char *p = g_chosen;
+        while (*p) {
+            char c[12]; unsigned k = 0;
+            while (*p && *p != ',') { if (k + 1 < sizeof c) c[k++] = *p; p++; }
+            c[k] = 0;
+            if (*p == ',') p++;
+            if (!k || b_eq(c, call)) continue;
+            if (out[0]) b_cat(out, ",", sizeof out);
+            b_cat(out, c, sizeof out);
+        }
+        b_cpy(g_chosen, out, sizeof g_chosen);
+        return;
+    }
+    if (b_len(g_chosen) + b_len(call) + 2 >= sizeof g_chosen) return;
+    if (g_chosen[0]) b_cat(g_chosen, ",", sizeof g_chosen);
+    b_cat(g_chosen, call, sizeof g_chosen);
+}
+
+/* The typed list as callsigns: upper case, commas between. */
+static void tidy_calls(char *out, unsigned cap, const char *list)
+{
+    out[0] = 0;
+    for (const char *p = list; *p;) {
+        char c[12]; unsigned k = 0;
+        while (*p == ' ' || *p == ',' || *p == ';') p++;
+        while (*p && *p != ' ' && *p != ',' && *p != ';') { if (k + 1 < sizeof c) c[k++] = b_up(*p); p++; }
+        c[k] = 0;
+        if (!k) continue;
+        if (out[0]) b_cat(out, ",", cap);
+        b_cat(out, c, cap);
+    }
+}
+
+/* An XPRS person's or bot's own callsign: X1 or X2 and its characters. Not a
+ * station, a device, a group, or a node of another network. */
+static int is_person_call(const char *c)
+{
+    unsigned n = b_len(c);
+    return n >= 4 && n <= 9 && c[0] == 'X' && (c[1] == '1' || c[1] == '2');
+}
+
+static void pick_add(const char *call, const char *name, int known)
+{
+    if (!is_person_call(call)) return;
+    for (int i = 0; i < g_pick_n; i++)
+        if (b_eq(g_pick[i].call, call)) {
+            if (known) { g_pick[i].known = 1; if (name[0]) b_cpy(g_pick[i].name, name, sizeof g_pick[i].name); }
+            return;
+        }
+    if (g_pick_n >= PICK_MAX) return;
+    b_cpy(g_pick[g_pick_n].call, call, sizeof g_pick[0].call);
+    b_cpy(g_pick[g_pick_n].name, name, sizeof g_pick[0].name);
+    g_pick[g_pick_n].known = known;
+    g_pick_n++;
+}
+
+/* The end of the JSON object that opens at [p] (nested objects and strings
+ * skipped), or 0. */
+static char *obj_end(char *p)
+{
+    int depth = 0;
+    for (; *p; p++) {
+        if (*p == '"') { for (p++; *p && *p != '"'; p++) if (*p == '\\' && p[1]) p++; if (!*p) return 0; }
+        else if (*p == '{') depth++;
+        else if (*p == '}') { if (--depth == 0) return p; }
+    }
+    return 0;
+}
+
+/* Everybody who can be chosen: the people the owner wrote down (their XPRS
+ * callsigns), then the people heard lately. [query] narrows both. */
+static void pick_load(const char *query)
+{
+    g_pick_n = 0;
+    /* People I know (permission people.read): [{"id","ids":[..],"nick",..}]. */
+    int32_t n = hal_people_find("", 0, query, b_len(query), g_big, sizeof g_big - 1);
+    if (n > 0) {
+        g_big[n] = 0;
+        for (char *p = g_big; *p; p++) {
+            if (*p != '{') continue;
+            char *q = obj_end(p);
+            if (!q) break;
+            char keep = q[1];
+            q[1] = 0;
+            char nick[40] = "";
+            j_get(p, "nick", nick, sizeof nick);
+            /* The IDs they were met under: the real callsigns. */
+            const char *ids = wapp_ai__get(p, q + 1, "ids");
+            if (ids && *ids == '[') {
+                for (const char *s = ids + 1; *s && *s != ']'; s++) {
+                    if (*s != '"') continue;
+                    char c[16];
+                    if (!wapp_ai__str(s, q + 1, c, sizeof c)) break;
+                    for (s++; *s && *s != '"'; s++) if (*s == '\\') s++;
+                    for (char *u = c; *u; u++) *u = b_up(*u);
+                    if (is_person_call(c)) pick_add(c, nick, 1);
+                }
+            }
+            /* `id` is the handle the book generated for them: nobody answers
+             * to it on the air, so it is never offered. */
+            q[1] = keep;
+            p = q;
+        }
+    }
+    /* Heard lately (permission archive.read): sections of rows with "kind". */
+    n = hal_xprs_stations(g_big, sizeof g_big - 1);
+    if (n > 0) {
+        g_big[n] = 0;
+        for (char *p = g_big; *p; p++) {
+            if (*p != '{') continue;
+            /* A section holds items: step inside it rather than over it. */
+            if (b_starts(p, "{\"title\":") && wapp_ai__get(p, p + b_len(p), "items")) continue;
+            char *q = obj_end(p);
+            if (!q) break;
+            char keep = q[1];
+            q[1] = 0;
+            char kind[12] = "", id[16] = "", title[40] = "";
+            j_get(p, "kind", kind, sizeof kind);
+            j_get(p, "id", id, sizeof id);
+            j_get(p, "title", title, sizeof title);
+            if ((b_eq(kind, "user") || b_eq(kind, "bot")) && id[0]) {
+                for (char *u = id; *u; u++) *u = b_up(*u);
+                int show = !query[0];
+                if (!show) {
+                    /* contains, whatever the case */
+                    for (const char *h = id; *h && !show; h++) {
+                        const char *a = h, *b = query;
+                        while (*a && *b && b_low(*a) == b_low(*b)) { a++; b++; }
+                        if (!*b) show = 1;
+                    }
+                    for (const char *h = title; *h && !show; h++) {
+                        const char *a = h, *b = query;
+                        while (*a && *b && b_low(*a) == b_low(*b)) { a++; b++; }
+                        if (!*b) show = 1;
+                    }
+                }
+                if (show) pick_add(id, b_eq(title, id) ? "" : title, 0);
+            }
+            q[1] = keep;
+            p = q;
+        }
+    }
+}
+
+static void pick_rows(int known, const char *title, int *first)
+{
+    int any = 0;
+    for (int i = 0; i < g_pick_n; i++) {
+        if (g_pick[i].known != known) continue;
+        if (!any) {
+            if (!*first) b_cat(g_big, ",", sizeof g_big);
+            *first = 0;
+            b_cat(g_big, "{\"title\":\"", sizeof g_big);
+            b_cat(g_big, title, sizeof g_big);
+            b_cat(g_big, "\",\"items\":[", sizeof g_big);
+        } else b_cat(g_big, ",", sizeof g_big);
+        any = 1;
+        b_cat(g_big, "{\"id\":\"", sizeof g_big);
+        b_cat(g_big, g_pick[i].call, sizeof g_big);
+        b_cat(g_big, "\",\"title\":\"", sizeof g_big);
+        b_jesc(g_big, g_pick[i].name[0] ? g_pick[i].name : g_pick[i].call, sizeof g_big);
+        b_cat(g_big, "\",\"subtitle\":\"", sizeof g_big);
+        b_cat(g_big, g_pick[i].call, sizeof g_big);
+        b_cat(g_big, chosen_has(g_pick[i].call) ? "\",\"tags\":[\"chosen\"]}" : "\"}", sizeof g_big);
+    }
+    if (any) b_cat(g_big, "]}", sizeof g_big);
+}
+
+static void pick_draw(void)
+{
+    int first = 1;
+    b_cpy(g_big, "{\"type\":\"ui.people.set\",\"field\":\"pick\",\"sections\":[", sizeof g_big);
+    pick_rows(1, "People I know", &first);
+    pick_rows(0, "Heard lately", &first);
+    b_cat(g_big, "]}", sizeof g_big);
+    say(g_big);
+}
+
 static void update_on(const char *call, int on)
 {
     b_cpy(g_io, "{\"op\":\"update\",\"call\":\"", sizeof g_io);
@@ -689,16 +896,8 @@ static void save_bot(const char *call)
     kv_write("ai", call, g_ai ? "1" : "0");
 
     /* Callsigns however they were typed: upper case, commas between. */
-    char people[160] = "";
-    for (const char *p = list; *p;) {
-        char c[12]; unsigned k = 0;
-        while (*p == ' ' || *p == ',' || *p == ';') p++;
-        while (*p && *p != ' ' && *p != ',' && *p != ';') { if (k + 1 < sizeof c) c[k++] = b_up(*p); p++; }
-        c[k] = 0;
-        if (!k) continue;
-        if (people[0]) b_cat(people, ",", sizeof people);
-        b_cat(people, c, sizeof people);
-    }
+    char people[160];
+    tidy_calls(people, sizeof people, list);
     /* "The people I chose" with nobody chosen is only me. */
     char allow[160], talk[160];
     b_cpy(allow, b_eq(how, "all") ? "all" : (b_eq(how, "list") && people[0]) ? people : "owner", sizeof allow);
@@ -744,12 +943,46 @@ static void on_command(void)
         return;
     }
     if (b_eq(cmd, "screen_closed") || b_eq(cmd, "back")) {
+        /* The picker closing leaves the bot's page open under it. */
+        if (g_picking) { g_picking = 0; if (g_sel[0]) field_str("b_list", g_chosen); return; }
         if (b_eq(cmd, "back")) say("{\"type\":\"ui.screen.close\"}");
         g_sel[0] = 0;
         draw_list();
         return;
     }
     if (!g_sel[0] || !bot_of(g_sel)) return;
+    /* Choosing from the people already known or heard, instead of typing. */
+    if (b_eq(cmd, "pick_open")) {
+        static char list[160];
+        j_get(g_msg, "b_list", list, sizeof list);
+        tidy_calls(g_chosen, sizeof g_chosen, list);
+        g_picking = 1;
+        say("{\"type\":\"ui.screen.open\",\"name\":\"People\",\"title\":\"Who it is there for\"}");
+        pick_load("");
+        pick_draw();
+        return;
+    }
+    if (b_eq(cmd, "pick_search")) {
+        char q[40] = "";
+        j_get(g_msg, "pick_query", q, sizeof q);
+        pick_load(q);
+        pick_draw();
+        return;
+    }
+    if (b_eq(cmd, "pick_tap")) {
+        char id[16];
+        if (!j_get(g_msg, "pick_id", id, sizeof id)) return;
+        chosen_toggle(id);
+        field_str("b_list", g_chosen);
+        pick_draw();
+        return;
+    }
+    if (b_eq(cmd, "pick_done")) {
+        g_picking = 0;
+        say("{\"type\":\"ui.screen.close\"}");
+        field_str("b_list", g_chosen);
+        return;
+    }
     if (b_eq(cmd, "b_start")) { update_on(g_sel, 1); return; }
     if (b_eq(cmd, "b_stop")) { update_on(g_sel, 0); return; }
     if (b_eq(cmd, "b_save")) { save_bot(g_sel); return; }

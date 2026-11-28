@@ -29,6 +29,33 @@ static int g_msg_n;
 
 int32_t hal_ui_attached(void) { return 1; }
 
+/* The owner's People list and who was heard, as the host hands them. */
+int32_t hal_people_find(const char *tag, uint32_t tl, const char *q, uint32_t ql, char *out, uint32_t cap)
+{
+    (void)tag; (void)tl;
+    const char *all = "[{\"id\":\"X1TAXA\",\"ids\":[\"MT1A2B3C4D\",\"X1RUI9\"],\"nick\":\"Rui\","
+                      "\"place\":{\"lat\":45.6,\"lon\":0.1,\"r\":5}},"
+                      "{\"id\":\"X1ZZ00\",\"ids\":[\"MTFFFF0000\"],\"nick\":\"Only on Meshtastic\"}]";
+    const char *rui = "[{\"id\":\"X1TAXA\",\"ids\":[\"MT1A2B3C4D\",\"X1RUI9\"],\"nick\":\"Rui\"}]";
+    const char *s = ql ? (q[0] == 'r' || q[0] == 'R' ? rui : "[]") : all;
+    uint32_t l = (uint32_t)strlen(s);
+    if (l > cap) return -2;
+    memcpy(out, s, l);
+    return (int32_t)l;
+}
+
+int32_t hal_xprs_stations(char *out, uint32_t cap)
+{
+    const char *s = "[{\"title\":\"Heard over the air (3)\",\"items\":["
+                    "{\"id\":\"X1EFGH\",\"title\":\"Ana\",\"subtitle\":\"seen 5s ago\",\"tags\":[\"LAN\"],\"kind\":\"user\"},"
+                    "{\"id\":\"X3RLY7\",\"title\":\"X3RLY7\",\"kind\":\"station\"},"
+                    "{\"id\":\"X1RUI9\",\"title\":\"X1RUI9\",\"kind\":\"user\"}]}]";
+    uint32_t l = (uint32_t)strlen(s);
+    if (l > cap) return -2;
+    memcpy(out, s, l);
+    return (int32_t)l;
+}
+
 int32_t hal_bots(const char *req, uint32_t n, char *out, uint32_t cap)
 {
     if (strstr(req, "\"list\"")) {
@@ -231,6 +258,33 @@ int main(void)
           "the AI's answer leaves as one line, replying to the message");
     packet("command", "999999", "X1ABCD", ",[\"cmd\",\"interpret\"],[\"m\",\"is it cold\"]", 0);
     CHECK(strstr(last_said(), "r:999999 code:202"), "interpret is accepted at once (202) with the AI on");
+
+    /* Choosing people instead of typing callsigns. */
+    g_ui_n = 0;
+    message("{\"command\":\"pick_open\",\"fields\":{\"b_list\":\"x1abcd\"}}");
+    CHECK(ui_has("\"ui.screen.open\",\"name\":\"People\""), "the picker opens");
+    CHECK(ui_has("\"title\":\"People I know\"") && ui_has("\"title\":\"Rui\",\"subtitle\":\"X1RUI9\""),
+          "a person from the People list is offered under the callsign they were met with");
+    CHECK(!ui_has("MT1A2B3C4D\"}") && !ui_has("Only on Meshtastic"), "a node of another network is not offered");
+    CHECK(ui_has("\"title\":\"Heard lately\"") && ui_has("\"title\":\"Ana\",\"subtitle\":\"X1EFGH\""),
+          "people heard lately are offered too");
+    CHECK(!ui_has("X3RLY7"), "a station is not a person to choose");
+    g_ui_n = 0;
+    message("{\"command\":\"pick_tap\",\"fields\":{\"pick_id\":\"X1RUI9\"}}");
+    CHECK(ui_has("\"field\":\"b_list\",\"value\":\"X1ABCD,X1RUI9\""), "a tap adds them to the list");
+    CHECK(ui_has("\"subtitle\":\"X1RUI9\",\"tags\":[\"chosen\"]"), "and marks them chosen");
+    message("{\"command\":\"pick_tap\",\"fields\":{\"pick_id\":\"X1ABCD\"}}");
+    g_ui_n = 0;
+    message("{\"command\":\"pick_search\",\"fields\":{\"pick_query\":\"rui\"}}");
+    CHECK(ui_has("X1RUI9") && !ui_has("X1EFGH"), "the search narrows both lists");
+    g_ui_n = 0;
+    message("{\"command\":\"pick_done\"}");
+    message("{\"command\":\"screen_closed\"}");
+    CHECK(ui_has("\"field\":\"b_list\",\"value\":\"X1RUI9\""), "Done leaves the chosen people in the bot's page");
+    message("{\"command\":\"b_save\",\"fields\":{\"b_nick\":\"Weather\",\"b_about\":\"\","
+            "\"b_rules\":\"forecast = Rain from 16:00\",\"b_hello\":\"\",\"b_ai\":true,"
+            "\"b_prompt\":\"\",\"b_allow\":\"owner\",\"b_talk\":\"list\",\"b_reach\":\"global\",\"b_list\":\"X1RUI9\"}}");
+    CHECK(strstr(g_last_req, "\"talk\":\"X1RUI9\""), "and the bot is saved answering only them (and me)");
 
     /* Delete. */
     message("{\"command\":\"b_delete\"}");
