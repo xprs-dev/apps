@@ -1,10 +1,10 @@
 {
   "id":              "tools.xprs.checkin",
-  "version":         "0.9.0",
+  "version":         "0.10.0",
   "kind":            "app",
   "title":           "Check-in",
   "description":     "Visit stations, check in and collect badges.",
-  "summary":         "Walk up to a station and check in. You get a signed record and the station's badge. Your log counts every check-in and keeps your badges. Works over Bluetooth, WiFi, the local network and LoRa, never the internet. You can also run your own station with a greeting, a badge and events.",
+  "summary":         "Walk up to a station and check in. You get a signed record and the station's badge. Your log counts every check-in and keeps your badges. Works over Bluetooth, WiFi, the local network and LoRa, never the internet. Any station you own (this device, a board or a server) can give check-ins too: set its welcome, badge and events from here, wherever it is.",
   "icon":            "media/icons/checkin.svg",
   "color":           "#FFC107",
   "tags":            ["xprs", "checkin", "logbook", "badges", "geocaching", "local"],

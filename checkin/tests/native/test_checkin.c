@@ -9,6 +9,8 @@
 #include "../../main.c"
 
 extern char g_mock_call[16];
+extern char g_mock_dev[16];
+extern char g_owned[200];
 extern uint64_t g_now;
 extern int32_t g_lat, g_lon;
 extern char g_said[512][4096];
@@ -197,101 +199,68 @@ static void test_rules(void)
     CHECK(n > 0 && strstr(w, "t:file f:X3STN1") && strstr(w, " size:640B") && strstr(w, REF), "the badge's description");
 }
 
-static char g_cert[300];
+/* The station's answer to the owner's last setting, as the core hands it. */
+static void answer_set(const char *station, const char *code, const char *keys)
+{
+    char id[8], w[300], row_[1024];
+    snprintf(id, sizeof id, "%s", g_set_id);
+    snprintf(w, sizeof w, "t:result f:%s d:X1OWNR ts:2026-08-17_09:46:41 r:%s code:%s%s%s",
+             station, id, code, keys[0] ? " " : "", keys);
+    result_row(row_, sizeof row_, w);
+    event("xprs.result", row_);
+}
 
+/* Setting a check-in point up (XPRS.md 11.9.1): the station gives check-ins
+ * itself; this wapp sends its owner's settings to it, this device's or any
+ * other, and reads back what it is. */
 static void test_station(void)
 {
-    char row_[4096], ask[300];
-    as("X3STN1");
+    as("X1OWNR");
+    snprintf(g_mock_dev, sizeof g_mock_dev, "X3STN1");
     mock_clear();
     module_init();
-    CHECK(!mock_subscribed("xprs.command"), "off: listens to nothing");
+    CHECK(!mock_subscribed("xprs.command"), "the station answers asks, not this wapp: it listens to none");
     cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
-    CHECK(!mock_subscribed("xprs.command") && said("Share your location first"),
-          "no shared place, no check-ins: it stays off and says why");
-    /* The owner shares the station's position (Settings > Privacy). */
+    CHECK(g_aired_n == 0 && said("Share your location first"),
+          "this device shares no place: no check-ins, and it says why");
     strcpy(g_shared, "{\"pos\":\"38.7071,-9.1393\",\"acc\":10}");
-    cmd("{\"command\":\"save_intro\",\"intro\":\"Hilltop shack, ring the bell\"}");
-    CHECK(!said("Saved."), "an intro is saved as it is typed, without a toast per pause");
+    cmd("{\"command\":\"save_greeting\",\"greeting\":\"Welcome to the hill, 73!\"}");
+    CHECK(g_aired_n == 0, "a welcome is kept as it is typed, not aired per pause");
+
     mock_clear();
     cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
-    CHECK(mock_subscribed("xprs.command"), "on: listens for asks");
-    CHECK(strstr(last_aired(), "t:event f:X3STN1") && strstr(last_aired(), "title:check-ins-open") &&
-          strstr(last_aired(), "tag:checkin") && strstr(last_aired(), "pos:38.7071,-9.1393") &&
-          strstr(last_aired(), "m:Hilltop shack, ring the bell"),
-          "and it says so on the air: its check-in point, at its shared place, with its intro");
+    CHECK(g_aired_n == 1 && strstr(last_aired(), "t:command f:X1OWNR d:X3STN1 ") &&
+          strstr(last_aired(), " cmd:set tag:checkin,in-person m:Welcome to the hill, 73!"),
+          "on: its owner's cmd:set to this device's station, the welcome riding last");
+    CHECK(mock_subscribed("xprs.result"), "and the answer is listened for");
     mock_clear();
-    module_tick();
-    CHECK(g_aired_n == 0, "the point is not repeated within the quarter hour");
-    g_now += 901;
-    module_tick();
-    CHECK(g_aired_n == 1 && strstr(last_aired(), "title:check-ins-open"), "and is renewed after it");
-    g_now -= 901;
-    cmd("{\"command\":\"save_greeting\",\"greeting\":\"Welcome to the hill, 73!\"}");
+    answer_set("X3STN1", "200", "tag:checkin,in-person");
+    CHECK(said("X3STN1: check-ins on."), "the station says it is on, and the person is told");
+    CHECK(!mock_subscribed("xprs.result"), "and nothing more is listened for");
+
+    mock_clear();
+    cmd("{\"command\":\"set_local\",\"local_only\":false}");
+    CHECK(strstr(last_aired(), " cmd:set tag:checkin") && !strstr(last_aired(), "in-person") &&
+          !strstr(last_aired(), " m:"), "LoRa range too: the labels again, the welcome already sent");
+    answer_set("X3STN1", "200", "tag:checkin");
+    cmd("{\"command\":\"save_type\",\"place_type\":\"park\"}");
+    CHECK(strstr(last_aired(), " cmd:set tag:checkin,park") != 0, "the kind of place is a label");
+    answer_set("X3STN1", "200", "tag:checkin,park");
+
+    mock_clear();
     cmd("{\"type\":\"file.open\",\"path\":\"/tmp/badge.png\"}");
     {
-        int pub = 0;
-        for (int i = 0; i < g_aired_n; i++)
-            if (strstr(g_aired[i], "t:file f:X3STN1") && strstr(g_aired[i], REF)) pub = 1;
-        CHECK(pub, "the badge is described as a publication");
+        int pub = 0, set = 0;
+        for (int i = 0; i < g_aired_n; i++) {
+            if (strstr(g_aired[i], "t:file f:X1OWNR") && strstr(g_aired[i], REF)) pub = 1;
+            if (strstr(g_aired[i], "d:X3STN1") && strstr(g_aired[i], " cmd:set file:") && strstr(g_aired[i], REF)) set = 1;
+        }
+        CHECK(pub, "the badge is published by this device");
+        CHECK(set, "and the station is given its reference, never its bytes");
     }
+    answer_set("X3STN1", "200", "tag:checkin,park");
 
-    mock_clear();
-    ci_build_ask(ask, sizeof ask, "X1CHSR", "X3STN1", g_now - 5, "local");
-    ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
-    event("xprs.command", row_);
-    CHECK(g_aired_n == 1 && strstr(last_aired(), "code:200 scope:local link:ble pos:38.7071,-9.1393 file:") && strstr(last_aired(), REF),
-          "certified, over Bluetooth, at the station's place, with the badge's hash");
-    CHECK(!strstr(last_aired(), " b:"), "the badge's bytes never ride the certificate");
-    snprintf(g_cert, sizeof g_cert, "%s", last_aired());
-    CHECK(g_msg_n == 1 && !strcmp(g_msg_to, "X1CHSR") && !strcmp(g_msg_text, "Welcome to the hill, 73!"),
-          "the greeting goes as a message");
-
-    mock_clear();
-    event("xprs.command", row_);
-    CHECK(g_aired_n == 1 && !strcmp(last_aired(), g_cert), "a repeated ask gets the same certificate");
-
-    mock_clear();
-    ci_build_ask(ask, sizeof ask, "X1CHSR", "X3STN1", g_now + 30, "local");
-    ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
-    event("xprs.command", row_);
-    CHECK(strstr(last_aired(), "code:429") != 0, "once a day per visitor");
-
-    mock_clear();
-    ci_build_ask(ask, sizeof ask, "X1STRG", "X3STN1", g_now, "local");
-    ask_row(row_, sizeof row_, ask, "unverified", "ble", 1, "");
-    event("xprs.command", row_);
-    CHECK(g_aired_n == 0, "a key we do not hold yet: no answer, the repeat will check");
-    {
-        char ask2[300];
-        ci_build_ask(ask2, sizeof ask2, "X1NEWK", "X3STN1", g_now, "local");
-        ask_row(row_, sizeof row_, ask2, "unverified", "ble", 1, "");
-        event("xprs.command", row_);
-        ask_row(row_, sizeof row_, ask2, "verified", "ble", 1, "");
-        event("xprs.command", row_);
-        CHECK(g_aired_n == 1 && strstr(last_aired(), "code:200") != 0,
-              "and the repeat, once the key is known, is certified");
-    }
-
-    mock_clear();
-    ask_row(row_, sizeof row_, ask, "verified", "rns", 0, "");
-    event("xprs.command", row_);
-    CHECK(strstr(last_aired(), "code:403") != 0, "over the internet is not a meeting");
-
-    mock_clear();
-    ci_build_ask(ask, sizeof ask, "X1LORA", "X3STN1", g_now, "regional");
-    ask_row(row_, sizeof row_, ask, "verified", "lora", 1, "");
-    event("xprs.command", row_);
-    CHECK(strstr(last_aired(), "code:403") != 0, "in person only, by default");
-    cmd("{\"command\":\"set_local\",\"local_only\":false}");
-    mock_clear();
-    ci_build_ask(ask, sizeof ask, "X1LORA", "X3STN1", g_now + 1, "regional");
-    ask_row(row_, sizeof row_, ask, "verified", "lora", 1, "X3RLY7");
-    event("xprs.command", row_);
-    CHECK(strstr(last_aired(), "code:200 scope:regional link:lora") && strstr(last_aired(), "route:X3RLY7"),
-          "LoRa allowed: certified, relays named");
-
-    /* An event: its name and its own badge on every certificate while it runs. */
+    /* An event: announced, and its title and badge set on the station. */
     mock_clear();
     cmd("{\"command\":\"new_event\"}");
     cmd("{\"command\":\"pick_event_badge\"}");
@@ -299,41 +268,77 @@ static void test_station(void)
     cmd("{\"type\":\"file.open\",\"path\":\"/tmp/event.png\"}");
     g_lat = 387071000; g_lon = -91393000;
     cmd("{\"command\":\"publish_event\",\"ev_title\":\"Field Day 2026\",\"ev_desc\":\"on the hill all weekend\",\"ev_len\":\"week\"}");
-    int saw_event = 0;
-    for (int i = 0; i < g_aired_n; i++)
-        if (strstr(g_aired[i], "t:event") && strstr(g_aired[i], "tag:checkin") &&
-            strstr(g_aired[i], "title:field-day-2026") && strstr(g_aired[i], EREF) &&
-            strstr(g_aired[i], "pos:38.7071,-9.1393")) saw_event = 1;
-    CHECK(saw_event, "the event is announced, tagged, with its badge's hash");
-    CHECK(said("\"title\":\"Field Day 2026\""), "and listed by its name, not its label");
-    mock_clear();
-    ci_build_ask(ask, sizeof ask, "X1EVNT", "X3STN1", g_now, "local");
-    ask_row(row_, sizeof row_, ask, "verified", "lan", 1, "");
-    event("xprs.command", row_);
-    CHECK(strstr(last_aired(), "link:lan") && strstr(last_aired(), EREF) && strstr(last_aired(), "title:field-day-2026"),
-          "during the event: its name and its badge");
-    CHECK(said("X1EVNT"), "the guestbook lists the visitor");
-    CHECK(said("\"field\":\"guests\"") && !said("\"title\":\"Your badge\"") &&
-          said("\"title\":\"Your events\"") && said("\"title\":\"Visitors\""),
-          "one list, two sections: events, visitors");
-    CHECK(said("\"field\":\"st_info\"") && said("\"label\":\"Location\"") &&
-          said("\"field\":\"ev_info\"") && said("Field Day 2026"),
-          "the station's location and the event running");
-    CHECK(said("\"field\":\"share_location__label\",\"value\":\"Change location\""),
-          "the button under the location opens the setting to change it");
-    mock_clear();
-    cmd("{\"command\":\"guests_open\"}");
-    CHECK(said("\"field\":\"guests\"") && said("\"type\":\"ui.screen.open\",\"name\":\"Visitors\""),
-          "Visitors opens the guestbook as a page of its own");
+    {
+        int saw_event = 0, set = 0;
+        for (int i = 0; i < g_aired_n; i++) {
+            if (strstr(g_aired[i], "t:event") && strstr(g_aired[i], "tag:checkin") &&
+                strstr(g_aired[i], "title:field-day-2026") && strstr(g_aired[i], EREF)) saw_event = 1;
+            if (strstr(g_aired[i], " cmd:set title:field-day-2026 until:") && strstr(g_aired[i], EREF)) set = 1;
+        }
+        CHECK(saw_event, "the event is announced, tagged, with its badge's hash");
+        CHECK(set, "and the station carries its title and badge while it runs");
+    }
+    answer_set("X3STN1", "200", "tag:checkin,park");
+    CHECK(said("\"field\":\"st_info\"") && said("X3STN1 (this device)") && said("\"label\":\"Location\""),
+          "which station, and where");
     snprintf(g_put_token, sizeof g_put_token, "file:%s", REF);
 
-    cmd("{\"command\":\"set_bot\",\"bot_on\":false}");
-    CHECK(!mock_subscribed("xprs.command"), "off again: listens to nothing");
+    /* Another station of the person's, from afar: Devices opens it here. */
     mock_clear();
-    ci_build_ask(ask, sizeof ask, "X1LATE", "X3STN1", g_now, "local");
-    ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
-    event("xprs.command", row_);
-    CHECK(g_aired_n == 0, "an off station says nothing");
+    cmd("{\"type\":\"view.open\",\"view\":\"station:X3ROOF\"}");
+    CHECK(said("\"type\":\"ui.screen.open\",\"name\":\"Settings\"") && said("\"value\":\"X3ROOF\""),
+          "opened on that station");
+    CHECK(said("\"field\":\"bot_on\",\"value\":false"), "its own settings, not this device's");
+    CHECK(said("\"field\":\"share_location__hidden\",\"value\":true"), "its place is its own to share");
+    mock_clear();
+    cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
+    CHECK(strstr(last_aired(), "d:X3ROOF") && strstr(last_aired(), " cmd:set tag:checkin,in-person"),
+          "set from here, wherever it is");
+    answer_set("X3ROOF", "403", "");
+    CHECK(said("only its owners may change it"), "a station that is not the person's says so");
+    cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
+    {
+        char id[7], row_[200];
+        al_id(last_aired(), al_len(last_aired()), id);
+        snprintf(row_, sizeof row_, "{\"id\":\"%s\",\"state\":\"unanswered\"}", id);
+        mock_clear();
+        event("xprs.status.tx", row_);
+        CHECK(said("X3ROOF did not answer"), "and one out of reach is reported, not waited on");
+    }
+
+    /* The stations to choose from: this device's, then every one owned. */
+    snprintf(g_owned, sizeof g_owned, "[\"X3ROOF\",\"X3SRVR\"]");
+    mock_clear();
+    cmd("{\"command\":\"stations_open\"}");
+    CHECK(said("\"field\":\"stations\"") && said("\"id\":\"X3STN1\"") && said("\"id\":\"X3SRVR\""),
+          "every station the person owns");
+    cmd("{\"command\":\"stations_tap\",\"stations_id\":\"X3STN1\"}");
+    CHECK(said("X3STN1 (this device)"), "and back to this device's");
+}
+
+/* Before 11.9.1 the wapp was the point; a device that had check-ins on
+ * hands its own station the same settings once. */
+static void test_migration(void)
+{
+    as("X1OWNR");
+    snprintf(g_mock_dev, sizeof g_mock_dev, "X3OLDD");
+    hal_kv_set("bot", 3, "1", 1);
+    hal_kv_set("local", 5, "1", 1);
+    hal_kv_set("ptype", 5, "coffee", 6);
+    hal_kv_set("greet", 5, "Hi", 2);
+    hal_kv_set("migrated", 8, "0", 1);
+    hal_kv_set("X3OLDD.bot", 10, "", 0);
+    mock_clear();
+    module_init();
+    CHECK(g_aired_n == 1 && strstr(last_aired(), "d:X3OLDD") &&
+          strstr(last_aired(), " cmd:set tag:checkin,coffee,in-person") && strstr(last_aired(), " m:Hi"),
+          "the old settings, given to the station");
+    answer_set("X3OLDD", "200", "tag:checkin,coffee,in-person");
+    mock_clear();
+    module_init();
+    CHECK(g_aired_n == 0, "once");
+    hal_kv_set("bot", 3, "0", 1);
+    snprintf(g_mock_dev, sizeof g_mock_dev, "X3STN1");
 }
 
 static void test_chaser(void)
@@ -403,15 +408,15 @@ static void test_chaser(void)
     CHECK(mock_subscribed("xprs.result") && pend_find(g_pend[0].id) == 0 && !strcmp(g_pend[0].station, "X3STN1"),
           "an ask out survives the engine that sent it");
 
-    /* The core carries it to the station. */
-    as("X3STN1");
-    cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
-    mock_clear();
-    ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
-    event("xprs.command", row_);
-    CHECK(strstr(last_aired(), "code:200") != 0, "the station certifies");
-    snprintf(cert, sizeof cert, "%s", last_aired());
-    cmd("{\"command\":\"set_bot\",\"bot_on\":false}");
+    /* The core carries it to the station, which certifies it (its own
+     * XprsCheckinPoint or firmware, with ci.c's words). */
+    {
+        ci_ask_t a;
+        ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
+        CHECK(ci_read_ask(row_, &a), "the ask, as the station reads it");
+        CHECK(ci_build_result(cert, sizeof cert, "X3STN1", &a, g_now, CI_OK, EREF,
+                              "field-day-2026", "38.7071,-9.1393") > 0, "the station certifies");
+    }
 
     /* And the certificate back. */
     as("X1CHSR");
@@ -687,6 +692,31 @@ static void test_chaser(void)
 
 /* [chaser] asks [station] in person and the station certifies: the whole
  * round, as the core carries it. 1 when the chaser got its check-in. */
+/* The station's side, as the core or the firmware gives it: ci.c's rule
+ * and words, once a day per visitor, at the station's shared place. */
+static struct { char st[16], who[16]; unsigned long long day; } g_sim[16];
+static void station_answer(const char *station, const char *ask, char *cert, unsigned cap)
+{
+    char row_[4096];
+    ci_ask_t a;
+    ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
+    ci_read_ask(row_, &a);
+    unsigned long long day = ci_day(g_now, 0);
+    int today = 0, free_at = -1;
+    for (int i = 0; i < 16; i++) {
+        if (!g_sim[i].st[0]) { if (free_at < 0) free_at = i; continue; }
+        if (!strcmp(g_sim[i].st, station) && !strcmp(g_sim[i].who, a.from) && g_sim[i].day == day) today = 1;
+    }
+    ci_rules_t r = { 1 };
+    int code = ci_decide(&a, &r, g_now, today);
+    if (code == CI_OK && free_at >= 0) {
+        snprintf(g_sim[free_at].st, sizeof g_sim[free_at].st, "%s", station);
+        snprintf(g_sim[free_at].who, sizeof g_sim[free_at].who, "%s", a.from);
+        g_sim[free_at].day = day;
+    }
+    ci_build_result(cert, cap, station, &a, g_now, code, "", "", "38.7071,-9.1393");
+}
+
 static int round_trip(const char *chaser, const char *station, int automatic)
 {
     char row_[4096], ask[300], cert[300];
@@ -699,13 +729,7 @@ static int round_trip(const char *chaser, const char *station, int automatic)
     }
     if (g_aired_n == before) return 0;
     snprintf(ask, sizeof ask, "%s", last_aired());
-    as(station);
-    cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
-    ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
-    event("xprs.command", row_);
-    snprintf(cert, sizeof cert, "%s", last_aired());
-    cmd("{\"command\":\"set_bot\",\"bot_on\":false}");
-    as(chaser);
+    station_answer(station, ask, cert, sizeof cert);
     result_row(row_, sizeof row_, cert);
     event("xprs.result", row_);
     return strstr(cert, "code:200") != 0;
@@ -765,20 +789,18 @@ static void test_places(void)
 {
     g_now += 5 * 86400;
     heard_ble("X3CAFE", 5);
-    as("X3CAFE");
     g_lat = 387100000; g_lon = -91400000;
-    cmd("{\"command\":\"save_type\",\"place_type\":\"coffee\"}");
-    mock_clear();
-    cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
-    CHECK(strstr(last_aired(), "title:check-ins-open tag:checkin,coffee") != 0,
-          "the station says what kind of place it is on its check-in point");
     {
-        /* The visitor's archive holds that announcement. */
-        char hist[900];
-        snprintf(hist, sizeof hist, "[{\"id\":\"cf0001\",\"wire\":\"%s\"}]", last_aired());
+        /* The station says what kind of place it is on its check-in point,
+         * and the visitor's archive holds that announcement. */
+        char w[400], hist[900];
+        int n = ci_build_point(w, sizeof w, "X3CAFE", g_now, "38.7071,-9.1393",
+                               g_now + 3600, "", "", "coffee");
+        CHECK(n > 0 && strstr(w, "title:check-ins-open tag:checkin,coffee") != 0,
+              "the station says what kind of place it is on its check-in point");
+        snprintf(hist, sizeof hist, "[{\"id\":\"cf0001\",\"wire\":\"%s\"}]", w);
         strcpy(g_history, hist);
     }
-    cmd("{\"command\":\"set_bot\",\"bot_on\":false}");
 
     /* The first check-in is asked by hand. */
     mock_clear();
@@ -826,13 +848,7 @@ static void test_places(void)
     {
         char row_[4096], ask[300], cert[300];
         snprintf(ask, sizeof ask, "%s", last_aired());
-        as("X3CAFE");
-        cmd("{\"command\":\"set_bot\",\"bot_on\":true}");
-        ask_row(row_, sizeof row_, ask, "verified", "ble", 1, "");
-        event("xprs.command", row_);
-        snprintf(cert, sizeof cert, "%s", last_aired());
-        cmd("{\"command\":\"set_bot\",\"bot_on\":false}");
-        as("X1CHSR");
+        station_answer("X3CAFE", ask, cert, sizeof cert);
         mock_clear();
         result_row(row_, sizeof row_, cert);
         event("xprs.result", row_);
@@ -893,6 +909,7 @@ int main(void)
 {
     test_rules();
     test_station();
+    test_migration();
     test_chaser();
     test_place_rules();
     test_places();

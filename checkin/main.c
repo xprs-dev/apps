@@ -19,8 +19,12 @@
  *   About       a check-in, an event or a place: its badge, a small map,
  *               every fact its packets carried; a place also its time,
  *               its tags and the switch for automatic check-ins
- *   Settings    (the menu) this station: where it is, check-ins on or off,
- *               its kind of place, greeting, badge, events, Visitors.
+ *   Settings    (the menu) a station you own, this device's or any other,
+ *               wherever it is: check-ins on or off, in person only, its
+ *               kind of place, its welcome, badge and events. Each change
+ *               is an owner's cmd:set to that station (XPRS.md 11.9.1);
+ *               the station gives the check-ins itself, an ESP32 as a
+ *               server or a phone, and this wapp only sets it up.
  *
  * The first check-in at a station is asked by hand; after that this wapp
  * asks once a day by itself while the station is in Bluetooth reach, until
@@ -28,12 +32,12 @@
  * every three minutes hal_xprs_stations says how long ago each station was
  * heard on each radio, and ci_visit_step turns that into visits.
  *
- * The wapp decides what a check-in means; the core does everything else
- * (docs/architecture.md). hal_xprs_send hands the ask to the core's command
- * courier, which airs it again until it is answered and says so on
- * xprs.status.tx when it never is; the wapp listens to xprs.result and
- * xprs.status.tx only while an ask is out. The bot listens to xprs.command
- * while it is on, and to nothing when it is off. A badge is a file: hash:
+ * Giving check-ins is the station's (the core's XprsCheckinPoint, the
+ * firmware's own): it used to be this wapp's, so only a phone running it
+ * could be a check-in point. hal_xprs_send hands an ask or a setting to the
+ * core's command courier, which airs it again until it is answered and says
+ * so on xprs.status.tx when it never is; the wapp listens to xprs.result and
+ * xprs.status.tx only while one is out. A badge is a file: hash:
  * the station imports the picture into the media store and describes it in a
  * t:file publication, which the core advertises and places with the
  * station's archivers; a chaser asks the core for the hash once
@@ -57,13 +61,16 @@ static char g_obj[4096];          /* one row of it */
 static char g_big[32768];         /* hal_xprs_stations / history */
 
 /* Settings, in kv. */
-static int  g_bot_on;
+static int  g_bot_on;             /* the TARGET station gives check-ins */
+static char g_dev[16];            /* this device's own station (its X3) */
+static char g_target[16];         /* the station these settings are for */
+static char g_set_id[8];          /* the cmd:set out to it */
+static char g_set_call[16];
+static int  g_welcome_dirty;      /* typed, not yet sent: sent on leaving */
 static int  g_local_only;
 static int  g_chase_regional;
 static char g_greeting[160];
 static char g_badge[80];          /* the station's badge token, file:<ref> */
-static char g_intro[104];         /* a line about this station, for its pin */
-static unsigned long long g_point_at;   /* when the check-in point was last announced */
 
 /* Where the map looks (the host says on every pan, as setViewport). */
 static char g_view_lat[24] = "", g_view_lon[24] = "";
@@ -195,17 +202,51 @@ static void kv_str(const char *k, char *out, unsigned cap)
     out[n < cap ? n : cap - 1] = 0;
 }
 
+/* "<call>.<what>": what was last set on (or reported by) one station. */
+static void tkey(char *k, unsigned cap, const char *what)
+{
+    al_cpy(k, g_target, cap);
+    al_cat(k, ".", cap);
+    al_cat(k, what, cap);
+}
+
+/* The settings of the station chosen, as this wapp last set them or the
+ * station last reported them. This device's own station starts from what
+ * the wapp kept when it gave the check-ins itself. */
+static void target_load(void)
+{
+    char k[32];
+    int dev = al_eq(g_target, g_dev);
+    tkey(k, sizeof k, "bot");   g_bot_on = kv_bool(k, dev ? kv_bool("bot", 0) : 0);
+    tkey(k, sizeof k, "local"); g_local_only = kv_bool(k, dev ? kv_bool("local", 1) : 1);
+    tkey(k, sizeof k, "greet"); kv_str(k, g_greeting, sizeof g_greeting);
+    if (!g_greeting[0] && dev) kv_str("greet", g_greeting, sizeof g_greeting);
+    tkey(k, sizeof k, "badge"); kv_str(k, g_badge, sizeof g_badge);
+    if (!g_badge[0] && dev) kv_str("badge", g_badge, sizeof g_badge);
+    tkey(k, sizeof k, "ptype"); kv_str(k, g_ptype, sizeof g_ptype);
+    if (!g_ptype[0] && dev) kv_str("ptype", g_ptype, sizeof g_ptype);
+    g_welcome_dirty = 0;
+}
+
+static void target_save(void)
+{
+    char k[32];
+    tkey(k, sizeof k, "bot");   kv_put_bool(k, g_bot_on);
+    tkey(k, sizeof k, "local"); kv_put_bool(k, g_local_only);
+    tkey(k, sizeof k, "greet"); hal_kv_set(k, al_len(k), g_greeting, al_len(g_greeting));
+    tkey(k, sizeof k, "badge"); hal_kv_set(k, al_len(k), g_badge, al_len(g_badge));
+    tkey(k, sizeof k, "ptype"); hal_kv_set(k, al_len(k), g_ptype, al_len(g_ptype));
+}
+
 static void load_settings(void)
 {
-    g_bot_on = kv_bool("bot", 0);
-    g_local_only = kv_bool("local", 1);
+    uint32_t n = hal_identity_device(g_dev, sizeof g_dev - 1);
+    g_dev[n] = 0;
+    if (!g_target[0]) al_cpy(g_target, g_dev, sizeof g_target);
     g_chase_regional = kv_bool("chase_reg", 0);
-    kv_str("greet", g_greeting, sizeof g_greeting);
-    kv_str("badge", g_badge, sizeof g_badge);
-    kv_str("intro", g_intro, sizeof g_intro);
-    kv_str("ptype", g_ptype, sizeof g_ptype);
     kv_str("ftags", g_ftags, sizeof g_ftags);
     if (!g_ftags[0]) al_cpy(g_ftags, ",", sizeof g_ftags);
+    target_load();
 }
 
 /* ── the database ─────────────────────────────────────────────────────── */
@@ -300,7 +341,7 @@ static int pending_count(void)
 /* Listen for answers only while an ask is out or a greeting may come. */
 static void listen_update(void)
 {
-    int want = pending_count() > 0 || (g_greet_until && now_s() < g_greet_until);
+    int want = pending_count() > 0 || g_set_id[0] || (g_greet_until && now_s() < g_greet_until);
     if (want == g_listening) return;
     g_listening = want;
     sub("xprs.result", want);
@@ -335,14 +376,6 @@ static void pend_load(void)
         g_pend[i].ts = 0;
         for (const char *q = ts; *q >= '0' && *q <= '9'; q++) g_pend[i].ts = g_pend[i].ts * 10 + (unsigned)(*q - '0');
     }
-}
-
-static void bot_update(void)
-{
-    static int on = -1;
-    if (on == g_bot_on) return;
-    on = g_bot_on;
-    sub("xprs.command", g_bot_on);
 }
 
 /* ── Nearby ───────────────────────────────────────────────────────────── */
@@ -640,11 +673,101 @@ static void push_map(void);
 static int has_tag(const char *wire, const char *tag);
 static void label_name(char *out, unsigned cap, const char *label);
 
+/* ── setting a station (XPRS.md 11.9.1) ────────────────────────────── */
+static void push_station(void);
+
+/* The point's labels: checkin, its kind of place, in-person. */
+static void tag_value(char *out, unsigned cap)
+{
+    if (!g_bot_on) { al_cpy(out, "none", cap); return; }
+    al_cpy(out, "checkin", cap);
+    if (g_ptype[0]) { al_cat(out, ",", cap); al_cat(out, g_ptype, cap); }
+    if (g_local_only) al_cat(out, ",in-person", cap);
+}
+
+/* Send [keys] to the chosen station as its owner's cmd:set. The station
+ * answers with what it is now (on_set_result); the courier airs it again
+ * until it does. A typed welcome rides along, last (m: runs to the end). */
+static void send_set(const char *keys)
+{
+    char wire[CI_WIRE_MAX + 1], ts[24], m[160] = "";
+    who_am_i();
+    if (!g_me[0] || !g_target[0]) { toast("warning", "Set up your callsign first."); return; }
+    al_stamp(ts, sizeof ts, now_s());
+    al_cpy(wire, "t:command f:", sizeof wire);
+    al_cat(wire, g_me, sizeof wire);
+    al_cat(wire, " d:", sizeof wire);
+    al_cat(wire, g_target, sizeof wire);
+    al_cat(wire, " ts:", sizeof wire);
+    al_cat(wire, ts, sizeof wire);
+    al_cat(wire, " cmd:set ", sizeof wire);
+    al_cat(wire, keys, sizeof wire);
+    if (g_welcome_dirty && g_greeting[0] && !al_field(keys, "m", m, sizeof m)) {
+        al_cat(wire, " m:", sizeof wire);
+        al_cat(wire, g_greeting, sizeof wire);
+    }
+    unsigned n = al_len(wire);
+    if (n > CI_WIRE_UNSIGNED) { toast("warning", "Too long for one packet: shorten the welcome."); return; }
+    if (hal_xprs_send(wire, n) != 0) { toast("warning", "Could not send. Try again."); return; }
+    al_id(wire, n, g_set_id);
+    al_cpy(g_set_call, g_target, sizeof g_set_call);
+    g_welcome_dirty = 0;
+    target_save();
+    listen_update();
+}
+
+/* The station's answer to send_set: 200 and what it is now, or why not. */
+static int on_set_result(const char *wire)
+{
+    char r[8] = "", f[16] = "", code[8] = "", v[96], body[120];
+    al_field(wire, "r", r, sizeof r);
+    if (!g_set_id[0] || !al_eq(r, g_set_id)) return 0;
+    al_field(wire, "f", f, sizeof f);
+    if (!al_eq(f, g_set_call)) return 0;
+    al_field(wire, "code", code, sizeof code);
+    g_set_id[0] = 0;
+    listen_update();
+    al_cpy(body, f, sizeof body);
+    if (al_eq(code, "200")) {
+        if (al_eq(f, g_target) && al_field(wire, "tag", v, sizeof v)) {
+            g_bot_on = al_starts(v, "checkin");
+            g_local_only = 0;
+            g_ptype[0] = 0;
+            for (const char *q = v; *q; ) {
+                char w[24];
+                unsigned k = 0;
+                while (*q == ',') q++;
+                while (*q && *q != ',') { if (k < sizeof w - 1) w[k++] = *q; q++; }
+                w[k] = 0;
+                if (al_eq(w, "in-person")) g_local_only = 1;
+                else if (ci_place(w)) al_cpy(g_ptype, w, sizeof g_ptype);
+            }
+            target_save();
+            push_station();
+        }
+        al_cat(body, g_bot_on ? ": check-ins on." : ": saved.", sizeof body);
+        toast("success", body);
+    } else if (al_eq(code, "403")) {
+        al_cat(body, " says only its owners may change it.", sizeof body);
+        toast("warning", body);
+    } else if (al_eq(code, "408")) {
+        al_cat(body, " refused a setting older than its last one. Check this device's clock.", sizeof body);
+        toast("warning", body);
+    } else {
+        al_cat(body, " could not take it (", sizeof body);
+        al_cat(body, code, sizeof body);
+        al_cat(body, ").", sizeof body);
+        toast("warning", body);
+    }
+    return 1;
+}
+
 static void on_result(const char *row_)
 {
     char wire[CI_EVENT_MAX + 64], sig[12];
     ci_cert_t c;
     if (!al_json(row_, "wire", wire, sizeof wire)) return;
+    if (on_set_result(wire)) return;
     if (!ci_read_cert(wire, &c)) return;
     int i = pend_find(c.r);
     if (i < 0 || !al_eq(c.station, g_pend[i].station)) return;
@@ -719,9 +842,19 @@ static void on_status(const char *row_)
 {
     char id[8], state[16];
     if (!al_json(row_, "id", id, sizeof id)) return;
+    al_json(row_, "state", state, sizeof state);
+    if (g_set_id[0] && al_eq(id, g_set_id) &&
+        (al_eq(state, "unanswered") || al_eq(state, "unfinished"))) {
+        char body[120];
+        al_cpy(body, g_set_call, sizeof body);
+        al_cat(body, " did not answer. Change it again when it is reachable.", sizeof body);
+        g_set_id[0] = 0;
+        listen_update();
+        tell("warning", body);
+        return;
+    }
     int i = pend_find(id);
     if (i < 0) return;
-    al_json(row_, "state", state, sizeof state);
     if (!al_eq(state, "unanswered") && !al_eq(state, "unfinished")) return;
     char body[160];
     al_cpy(body, g_pend[i].station, sizeof body);
@@ -823,89 +956,8 @@ static void here_pos(char *out, unsigned cap)
     my_pos(out, cap);
 }
 
-/* ── the check-in point ─────────────────────────────────────────────── */
-/* A station that gives check-ins and shares where it is says so on the air:
- * a t:event tag:checkin under CI_POINT_TITLE, with its shared position, its
- * badge and its intro, good for an hour and renewed every quarter hour while it
- * gives check-ins. Turning check-ins off airs one that closes in a minute,
- * so the pin leaves other people's maps. No position shared: no point. */
-#define POINT_EVERY_S 900ULL
-#define POINT_FOR_S   3600ULL
-static void announce_point(int closing)
-{
-    char pos[40], wire[CI_EVENT_MAX + 1];
-    my_pos(pos, sizeof pos);
-    if (!pos[0]) return;
-    who_am_i();
-    if (!g_me[0]) return;
-    unsigned long long now = now_s();
-    int n = ci_build_point(wire, sizeof wire, g_me, now, pos,
-                           now + (closing ? 60ULL : POINT_FOR_S), g_badge, g_intro, g_ptype);
-    if (n < 0) return;
-    if (hal_xprs_send(wire, (uint32_t)n) == 0) g_point_at = closing ? 0 : now;
-}
-
-/* Called on every wake: renew the point when it is due. */
-static void point_due(void)
-{
-    if (!g_bot_on) return;
-    unsigned long long now = now_s();
-    if (g_point_at && now < g_point_at + POINT_EVERY_S) return;
-    announce_point(0);
-    if (!g_point_at) g_point_at = now;   /* nothing shared: ask again in an hour */
-}
-
 static void push_guests(void);
 static void push_station(void);
-
-static void on_command_packet(const char *row_)
-{
-    ci_ask_t a;
-    if (!g_bot_on || !ci_read_ask(row_, &a) || !a.for_us) return;
-    who_am_i();
-    if (!g_me[0] || al_eq(a.from, g_me)) return;
-    char cert[CI_WIRE_MAX + 1];
-    /* The same ask again (the courier repeats until answered): the same
-     * certificate again, byte for byte, so it collapses at the asker. */
-    p_begin(); p_str(a.id); p_end();
-    if (db_one("SELECT cert FROM guests WHERE id = ?", 1, "cert", cert, sizeof cert) && cert[0]) {
-        hal_xprs_send(cert, al_len(cert));
-        return;
-    }
-    unsigned long long now = now_s(), day = ci_day(now, zone());
-    char v[8];
-    p_begin(); p_str(a.from); p_int(day); p_end();
-    int today = db_one("SELECT id FROM guests WHERE visitor = ? AND day = ?", 1, "id", v, sizeof v) && v[0];
-    ci_rules_t rules = { g_local_only };
-    int code = ci_decide(&a, &rules, now, today);
-    if (code == CI_WAIT) return;
-    char title[32], ebadge[80], pos[40];
-    active_event(title, sizeof title, ebadge, sizeof ebadge);
-    my_pos(pos, sizeof pos);
-    if (code == CI_OK && !pos[0]) code = CI_NO_PLACE;
-    int n = ci_build_result(cert, sizeof cert, g_me, &a, now, code,
-                            ebadge[0] ? ebadge : g_badge, title, pos);
-    if (n < 0) return;
-    if (hal_xprs_send(cert, (uint32_t)n) != 0) return;
-    if (code != CI_OK) return;
-    char link[12];
-    ci_link_of(a.bearer, link, sizeof link);
-    p_begin();
-    p_str(a.id); p_str(a.from); p_int(now); p_int(day);
-    p_str(link); p_str(ci_grade(link, a.via)); p_str(title); p_str(cert);
-    p_end();
-    db_exec("INSERT OR REPLACE INTO guests (id, visitor, ts, day, link, grade, title, cert)"
-            " VALUES (?,?,?,?,?,?,?,?)", 1);
-    if (g_greeting[0]) {
-        char mid[8];
-        hal_xprs_message(a.from, al_len(a.from), g_greeting, al_len(g_greeting), 0, mid, sizeof mid);
-    }
-    char body[96];
-    al_cpy(body, a.from, sizeof body);
-    al_cat(body, " checked in here", sizeof body);
-    tell("info", body);
-    push_station();
-}
 
 /* ── Score ────────────────────────────────────────────────────────────── */
 static void tile(int *first, const char *id, const char *label, const char *value, const char *hint)
@@ -3249,12 +3301,14 @@ static void push_station(void)
     field_set_bool("bot_on", g_bot_on);
     field_set_bool("local_only", g_local_only);
     field_set_str("greeting", g_greeting);
-    field_set_str("intro", g_intro);
     field_set_str("place_type", g_ptype[0] ? g_ptype : "none");
     field_set_str("badge_pic", g_badge);
     field_set_str("pick_badge__label", g_badge[0] ? "Change badge" : "Choose badge");
-    char pos[40];
-    my_pos(pos, sizeof pos);
+    /* Which station these are: this device's, or one of the person's
+     * others, set from here wherever it is. */
+    int dev = al_eq(g_target, g_dev);
+    char pos[40] = "";
+    if (dev) my_pos(pos, sizeof pos);
     char where[80] = "";
     if (pos[0]) {
         al_cpy(where, pos, sizeof where);
@@ -3268,19 +3322,31 @@ static void push_station(void)
     }
     /* The one thing a station needs before it can give check-ins, and the
      * button under it opens the setting itself (share_location). */
+    char who[48];
+    al_cpy(who, g_target, sizeof who);
+    if (dev) al_cat(who, " (this device)", sizeof who);
     const char *loc[] = {
-        "Location", where[0] ? where : "Not shared yet. Needed to give check-ins.",
+        "Station", who,
+        "Location", !dev ? "its own, as it shares it"
+                  : where[0] ? where : "Not shared yet. Needed to give check-ins.",
     };
-    details("st_info", loc, 1);
+    details("st_info", loc, 2);
     field_set_str("share_location__label", where[0] ? "Change location" : "Share my location");
+    say(dev ? "{\"type\":\"ui.field.set\",\"field\":\"share_location__hidden\",\"value\":false}"
+            : "{\"type\":\"ui.field.set\",\"field\":\"share_location__hidden\",\"value\":true}");
+    /* The certificates are the station's now; this device keeps the ones it
+     * gave before, and lists them while there are any. */
     char visitors[32] = "Visitors", n[12];
     count("SELECT COUNT(*) AS n FROM guests", n, sizeof n);
-    if (n[0] && !al_eq(n, "0")) {
+    int had = n[0] && !al_eq(n, "0");
+    if (had) {
         al_cat(visitors, " (", sizeof visitors);
         al_cat(visitors, n, sizeof visitors);
         al_cat(visitors, ")", sizeof visitors);
     }
     field_set_str("guests_open__label", visitors);
+    say(had && dev ? "{\"type\":\"ui.field.set\",\"field\":\"guests_open__hidden\",\"value\":false}"
+                   : "{\"type\":\"ui.field.set\",\"field\":\"guests_open__hidden\",\"value\":true}");
     char title[32], ebadge[80], nice[40] = "None running";
     active_event(title, sizeof title, ebadge, sizeof ebadge);
     if (title[0]) label_name(nice, sizeof nice, title);
@@ -3339,11 +3405,13 @@ static void on_picked(void)
         return;
     }
     al_cpy(g_badge, token, sizeof g_badge);
-    hal_kv_set("badge", 5, g_badge, al_len(g_badge));
+    /* The picture is published by this device and placed with its
+     * archivers; the station hands out only its reference (11.9.1). */
     publish_badge(g_badge);
-    if (g_bot_on) announce_point(0);
+    char ref[64], keys[80] = "file:";
+    ci_ref_of(g_badge, ref, sizeof ref);
+    if (ref[0]) { al_cat(keys, ref, sizeof keys); send_set(keys); }
     push_station();
-    toast("success", "Badge saved.");
 }
 
 static void publish_event(void)
@@ -3370,10 +3438,87 @@ static void publish_event(void)
     if (ref[0]) { al_cpy(tok, "file:", sizeof tok); al_cat(tok, ref, sizeof tok); }
     p_begin(); p_str(label); p_int(now); p_int(now + span); p_str(tok); p_str(desc); p_end();
     db_exec("INSERT OR REPLACE INTO events (title, since, until, badge, m) VALUES (?,?,?,?,?)", 1);
+    {   /* The station puts the event's title and badge on every
+         * certificate while it runs (11.9.1). */
+        char keys[160] = "title:", u[24];
+        al_cat(keys, label, sizeof keys);
+        al_stamp(u, sizeof u, now + span);
+        al_cat(keys, " until:", sizeof keys);
+        al_cat(keys, u, sizeof keys);
+        if (ref[0]) { al_cat(keys, " file:", sizeof keys); al_cat(keys, ref, sizeof keys); }
+        send_set(keys);
+    }
     g_draft.badge[0] = 0;
     say("{\"type\":\"ui.screen.close\"}");
     push_station();
     toast("success", "Event announced.");
+}
+
+/* ── which station is being set ───────────────────────────────────────── */
+/* This device's station, then every station the person owns, wherever it
+ * is: the core knows them (hal_xprs_owned). */
+static void push_targets(void)
+{
+    char list[400], call[16];
+    rows_begin("stations");
+    int any = 0;
+    section_begin("Your stations", &any);
+    if (g_dev[0]) row(g_dev, g_dev, "This device", al_eq(g_dev, g_target) ? "chosen" : "", "", "", "", "", "");
+    int32_t n = hal_xprs_owned(list, sizeof list - 1);
+    if (n > 0) {
+        list[n] = 0;
+        const char *p = list;
+        while (*p && *p != '[') p++;
+        if (*p == '[') p++;
+        for (;;) {
+            while (*p == ' ' || *p == ',') p++;
+            if (*p != '"') break;
+            p++;
+            unsigned k = 0;
+            while (*p && *p != '"') { if (k < sizeof call - 1) call[k++] = *p; p++; }
+            call[k] = 0;
+            if (*p == '"') p++;
+            if (!k || al_eq(call, g_dev)) continue;
+            row(call, call, "", al_eq(call, g_target) ? "chosen" : "", "", "", "", "", "");
+        }
+    }
+    section_end();
+    rows_end();
+}
+
+static void choose_target(const char *call)
+{
+    if (g_welcome_dirty) {
+        char keys[160] = "m:";
+        al_cat(keys, g_greeting, sizeof keys);
+        send_set(keys);
+    }
+    char c[16];
+    unsigned k = 0;
+    for (const char *q = call; *q && k < sizeof c - 1; q++)
+        c[k++] = (*q >= 'a' && *q <= 'z') ? (char)(*q - 32) : *q;
+    c[k] = 0;
+    al_cpy(g_target, c, sizeof g_target);
+    target_load();
+    push_station();
+}
+
+/* Before 11.9.1 this wapp WAS the point on this device. The point is the
+ * station's now, and it starts closed: a device whose owner had check-ins
+ * on hands its own station the same settings, once. */
+static void migrate_point(void)
+{
+    if (!g_dev[0] || !kv_bool("bot", 0) || kv_bool("migrated", 0)) return;
+    kv_put_bool("migrated", 1);
+    al_cpy(g_target, g_dev, sizeof g_target);
+    target_load();
+    char keys[CI_WIRE_MAX] = "tag:", tag[64], ref[64];
+    tag_value(tag, sizeof tag);
+    al_cat(keys, tag, sizeof keys);
+    ci_ref_of(g_badge, ref, sizeof ref);
+    if (ref[0]) { al_cat(keys, " file:", sizeof keys); al_cat(keys, ref, sizeof keys); }
+    g_welcome_dirty = g_greeting[0] != 0;
+    send_set(keys);
 }
 
 /* ── the page ─────────────────────────────────────────────────────────── */
@@ -3399,6 +3544,16 @@ static void on_command(void)
     page_seen();
     al_json(g_buf, "type", type, sizeof type);
     if (al_eq(type, "file.open")) { on_picked(); return; }
+    if (al_eq(type, "view.open")) {
+        /* Opened on one station (Devices' Check-in button): its settings. */
+        char v[40];
+        al_json(g_buf, "view", v, sizeof v);
+        if (al_starts(v, "station:") && v[8]) {
+            choose_target(v + 8);
+            screen_open("Settings", g_target);
+        }
+        return;
+    }
     if (al_eq(type, "setViewport")) {
         char z[8];
         al_json(g_buf, "lat", g_view_lat, sizeof g_view_lat);
@@ -3664,61 +3819,59 @@ static void on_command(void)
         return;
     }
     if (al_eq(cmd, "save_intro") || al_eq(cmd, "save_greeting") || al_eq(cmd, "save_texts")) {
-        /* Sent by each text field as it is typed (its `apply`), so saved
-         * quietly: no Save button, no toast per pause. */
-        if (!al_eq(cmd, "save_intro")) {
-            al_json(g_buf, "greeting", g_greeting, sizeof g_greeting);
-            hal_kv_set("greet", 5, g_greeting, al_len(g_greeting));
-        }
-        if (!al_eq(cmd, "save_greeting")) {
-            char was[sizeof g_intro];
-            al_cpy(was, g_intro, sizeof was);
-            al_json(g_buf, "intro", g_intro, sizeof g_intro);
-            hal_kv_set("intro", 5, g_intro, al_len(g_intro));
-            /* The new line goes out with the point at the next wake, not once
-             * per pause in the typing. */
-            if (g_bot_on && !al_eq(was, g_intro)) g_point_at = 0;
+        /* Sent by the field as it is typed (its `apply`): kept here, and
+         * sent to the station once, when the person leaves the screen or
+         * changes something else. A command per pause would be airtime. */
+        al_json(g_buf, "greeting", g_greeting, sizeof g_greeting);
+        g_welcome_dirty = 1;
+        target_save();
+        return;
+    }
+    if (al_eq(cmd, "screen_closed")) {
+        if (g_welcome_dirty) {
+            char keys[160] = "m:";
+            al_cat(keys, g_greeting, sizeof keys);
+            send_set(keys);
         }
         return;
     }
-    if (al_eq(cmd, "set_bot")) {
-        char v[8];
-        al_json(g_buf, "bot_on", v, sizeof v);
-        g_bot_on = al_eq(v, "true");
-        if (g_bot_on) {
-            char pos[40];
-            my_pos(pos, sizeof pos);
-            if (!pos[0]) {
-                /* Every check-in names its place; a station that does not
-                 * know where it stands has none to give. */
-                g_bot_on = 0;
-                field_set_bool("bot_on", 0);
-                toast("warning", "Share your location first: tap Share my location.");
+    if (al_eq(cmd, "set_bot") || al_eq(cmd, "set_local") || al_eq(cmd, "save_type")) {
+        char v[24], keys[96] = "tag:", tag[64];
+        if (al_eq(cmd, "set_bot")) {
+            al_json(g_buf, "bot_on", v, sizeof v);
+            g_bot_on = al_eq(v, "true");
+            if (g_bot_on && al_eq(g_target, g_dev)) {
+                char pos[40];
+                my_pos(pos, sizeof pos);
+                if (!pos[0]) {
+                    /* Every check-in names its place; a station that does
+                     * not know where it stands has none to give. */
+                    g_bot_on = 0;
+                    field_set_bool("bot_on", 0);
+                    toast("warning", "Share your location first: tap Share my location.");
+                    return;
+                }
             }
+        } else if (al_eq(cmd, "set_local")) {
+            al_json(g_buf, "local_only", v, sizeof v);
+            g_local_only = al_eq(v, "true");
+        } else {
+            al_json(g_buf, "place_type", v, sizeof v);
+            al_cpy(g_ptype, ci_place(v) ? v : "", sizeof g_ptype);
         }
-        kv_put_bool("bot", g_bot_on);
-        bot_update();
-        announce_point(!g_bot_on);
-        if (g_bot_on) toast("success", "Check-ins on.");
+        tag_value(tag, sizeof tag);
+        al_cat(keys, tag, sizeof keys);
+        send_set(keys);
         push_station();
         push_map();
         return;
     }
-    if (al_eq(cmd, "save_type")) {
-        char v[24];
-        al_json(g_buf, "place_type", v, sizeof v);
-        al_cpy(g_ptype, ci_place(v) ? v : "", sizeof g_ptype);
-        hal_kv_set("ptype", 5, g_ptype, al_len(g_ptype));
-        if (g_bot_on) announce_point(0);     /* visitors learn it at once */
-        toast("info", g_ptype[0] ? "Saved." : "No kind of place.");
-        return;
-    }
-    if (al_eq(cmd, "set_local")) {
-        char v[8];
-        al_json(g_buf, "local_only", v, sizeof v);
-        g_local_only = al_eq(v, "true");
-        kv_put_bool("local", g_local_only);
-        toast("info", g_local_only ? "In person only." : "LoRa range too.");
+    if (al_eq(cmd, "stations_open")) { push_targets(); screen_open("Stations", "Your stations"); return; }
+    if (al_eq(cmd, "stations_tap")) {
+        char c[16];
+        if (!al_json(g_buf, "stations_id", c, sizeof c) || !c[0]) return;
+        choose_target(c);
+        say("{\"type\":\"ui.screen.close\"}");
         return;
     }
     if (al_eq(cmd, "pick_badge")) { g_picking_event = 0; pick_picture("Choose badge"); return; }
@@ -3738,8 +3891,7 @@ static void drain_events(void)
         uint32_t n = hal_event_recv(g_topic, sizeof g_topic - 1, g_ev, sizeof g_ev - 1);
         g_ev[n < sizeof g_ev ? n : sizeof g_ev - 1] = 0;
         g_topic[sizeof g_topic - 1] = 0;
-        if (al_eq(g_topic, "xprs.command")) on_command_packet(g_ev);
-        else if (al_eq(g_topic, "xprs.result")) on_result(g_ev);
+        if (al_eq(g_topic, "xprs.result")) on_result(g_ev);
         else if (al_eq(g_topic, "xprs.status.tx")) on_status(g_ev);
         else if (al_eq(g_topic, "xprs.message")) on_message(g_ev);
         else if (al_eq(g_topic, "xprs.event")) {
@@ -3765,7 +3917,7 @@ int32_t module_init(void)
     load_settings();
     pend_load();
     listen_update();
-    bot_update();
+    migrate_point();
     spots_backfill();
     spots_types();
     visits_sample();
@@ -3777,7 +3929,6 @@ int32_t module_init(void)
 int32_t module_tick(void)
 {
     drain_events();
-    point_due();
     visits_sample();
     /* A station that left Bluetooth reach ten minutes ago leaves the list,
      * though nothing new was heard. */
@@ -3797,7 +3948,7 @@ int32_t module_handle_event(void)
 
 /* Three minutes: who the core heard over Bluetooth is read for the time in
  * range (the end of a visit is the core's exact time, its start at most
- * this late), and the check-in point is renewed hourly. Nothing else here
+ * this late). Nothing else here
  * runs on a clock: everything else happens because something arrived. */
 int32_t module_tick_interval_ms(void) { return 180000; }
 

@@ -36,7 +36,7 @@
     "name": "Settings",
     "icon": "settings",
     "menu": true,
-    "tip": "Let people near you check in here. Your station answers while XPRS runs; to answer with it closed, long-press Check-in on the home screen and turn on Run in background.",
+    "tip": "A station you own gives check-ins by itself: this device, a board on a roof or a server, set up from here wherever it is. Each change is sent to that station.",
     "children": [
       {
         "$": "group",
@@ -56,6 +56,13 @@
         "label": "Share my location",
         "icon": "map",
         "open": "host:position"
+      },
+      {
+        "$": "action",
+        "name": "stations_open",
+        "label": "Another station",
+        "icon": "cell_tower",
+        "tip": "Set up check-ins on another station you own."
       },
       {
         "$": "group",
@@ -89,21 +96,11 @@
             "$": "field",
             "name": "greeting",
             "$type": "string",
-            "label": "Greeting",
+            "label": "Welcome",
             "hint": "Welcome to the hill, 73!",
-            "max": 150,
-            "tip": "Sent to each visitor.",
-            "apply": "save_greeting"
-          },
-          {
-            "$": "field",
-            "name": "intro",
-            "$type": "string",
-            "label": "About this station",
-            "hint": "Hilltop shack, ring the bell",
             "max": 100,
-            "tip": "Shown with your pin on the map.",
-            "apply": "save_intro"
+            "tip": "Shown with the station on the map, and sent to each visitor. Sent to the station when you leave this screen.",
+            "apply": "save_greeting"
           },
           {
             "$": "field",
@@ -436,6 +433,21 @@
         "name": "guests_open",
         "label": "Visitors",
         "icon": "people"
+      }
+    ]
+  },
+  {
+    "$": "screen",
+    "name": "Stations",
+    "icon": "cell_tower",
+    "hidden": true,
+    "children": [
+      {
+        "$": "field",
+        "name": "stations",
+        "$type": "people",
+        "layout": "list",
+        "empty": "No stations of yours are known yet."
       }
     ]
   },

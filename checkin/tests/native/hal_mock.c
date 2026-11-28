@@ -13,6 +13,10 @@
 
 char g_mock_call[16] = "X1CHSR";
 uint32_t hal_identity(char *b, uint32_t cap) { uint32_t n = strlen(g_mock_call); if (n > cap) n = cap; memcpy(b, g_mock_call, n); return n; }
+char g_mock_dev[16] = "X3STN1";       /* this device's own station */
+uint32_t hal_identity_device(char *b, uint32_t cap) { uint32_t n = strlen(g_mock_dev); if (n > cap) n = cap; memcpy(b, g_mock_dev, n); return n; }
+char g_owned[200] = "[]";             /* hal_xprs_owned: the stations the person owns */
+int32_t hal_xprs_owned(char *out, uint32_t cap) { uint32_t n = strlen(g_owned); if (n > cap) return -1; memcpy(out, g_owned, n); return (int32_t)n; }
 void hal_log(int32_t level, const char *m, uint32_t n) { (void)level; (void)m; (void)n; }
 
 uint64_t g_now = 1786960000ULL;          /* 2026-08-17_09:46:40 */
