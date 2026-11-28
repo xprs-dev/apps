@@ -115,3 +115,20 @@
   (`room_moderation_sync`), listens to `core.moderation`, and declares
   `"mod":"remove"` on the room's row so the host offers Delete alone. A wapp
   showing other public publications can do the same.
+
+## Bots (apps/bots)
+
+- `hal_bots` / `hal_bot_say` (hal/xprs_wasm_hal.h, permission `bots.run`):
+  the only way a wapp speaks under a callsign that is not the person's. The
+  core holds the key and applies the gate of XPRS.md 11.4; a wapp listens to
+  `xprs.bot` and answers. A new kind of bot behaviour belongs in apps/bots
+  (or another wapp using these two verbs), never a second key holder.
+- `apps/bots/main.c`: `j_get` (one key of an object, also under `"fields"`,
+  strings decoded, built on `wapp_ai__get` / `wapp_ai__str`), `pkt_field`
+  (one field of a packet row's `"fields"` pairs), `one_line` (words made
+  safe for `m:`), and the pattern "ask `ai.chat`, answer when it replies"
+  with a small pending table (`ai_ask` / `ai_answer`).
+- `apps/bots/tests/native/test_bots.c`: the smallest stand-in host in the
+  tree (bots list, kv, event queue, message queue, what was said). Copy it
+  for a new wapp that needs no chat network.
+
