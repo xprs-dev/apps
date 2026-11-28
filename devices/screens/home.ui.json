@@ -86,7 +86,7 @@
     "$": "action",
     "name": "open_admins",
     "label": "Administrators",
-    "icon": "group"
+    "icon": "people"
    },
    {
     "$": "action",
@@ -1006,7 +1006,7 @@
  {
   "$": "screen",
   "name": "Administrators",
-  "icon": "group",
+  "icon": "people",
   "hidden": true,
   "tip": "The people who may change this station, by callsign. Each of them can do everything here, from the same room or from anywhere on the internet. A station has at most four.",
   "children": [
