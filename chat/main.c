@@ -1095,12 +1095,28 @@ static int pubroom_mod(void) {
   return hal_xprs_group_role_at("*", 1, g_call, s_len(g_call), (uint32_t)hal_time_epoch()) >= 3;
 }
 
+/* An open group (10.10.4): what the core says this profile is in it. 4 a
+ * moderator of the public rooms, 3 a moderator of this group, 0 nobody. */
+static int opengroup_role(const char *id) {
+  if (!open_group_is(id)) return 0;
+  return (int)hal_xprs_group_role_at(id + 1, s_len(id + 1), g_call, s_len(g_call), (uint32_t)hal_time_epoch());
+}
+
 static void unsend_message(const char *id, const char *orig) {
   if (!id[0] || !orig[0] || !room_renderable(id)) return;
   char author[24] = "";
   if (!room_message_sender(id, orig, author, sizeof(author))) { notify("warning", wtr("msg.gone", "That message is gone")); return; }
   uint64_t now = hal_time_epoch();
   if (!is_self_call(author)) {
+    if (open_group_is(id)) {
+      /* A moderator of this open group removes; the core signs and refuses
+       * anybody else. */
+      int rc = hal_xprs_group_moderate(id + 1, s_len(id + 1), orig, s_len(orig), "", 0, 2);
+      if (rc == -2) { notify("warning", wtr("msg.only_author_delete", "Only its author can delete this")); return; }
+      if (rc != 0) { notify("warning", wtr("msg.could_not_delete", "Could not delete")); return; }
+      room_moderation_sync(id);
+      return;
+    }
     if (pubroom_is(id)) {
       /* The core signs with our key and refuses when it is not listed. */
       int rc = hal_xprs_group_moderate("*", 1, orig, s_len(orig), "", 0, 2);
@@ -1550,6 +1566,12 @@ static void drain_core_events(void) {
       room_moderation_sync(XROOM_GLOBAL);
       const char *open = room_open_id();
       if (pubroom_is(open)) room_set_mod(pubroom_mod() ? 2 : 0, 1);
+      /* And an open group's own record (10.10.4): what its moderators
+       * removed, and whether we are one of them now. */
+      if (open_group_is(open)) {
+        room_moderation_sync(open);
+        room_set_mod(opengroup_role(open) >= 3 ? 2 : 0, 1);
+      }
       continue;
     }
     if (s_eq(topic, "core.names")) { if (g_search_live) search_render(); continue; }
@@ -1890,7 +1912,240 @@ static void group_rename(const char *gid, const char *nick) {
   notify("info", wtr("msg.renamed", "Renamed"));
 }
 
+static int group_call_values(int count, int more, char *out, unsigned cap);
+/* The dialog for a group with members (26.1): its name, the callsign it will
+ * wear, and whether it is private. */
+static void newgroup_members_ask(void) {
+    static char pm[1400];
+    s_cpy(pm, "{\"type\":\"ui.prompt\",\"id\":\"xgnew:\",\"title\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.newgroup_title", "New group"));
+    s_cat(pm, "\",\"body\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.newgroup_body", "Public: anyone can read it; only members post, and people ask to join. Private: only members read it, sealed. The name is a label; turn the arrows for another callsign, or search for letters you like."));
+    s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.create", "Create"));
+    s_cat(pm, "\",\"toggle\":{\"label\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.private_toggle", "Private: only members read (sealed)"));
+    s_cat(pm, "\",\"value\":false}", sizeof(pm));
+    /* The callsign it will wear, picked before it exists: the core offers
+     * some (each from its own key, 26.1) and the dialog turns through them,
+     * with a way back to the one shown before. `more`: the list has no end;
+     * near its end the host asks for more (prompt_more, below). */
+    char vals[400] = "";
+    if (group_call_values(8, 0, vals, sizeof(vals))) {
+      s_cat(pm, ",\"cycle\":{\"label\":\"", sizeof(pm));
+      jesc(pm, sizeof(pm), wtr("prompt.group_call", "Callsign"));
+      s_cat(pm, "\",\"next\":\"", sizeof(pm));
+      jesc(pm, sizeof(pm), wtr("prompt.group_call_next", "Another callsign"));
+      s_cat(pm, "\",\"back\":\"", sizeof(pm));
+      jesc(pm, sizeof(pm), wtr("prompt.group_call_back", "The previous one"));
+      /* search: the app's callsign picker beside the arrows, for letters
+       * the person likes; its keys come from the same core pool, so the
+       * one chosen is created like any other offered here. */
+      s_cat(pm, "\",\"more\":true,\"search\":\"X5\",\"values\":[", sizeof(pm));
+      s_cat(pm, vals, sizeof(pm));
+      s_cat(pm, "]}", sizeof(pm));
+    }
+    s_cat(pm, ",\"input\":{\"hint\":\"", sizeof(pm));
+    jesc(pm, sizeof(pm), wtr("prompt.group_name_hint", "group name"));
+    s_cat(pm, "\",\"max\":24}}", sizeof(pm));
+    hal_msg_send(pm, s_len(pm));
+  }
+
+/* ── an open group's moderators (XPRS.md 10.10.4) ───────────────────────
+ *
+ * An open group has no members, so its "members" button shows who looks
+ * after it: the moderators its record names. A moderator adds another, and
+ * dismisses one of their own line; a moderator of the public rooms
+ * dismisses anybody. All of it through the verbs a closed group uses, asked
+ * for the group's name: the core keeps the record and decides. */
+static char g_og_roster[1800];
+
+static int og_roster(const char *gid) {
+  int n = hal_xprs_group_roster(gid + 1, s_len(gid + 1), g_og_roster, sizeof(g_og_roster) - 1);
+  if (n < 0 || n >= (int)sizeof(g_og_roster)) n = 0;
+  g_og_roster[n] = 0;
+  return n;
+}
+/* Who appointed `call` in the roster just read ("*": a moderator of the
+ * public rooms); empty when `call` is not a moderator. */
+static void og_by(const char *call, char *by, unsigned cap) {
+  by[0] = 0;
+  const char *cur = g_og_roster; char obj[160];
+  while (next_object(&cur, obj, sizeof(obj))) {
+    char c[16] = ""; jstr(obj, "call", c, sizeof(c));
+    if (s_eq(c, call)) { jstr(obj, "by", by, cap); return; }
+  }
+}
+/* Is `call` in the line of `top`: appointed by it, or by somebody it
+ * appointed? Short walks: a line is a few people. */
+static int og_under(const char *call, const char *top) {
+  char at[16]; s_cpy(at, call, sizeof(at));
+  for (int hop = 0; hop < 16 && at[0]; hop += 1) {
+    char by[16]; og_by(at, by, sizeof(by));
+    if (!by[0] || s_eq(by, "*")) return 0;
+    if (s_eq(by, top)) return 1;
+    s_cpy(at, by, sizeof(at));
+  }
+  return 0;
+}
+
+static void ogmods_open(const char *gid) {
+  int role = opengroup_role(gid);
+  og_roster(gid);
+  static char m[2600], names[700], chips[1500];
+  names[0] = 0; chips[0] = 0;
+  int shown = 0;
+  const char *cur = g_og_roster; char obj[160];
+  while (next_object(&cur, obj, sizeof(obj))) {
+    char c[16] = ""; jstr(obj, "call", c, sizeof(c));
+    if (!c[0]) continue;
+    if (names[0]) s_cat(names, ", ", sizeof(names));
+    s_cat(names, c, sizeof(names));
+    /* A chip for each moderator we may dismiss. */
+    if ((role == 4 || (role == 3 && og_under(c, g_call))) && shown < 8) {
+      s_cat(chips, chips[0] ? ",{\"label\":\"" : "{\"label\":\"", sizeof(chips));
+      jesc(chips, sizeof(chips), wtr("label.og_dismiss", "Dismiss"));
+      s_cat(chips, " ", sizeof(chips)); jesc(chips, sizeof(chips), c);
+      s_cat(chips, "\",\"value\":\"d:", sizeof(chips)); jesc(chips, sizeof(chips), c);
+      s_cat(chips, "\"}", sizeof(chips));
+      shown += 1;
+    }
+  }
+  if (role >= 3) {
+    s_cat(chips, chips[0] ? ",{\"label\":\"" : "{\"label\":\"", sizeof(chips));
+    jesc(chips, sizeof(chips), wtr("label.og_add", "Add moderator"));
+    s_cat(chips, "\",\"value\":\"add\"}", sizeof(chips));
+  }
+  s_cpy(m, "{\"type\":\"ui.prompt\",\"id\":\"ogm:", sizeof(m)); jesc(m, sizeof(m), gid);
+  s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("prompt.og_mods_title", "Moderators"));
+  s_cat(m, "\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.og_mods_body", "Anyone can post in an open group. Its moderators can delete a message and add other moderators."));
+  s_cat(m, " ", sizeof(m));
+  if (names[0]) { jesc(m, sizeof(m), wtr("prompt.og_mods_are", "Moderators here:")); s_cat(m, " ", sizeof(m)); jesc(m, sizeof(m), names); }
+  else jesc(m, sizeof(m), wtr("prompt.og_mods_none", "This group has no moderators of its own yet."));
+  s_cat(m, "\"", sizeof(m));
+  if (chips[0]) { s_cat(m, ",\"chips\":[", sizeof(m)); s_cat(m, chips, sizeof(m)); s_cat(m, "]", sizeof(m)); }
+  s_cat(m, "}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+
+/* "Add moderator": ask for the callsign. */
+static void ogmods_add_ask(const char *gid) {
+  char m[700] = "{\"type\":\"ui.prompt\",\"id\":\"oga:";
+  jesc(m, sizeof(m), gid);
+  s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("label.og_add", "Add moderator"));
+  s_cat(m, "\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.og_add_body", "The callsign of the person who will help look after this group. They can delete messages here and add other moderators."));
+  s_cat(m, "\",\"confirm\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("prompt.add", "Add"));
+  s_cat(m, "\",\"input\":{\"hint\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("prompt.callsign_hint", "callsign"));
+  s_cat(m, "\",\"max\":12}}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+static void ogmods_add(const char *gid, const char *typed) {
+  char call[16]; unsigned n = 0;
+  for (const char *t = typed; *t && n < sizeof(call) - 1; t += 1) {
+    char ch = *t;
+    if (ch == ' ' || ch == '@') continue;
+    if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+    call[n] = ch; n += 1;
+  }
+  call[n] = 0;
+  if (!xprs_is_station(call)) { notify("warning", wtr("msg.og_not_callsign", "That is not a callsign")); return; }
+  int rc = hal_xprs_group_appoint(gid + 1, s_len(gid + 1), call, s_len(call), 1);
+  if (rc == -2) { notify("warning", wtr("msg.og_not_mod", "Only a moderator of this group can do that")); return; }
+  if (rc != 0) { notify("warning", wtr("msg.og_failed", "Could not do that")); return; }
+  char say[96]; s_cpy(say, call, sizeof(say)); s_cat(say, " ", sizeof(say));
+  s_cat(say, wtr("msg.og_added", "is now a moderator here"), sizeof(say));
+  notify("info", say);
+}
+
+/* "Dismiss X": asked once more, because their whole line goes with them. */
+static void ogmods_dismiss_ask(const char *gid, const char *call) {
+  char m[800] = "{\"type\":\"ui.prompt\",\"id\":\"ogd:";
+  jesc(m, sizeof(m), gid); s_cat(m, "|", sizeof(m)); jesc(m, sizeof(m), call);
+  s_cat(m, "\",\"title\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("label.og_dismiss", "Dismiss")); s_cat(m, " ", sizeof(m)); jesc(m, sizeof(m), call);
+  s_cat(m, "\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.og_dismiss_body", "They stop being a moderator of this group, and so does everybody they appointed. Those people get a private message from you saying so."));
+  s_cat(m, "\",\"chips\":[{\"label\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("label.og_dismiss", "Dismiss"));
+  s_cat(m, "\",\"value\":\"yes\"},{\"label\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("label.cancel", "Cancel"));
+  s_cat(m, "\",\"value\":\"no\"}]}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+/* `arg` is "#GROUP|CALL". The line is read BEFORE the dismissal (after it
+ * the record no longer names them), and each of them is written to: their
+ * role ended because of somebody else's, and they may ask for it again. */
+static void ogmods_dismiss(const char *arg) {
+  const char *bar = s_find(arg, "|");
+  if (!bar || !bar[1]) return;
+  char gid[24]; unsigned gn = (unsigned)(bar - arg);
+  if (gn >= sizeof(gid)) return;
+  for (unsigned i = 0; i < gn; i += 1) gid[i] = arg[i];
+  gid[gn] = 0;
+  const char *call = bar + 1;
+  og_roster(gid);
+  static char line[12][16]; int nline = 0;
+  { const char *cur = g_og_roster; char obj[160];
+    while (next_object(&cur, obj, sizeof(obj)) && nline < 12) {
+      char c[16] = ""; jstr(obj, "call", c, sizeof(c));
+      if (c[0] && !s_eq(c, call) && og_under(c, call)) { s_cpy(line[nline], c, sizeof(line[0])); nline += 1; }
+    } }
+  int rc = hal_xprs_group_appoint(gid + 1, s_len(gid + 1), call, s_len(call), 0);
+  if (rc == -2) { notify("warning", wtr("msg.og_not_yours", "Only who appointed them, or a moderator of the public rooms, can dismiss them")); return; }
+  if (rc != 0) { notify("warning", wtr("msg.og_failed", "Could not do that")); return; }
+  static char note[420];
+  s_cpy(note, wtr("msg.og_line_note_a", "Your role as moderator of"), sizeof(note));
+  s_cat(note, " ", sizeof(note)); s_cat(note, gid, sizeof(note)); s_cat(note, " ", sizeof(note));
+  s_cat(note, wtr("msg.og_line_note_b", "has ended, because the moderator who appointed you was dismissed. If you would like to be a moderator again, write to me."), sizeof(note));
+  for (int i = 0; i < nline; i += 1) {
+    char nid[8] = "";
+    /* Sealed when their key is known, in the clear otherwise: the word
+     * has to reach them. */
+    int32_t form = hal_xprs_message(line[i], s_len(line[i]), note, s_len(note), 1u, nid, sizeof(nid));
+    if (form <= 0) form = hal_xprs_message(line[i], s_len(line[i]), note, s_len(note), 0u, nid, sizeof(nid));
+    if (form > 0 && nid[0]) admit(line[i], nid, "out", g_call, note, "", "", "verified", 0, 0, "", "", 0, form == 1, "");
+  }
+  char say[96]; s_cpy(say, call, sizeof(say)); s_cat(say, " ", sizeof(say));
+  s_cat(say, wtr("msg.og_dismissed", "is no longer a moderator here"), sizeof(say));
+  notify("info", say);
+}
+
+/* A new open group: a name, and it is open. Nothing is created anywhere;
+ * the group exists as soon as somebody posts in it (7.3). */
+static void opengroup_ask(void) {
+  char m[800] = "{\"type\":\"ui.prompt\",\"id\":\"ognew:\",\"title\":\"";
+  jesc(m, sizeof(m), wtr("prompt.og_new_title", "Open group"));
+  s_cat(m, "\",\"body\":\"", sizeof(m));
+  jesc(m, sizeof(m), wtr("prompt.og_new_body", "Anyone can read and post, like a hashtag. Type its name: letters and digits, up to 16. If the group exists you join it; if not, it starts with your first message."));
+  s_cat(m, "\",\"confirm\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("prompt.open", "Open"));
+  s_cat(m, "\",\"input\":{\"hint\":\"", sizeof(m)); jesc(m, sizeof(m), wtr("prompt.og_name_hint", "#name"));
+  s_cat(m, "\",\"max\":17}}", sizeof(m));
+  hal_msg_send(m, s_len(m));
+}
+static void opengroup_open(const char *typed) {
+  char gid[24] = "#"; unsigned n = 1;
+  for (const char *t = typed; *t && n < 17; t += 1) {
+    char ch = *t;
+    if (ch == '#' || ch == ' ') continue;
+    if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+    if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ((ch == '-' || ch == '_') && n > 1))) {
+      notify("warning", wtr("msg.og_bad_name", "A group's name is letters and digits, up to 16"));
+      return;
+    }
+    gid[n] = ch; n += 1;
+  }
+  gid[n] = 0;
+  /* A callsign is a person or a station, never a group's name (7.3). */
+  if (n < 2 || xprs_is_station(gid + 1) || !open_group_is(gid) || !room_renderable(gid)) {
+    notify("warning", wtr("msg.og_bad_name", "A group's name is letters and digits, up to 16"));
+    return;
+  }
+  char title[48]; room_title(gid, title, sizeof(title));
+  open_group_follow(gid, 1);
+  room_start(gid, title);
+}
+
 static void members_open(const char *gid) {
+  if (open_group_is(gid)) { ogmods_open(gid); return; }
   if (!xgroup_is(gid)) return;
   s_cpy(g_mp_gid, gid, sizeof(g_mp_gid));
   g_mp_q[0] = 0; g_mp_filter[0] = 0; g_mp_roster_ok = 0;
@@ -2407,10 +2662,11 @@ static void do_open(const char *buf) {
   if (!convo[0]) return;
   /* Whether the host offers moderation, stated by the row the open sends. */
   room_set_mod(xgroup_is(convo) ? (my_role_in(convo) >= 3 ? 1 : 0)
-                                : (pubroom_is(convo) && pubroom_mod()) ? 2 : 0, 0);
+                                : (pubroom_is(convo) && pubroom_mod()) ? 2
+                                : opengroup_role(convo) >= 3 ? 2 : 0, 0);
   /* And the acts of authority already in force on this group's posts, folded
    * in BEFORE the tail is drawn, so the first paint is the corrected one. */
-  if (xgroup_is(convo) || pubroom_is(convo)) room_moderation_sync(convo);
+  if (xgroup_is(convo) || pubroom_is(convo) || open_group_is(convo)) room_moderation_sync(convo);
   open_group_follow(convo, 1);
   room_open(convo);
   /* Opening the room is the one moment somebody is asking to SEE it. The
@@ -2755,39 +3011,17 @@ void module_handle_event(void) {
     screen_open("@screen.newchat");
   }
   else if (s_eq(cmd, "rooms_newgroup")) {
-    static char pm[1400];
-    s_cpy(pm, "{\"type\":\"ui.prompt\",\"id\":\"xgnew:\",\"title\":\"", sizeof(pm));
-    jesc(pm, sizeof(pm), wtr("prompt.newgroup_title", "New group"));
-    s_cat(pm, "\",\"body\":\"", sizeof(pm));
-    jesc(pm, sizeof(pm), wtr("prompt.newgroup_body", "Public: anyone can read it; only members post, and people ask to join. Private: only members read it, sealed. The name is a label; turn the arrows for another callsign, or search for letters you like."));
-    s_cat(pm, "\",\"confirm\":\"", sizeof(pm));
-    jesc(pm, sizeof(pm), wtr("prompt.create", "Create"));
-    s_cat(pm, "\",\"toggle\":{\"label\":\"", sizeof(pm));
-    jesc(pm, sizeof(pm), wtr("prompt.private_toggle", "Private: only members read (sealed)"));
-    s_cat(pm, "\",\"value\":false}", sizeof(pm));
-    /* The callsign it will wear, picked before it exists: the core offers
-     * some (each from its own key, 26.1) and the dialog turns through them,
-     * with a way back to the one shown before. `more`: the list has no end;
-     * near its end the host asks for more (prompt_more, below). */
-    char vals[400] = "";
-    if (group_call_values(8, 0, vals, sizeof(vals))) {
-      s_cat(pm, ",\"cycle\":{\"label\":\"", sizeof(pm));
-      jesc(pm, sizeof(pm), wtr("prompt.group_call", "Callsign"));
-      s_cat(pm, "\",\"next\":\"", sizeof(pm));
-      jesc(pm, sizeof(pm), wtr("prompt.group_call_next", "Another callsign"));
-      s_cat(pm, "\",\"back\":\"", sizeof(pm));
-      jesc(pm, sizeof(pm), wtr("prompt.group_call_back", "The previous one"));
-      /* search: the app's callsign picker beside the arrows, for letters
-       * the person likes; its keys come from the same core pool, so the
-       * one chosen is created like any other offered here. */
-      s_cat(pm, "\",\"more\":true,\"search\":\"X5\",\"values\":[", sizeof(pm));
-      s_cat(pm, vals, sizeof(pm));
-      s_cat(pm, "]}", sizeof(pm));
-    }
-    s_cat(pm, ",\"input\":{\"hint\":\"", sizeof(pm));
-    jesc(pm, sizeof(pm), wtr("prompt.group_name_hint", "group name"));
-    s_cat(pm, "\",\"max\":24}}", sizeof(pm));
-    hal_msg_send(pm, s_len(pm));
+    /* Which kind: an open group (a name anybody posts to), or one with
+     * members. Asked first, in one small dialog. */
+    char km[900] = "{\"type\":\"ui.prompt\",\"id\":\"xgkind:\",\"title\":\"";
+    jesc(km, sizeof(km), wtr("prompt.newgroup_title", "New group"));
+    s_cat(km, "\",\"body\":\"", sizeof(km));
+    jesc(km, sizeof(km), wtr("prompt.newgroup_kind", "Open group: a #name anyone can read and post to. Group with members: you decide who posts, and it can be private."));
+    s_cat(km, "\",\"chips\":[{\"label\":\"", sizeof(km)); jesc(km, sizeof(km), wtr("label.og_kind_open", "Open group (#name)"));
+    s_cat(km, "\",\"value\":\"open\"},{\"label\":\"", sizeof(km)); jesc(km, sizeof(km), wtr("label.og_kind_members", "Group with members"));
+    s_cat(km, "\",\"value\":\"members\"},{\"label\":\"", sizeof(km)); jesc(km, sizeof(km), wtr("label.og_kind_popular", "Popular groups"));
+    s_cat(km, "\",\"value\":\"popular\"}]}", sizeof(km));
+    hal_msg_send(km, s_len(km));
   }
   /* "New folder" on a group's menu or header (the host's onNewRoom). */
   else if (s_eq(cmd, "rooms_new")) {
@@ -2937,6 +3171,28 @@ void module_handle_event(void) {
     if (s_pre(pid, "keyplain:")) {
       if (s_eq(val, "plain")) send_room_plain(pid + 9);
     }
+    else if (s_eq(pid, "xgkind:")) {
+      if (s_eq(val, "open")) opengroup_ask();
+      else if (s_eq(val, "members")) newgroup_members_ask();
+      else if (s_eq(val, "popular")) {
+        g_rank_open = 1;
+        rank_publish();
+        screen_open("@screen.ranking");
+      }
+    }
+    else if (s_eq(pid, "ognew:")) {
+      char name[40] = ""; jstr(buf, "prompt_input", name, sizeof(name));
+      opengroup_open(name);
+    }
+    else if (s_pre(pid, "ogm:")) {
+      if (s_eq(val, "add")) ogmods_add_ask(pid + 4);
+      else if (s_pre(val, "d:")) ogmods_dismiss_ask(pid + 4, val + 2);
+    }
+    else if (s_pre(pid, "oga:")) {
+      char who[40] = ""; jstr(buf, "prompt_input", who, sizeof(who));
+      ogmods_add(pid + 4, who);
+    }
+    else if (s_pre(pid, "ogd:")) { if (s_eq(val, "yes")) ogmods_dismiss(pid + 4); }
     else if (s_pre(pid, "xgjoin:")) group_join(pid + 7);
     else if (s_pre(pid, "xgmod:")) mod_accept(pid + 6);
     else if (s_pre(pid, "xgmem:")) {

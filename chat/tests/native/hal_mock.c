@@ -141,7 +141,8 @@ static int mock_is_foreign(const char* to,uint32_t tl){ if(tl!=10||to[0]!='M'||(
 /* A closed group's post goes through here now (sealed by the core): what the
  * core was ASKED to send is kept as a pseudo-wire in g_last_wire, and the
  * core's "not a member" (mock_set_send_rc(-2)) is answered for a group. */
-int32_t hal_xprs_message(const char* to,uint32_t tl,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){ if(g_hk_message) return g_hk_message(to,tl,t,l,priv,id,cap); int grp=tl>=2&&to[0]=='X'&&to[1]=='5'; if(grp&&g_send_rc) return g_send_rc; if(grp) snprintf(g_last_wire,sizeof(g_last_wire),"t:message f:X1SELF d:%.*s x:sealed m:%.*s",(int)tl,to,(int)l,t); int fx=mock_is_foreign(to,tl); if(fx&&priv) return -3; snprintf(id,cap,"m%05d",++g_bcast_n); return fx?3:(priv?1:2); }
+void mock_og_note(const char* to,uint32_t tl);
+int32_t hal_xprs_message(const char* to,uint32_t tl,const char* t,uint32_t l,uint32_t priv,char* id,uint32_t cap){ if(g_hk_message) return g_hk_message(to,tl,t,l,priv,id,cap); if(tl>=2&&to[0]=='X'&&to[1]=='1'&&l>20&&strstr(t,"moderator")) mock_og_note(to,tl); int grp=tl>=2&&to[0]=='X'&&to[1]=='5'; if(grp&&g_send_rc) return g_send_rc; if(grp) snprintf(g_last_wire,sizeof(g_last_wire),"t:message f:X1SELF d:%.*s x:sealed m:%.*s",(int)tl,to,(int)l,t); int fx=mock_is_foreign(to,tl); if(fx&&priv) return -3; snprintf(id,cap,"m%05d",++g_bcast_n); return fx?3:(priv?1:2); }
 static char g_bcast_scope[16];
 /* The scope the wapp asked for on the last broadcast. 13.11 makes this the
  * only difference between the two broadcast rooms, so a test has to see it. */
@@ -194,7 +195,61 @@ void mock_set_groups(const char* json){ snprintf(g_groups,sizeof(g_groups),"%s",
 int32_t hal_xprs_groups(char* o,uint32_t cap){ if(g_hk_groups) return g_hk_groups(o,cap); uint32_t n=strlen(g_groups); if(n>cap) return -(int32_t)n; memcpy(o,g_groups,n); return n; }
 static char g_roster[40000] = "[]";
 void mock_set_roster(const char* json){ snprintf(g_roster,sizeof(g_roster),"%s",json&&json[0]?json:"[]"); }
-int32_t hal_xprs_group_roster(const char* g,uint32_t gl,char* o,uint32_t cap){ if(g_hk_roster) return g_hk_roster(g,gl,o,cap); (void)g;(void)gl; uint32_t n=strlen(g_roster); if(n>cap) return -(int32_t)n; memcpy(o,g_roster,n); return n; }
+
+/* ---- open groups (XPRS.md 10.10.4): a stand-in for the core's record ----
+ * An open group is any group name that is not "*" and not an X5 callsign.
+ * The mock keeps one group's moderators (who appointed whom), what was
+ * removed, and what this station's own person is there: 0 nobody, 3 a
+ * moderator of the group, 4 a moderator of the public rooms. Dismissing
+ * takes the line, as the core does. */
+static struct { char call[16], by[16]; } g_og_mods[8];
+static int g_og_n, g_og_self;
+static char g_og_removed[400];
+static char g_og_noted[8][16]; static int g_og_nnoted;
+/* The host takes a group with or without its '#', as the wapp passes both. */
+static int og_is(const char* g,uint32_t gl){ if(gl&&g[0]=='#'){ g++; gl--; } return gl>=1 && !(gl==1&&g[0]=='*') && !(gl>=2&&g[0]=='X'&&g[1]=='5'); }
+void mock_og_reset(int self_role){ g_og_n=0; g_og_self=self_role; g_og_removed[0]=0; g_og_nnoted=0; }
+void mock_og_self(int role){ g_og_self=role; }
+void mock_og_mod(const char* call,const char* by){ if(g_og_n<8){ snprintf(g_og_mods[g_og_n].call,16,"%s",call); snprintf(g_og_mods[g_og_n].by,16,"%s",by); g_og_n++; } }
+void mock_og_removed(const char* id){ size_t n=strlen(g_og_removed); snprintf(g_og_removed+n,sizeof(g_og_removed)-n,"%s{\"id\":\"*%s\",\"kind\":\"remove\",\"target\":\"%s\",\"signer\":\"\",\"srole\":\"mod\",\"ts\":0,\"text\":\"\"}",n?",":"",id,id); }
+int mock_og_is_mod(const char* call){ for(int i=0;i<g_og_n;i++) if(!strcmp(g_og_mods[i].call,call)) return 1; return 0; }
+int mock_og_noted(const char* call){ for(int i=0;i<g_og_nnoted;i++) if(!strcmp(g_og_noted[i],call)) return 1; return 0; }
+int mock_og_notes(void){ return g_og_nnoted; }
+void mock_og_note(const char* to,uint32_t tl){ if(g_og_nnoted<8) snprintf(g_og_noted[g_og_nnoted++],16,"%.*s",(int)tl,to); }
+static int og_under(const char* call,const char* top){
+  char at[16]; snprintf(at,sizeof(at),"%s",call);
+  for(int hop=0;hop<8;hop++){
+    const char* by=0;
+    for(int i=0;i<g_og_n;i++) if(!strcmp(g_og_mods[i].call,at)) by=g_og_mods[i].by;
+    if(!by||!strcmp(by,"*")) return 0;
+    if(!strcmp(by,top)) return 1;
+    snprintf(at,sizeof(at),"%s",by);
+  }
+  return 0;
+}
+static void og_drop(const char* call){
+  char gone[8][16]; int ng=0;
+  snprintf(gone[ng++],16,"%s",call);
+  for(int i=0;i<g_og_n;i++) if(og_under(g_og_mods[i].call,call)&&ng<8) snprintf(gone[ng++],16,"%s",g_og_mods[i].call);
+  for(int k=0;k<ng;k++) for(int i=0;i<g_og_n;i++) if(!strcmp(g_og_mods[i].call,gone[k])){ g_og_mods[i]=g_og_mods[g_og_n-1]; g_og_n--; break; }
+}
+static int32_t og_roster(char* o,uint32_t cap){
+  char b[900]; int n=0; n+=snprintf(b+n,sizeof(b)-n,"[");
+  for(int i=0;i<g_og_n;i++) n+=snprintf(b+n,sizeof(b)-n,"%s{\"call\":\"%s\",\"role\":\"mod\",\"state\":\"member\",\"by\":\"%s\"}",i?",":"",g_og_mods[i].call,g_og_mods[i].by);
+  n+=snprintf(b+n,sizeof(b)-n,"]");
+  if((uint32_t)n>cap) return -n;
+  memcpy(o,b,n); return n;
+}
+static int32_t og_appoint(const char* c,uint32_t cl,int32_t on){
+  char call[16]; snprintf(call,sizeof(call),"%.*s",(int)cl,c);
+  if(!g_og_self) return -2;
+  if(on){ if(!mock_og_is_mod(call)) mock_og_mod(call,g_og_self==4?"*":"X1TEST"); return 0; }
+  if(!mock_og_is_mod(call)) return -1;
+  if(g_og_self!=4 && !og_under(call,"X1TEST")) return -2;
+  og_drop(call);
+  return 0;
+}
+int32_t hal_xprs_group_roster(const char* g,uint32_t gl,char* o,uint32_t cap){ if(g_hk_roster) return g_hk_roster(g,gl,o,cap); if(og_is(g,gl)) return og_roster(o,cap); (void)g;(void)gl; uint32_t n=strlen(g_roster); if(n>cap) return -(int32_t)n; memcpy(o,g_roster,n); return n; }
 /* Minting is the core's; the mock hands back a fixed callsign, adds the group
  * to what hal_xprs_groups reports with us as admin (as the core does), and
  * remembers the nick it was asked for. -1 when a test says no profile is open. */
@@ -216,7 +271,7 @@ int32_t hal_xprs_group_invite(const char* g,uint32_t gl,const char* c,uint32_t c
 static char g_private[32];
 const char* mock_private(void){ return g_private; }
 int32_t hal_xprs_group_private(const char* g,uint32_t gl,int32_t on){ snprintf(g_private,sizeof(g_private),"%.*s:%d",(int)gl,g,(int)on); return 0; }
-int32_t hal_xprs_group_appoint(const char* g,uint32_t gl,const char* c,uint32_t cl,int32_t on){ (void)g;(void)gl;(void)c;(void)cl;(void)on; return 0; }
+int32_t hal_xprs_group_appoint(const char* g,uint32_t gl,const char* c,uint32_t cl,int32_t on){ if(og_is(g,gl)) return og_appoint(c,cl,on); return 0; }
 static char g_follow[64];
 const char* mock_follow(void){ return g_follow; }
 int32_t hal_xprs_follow(const char* c,uint32_t cl,int32_t on){ snprintf(g_follow,sizeof(g_follow),"%.*s:%d",(int)cl,c,(int)on); return 0; }
@@ -289,6 +344,10 @@ void mock_public_removed(const char* id){
 static int mock_is_public(const char* g,uint32_t gl){ return gl==1&&g[0]=='*'; }
 int32_t hal_xprs_group_moderation(const char* g,uint32_t gl,char* o,uint32_t cap){
   if(g_hk_moderation) return g_hk_moderation(g,gl,o,cap);
+  if(!mock_is_public(g,gl)&&og_is(g,gl)){
+    int w=snprintf(o,cap,"[%s]",g_og_removed);
+    return w>=(int)cap ? -w : w;
+  }
   if(mock_is_public(g,gl)){
     int w=snprintf(o,cap,"[%s]",g_pub_removed);
     return w>=(int)cap ? -w : w;
@@ -301,6 +360,7 @@ int32_t hal_xprs_group_moderation(const char* g,uint32_t gl,char* o,uint32_t cap
 int32_t hal_xprs_group_role_at(const char* g,uint32_t gl,const char* c,uint32_t cl,uint32_t ts){
   if(g_hk_role_at) return g_hk_role_at(g,gl,c,cl,ts);
   if(mock_is_public(g,gl)) return (g_pub_listed && cl==6 && !strncmp(c,"X1TEST",6)) ? 3 : 0;
+  if(og_is(g,gl)){ char call[16]; snprintf(call,sizeof(call),"%.*s",(int)cl,c); if(!strcmp(call,"X1TEST")) return g_og_self; return mock_og_is_mod(call)?3:0; }
   (void)g;(void)gl;(void)ts;
   const char* p=g_roles;
   while(*p){
@@ -316,6 +376,13 @@ int32_t hal_xprs_group_role_at(const char* g,uint32_t gl,const char* c,uint32_t 
 int32_t hal_xprs_group_moderate(const char* g,uint32_t gl,const char* tg,uint32_t tgl,const char* t,uint32_t l,uint32_t kind){
   if(g_hk_moderate) return g_hk_moderate(g,gl,tg,tgl,t,l,kind);
   snprintf(g_moderate_ask,sizeof(g_moderate_ask),"%.*s|%.*s|%.*s|%u",(int)gl,g,(int)tgl,tg,(int)l,t,kind);
+  if(!mock_is_public(g,gl)&&og_is(g,gl)){
+    if(kind!=2) return -1;
+    if(!g_og_self) return -2;
+    char id[16]; snprintf(id,sizeof(id),"%.*s",(int)tgl,tg);
+    mock_og_removed(id);
+    return 0;
+  }
   if(mock_is_public(g,gl)){
     if(kind!=2) return -1;
     if(!g_pub_listed) return -2;

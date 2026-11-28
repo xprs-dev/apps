@@ -51,6 +51,13 @@ static int is_xgroup(const char *id) {
 static int is_pubroom(const char *id) {
   return s_eq(id, "#REGIONAL") || s_eq(id, "#GLOBAL");
 }
+/* An open group (7.3, `#LISBOA`): not one of the rooms by range, not a
+ * closed group's callsign. Its moderators are the public rooms' and whoever
+ * a moderator of it appointed (10.10.4); the core keeps that record under
+ * the group's own name. */
+static int is_opengroup(const char *id) {
+  return id[0] == '#' && id[1] && !is_xgroup(id) && !is_pubroom(id) && !s_eq(id, "#LOCAL");
+}
 /* A group that can be passed on as a link: `#X5...` (a closed or public
  * group, by its callsign) or `#NAME` (an open group). The three rooms by
  * range are no group and are everybody's already. */
@@ -256,7 +263,7 @@ static void emit_upsert(const char *id, int bump, int select) {
   if (g_open_mod && s_eq(id, g_open) && is_xgroup(id)) s_cat(m, ",\"mod\":true", sizeof(m));
   /* In Regional and Global the authority is to remove, not to correct
    * (10.10.3): said as such, so the host offers Delete alone. */
-  else if (g_open_mod == 2 && s_eq(id, g_open) && is_pubroom(id)) s_cat(m, ",\"mod\":\"remove\"", sizeof(m));
+  else if (g_open_mod == 2 && s_eq(id, g_open) && (is_pubroom(id) || is_opengroup(id))) s_cat(m, ",\"mod\":\"remove\"", sizeof(m));
   /* A group closed to new posts takes none from a member (10.4.2): the host
    * shows a note where the message box was. */
   if (room_no_post(id)) s_cat(m, ",\"nopost\":true", sizeof(m));
@@ -1207,15 +1214,17 @@ int room_message_sender(const char *room, const char *mid, char *sender, unsigne
  * moderator) is dropped, so the version it replaced comes back into view. A
  * removal cannot come back: its text is already gone. */
 void room_moderation_sync(const char *room) {
-  int pub = is_pubroom(room);
+  int og = is_opengroup(room);
+  int pub = is_pubroom(room) || og;
   if ((!is_xgroup(room) && !pub) || !room_known(room)) return;
   int h = room_handle(room);
   if (h < 0) return;
   static char buf[20000];
   /* The public rooms' acts are the core's verdict too (a listed key, at the
    * act's own date); they are removals only and nobody voids them. */
-  int n = pub ? (int)hal_xprs_group_moderation("*", 1, buf, sizeof(buf) - 1)
-              : (int)hal_xprs_group_moderation(room + 1, s_len(room + 1), buf, sizeof(buf) - 1);
+  /* The public rooms are "*"; an open group and a closed one go by name. */
+  int n = (pub && !og) ? (int)hal_xprs_group_moderation("*", 1, buf, sizeof(buf) - 1)
+                       : (int)hal_xprs_group_moderation(room + 1, s_len(room + 1), buf, sizeof(buf) - 1);
   if (n < 0 || n >= (int)sizeof(buf)) return;
   buf[n] = 0;
   static char seen[64][12]; int nseen = 0, over = 0;

@@ -17,6 +17,7 @@ void inbox_set(const char*); void event_push(const char*, const char*);
 /* XPRS.md 7.8: what the mock HAL was asked, and what it should answer. */
 const char* mock_edit_ask(void); const char* mock_withdraw_ask(void); const char* mock_moderate_ask(void);
 void mock_edit_clear(void); void mock_set_roles(const char*); void mock_set_moderation(const char*);
+void mock_og_reset(int self_role); void mock_og_self(int role); void mock_og_mod(const char* call,const char* by); void mock_og_removed(const char* id); int mock_og_is_mod(const char* call); int mock_og_noted(const char* call); int mock_og_notes(void);
 void mock_public_reset(int listed); void mock_public_removed(const char* id); const char* mock_moderate_ask(void);
 int log_count(const char*); void log_clear(void);
 void mock_set_time(uint64_t); void mock_kv_set(const char*, const char*); int mock_kv_exists(const char*);
@@ -945,6 +946,120 @@ TEST(a_public_rooms_moderator_removes_and_everybody_sees_it_go) {
   mock_public_reset(0);
 }
 
+/* 10.10.4: an open group is made by using it; its moderators are the public
+ * rooms' and whoever a moderator of it appointed. The core keeps the record;
+ * the wapp opens the group, shows what was removed, offers Delete to a
+ * moderator, and looks after the list of moderators. */
+static void group_packet(const char *from, const char *id, const char *group, const char *text) {
+  packet(from, id, group, text, "", "", "", "verified", "2026-11-28_10:00:00");
+}
+static const char *prompt_with(const char *idpre) {
+  for (int i = cap_n() - 1; i >= 0; i--) { const char *m = cap_nth(i);
+    if (strstr(m, "ui.prompt") && strstr(m, idpre)) return m; }
+  return 0;
+}
+TEST(an_open_group_is_made_by_naming_it_and_looks_after_itself) {
+  fresh();
+  mock_og_reset(0);
+  mock_edit_clear();
+  /* "New group" asks which kind; an open one needs only a name. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_newgroup\"}");
+  module_handle_event();
+  { const char *m = prompt_with("xgkind:"); CHECK(m && strstr(m, "\"value\":\"open\"") && strstr(m, "\"value\":\"members\"")); }
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgkind:\",\"prompt_value\":\"open\"}");
+  module_handle_event();
+  CHECK(prompt_with("ognew:") != 0);
+  /* A name that is not one is refused, and nothing opens. */
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"ognew:\",\"prompt_input\":\"bad name!\"}");
+  module_handle_event();
+  CHECK(!room_known("#BADNAME!"));
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"ognew:\",\"prompt_input\":\"#lisboa\"}");
+  module_handle_event();
+  CHECK(room_known("#LISBOA"));
+  CHECK(strstr(mock_follow(), "LISBOA:1") != 0);
+
+  group_packet("X1PEER", "og1111", "LISBOA", "buy my coins");
+  group_packet("X1PEER", "og2222", "LISBOA", "more coins");
+  /* Nobody here: no Delete offered, and the core refuses the act. */
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LISBOA\"}");
+  module_handle_event();
+  CHECK(!row_says("#LISBOA", "\"mod\""));
+  inbox_set("{\"command\":\"rooms_unsend\",\"rooms_convo\":\"#LISBOA\",\"rooms_mid\":\"og1111\"}");
+  module_handle_event();
+  CHECK(strstr(mock_moderate_ask(), "LISBOA|og1111||2") != 0);
+  CHECK(!bubble_deleted("og1111"));
+  /* A moderator elsewhere removes it: the core says so, the bubble goes. */
+  mock_og_removed("og1111");
+  cap_clear();
+  event_push("core.moderation", "{}"); module_handle_event();
+  CHECK(bubble_deleted("og1111"));
+
+  /* We are made a moderator of this group: Delete, and only Delete. */
+  mock_og_self(3);
+  cap_clear();
+  event_push("core.moderation", "{}"); module_handle_event();
+  CHECK(row_says("#LISBOA", "\"mod\":\"remove\""));
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_unsend\",\"rooms_convo\":\"#LISBOA\",\"rooms_mid\":\"og2222\"}");
+  module_handle_event();
+  CHECK(bubble_deleted("og2222"));
+
+  /* The members button shows who looks after the group, and lets a
+   * moderator add one. */
+  mock_og_mod("X1ZOEE", "*");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#LISBOA\"}");
+  module_handle_event();
+  { const char *m = prompt_with("ogm:#LISBOA");
+    CHECK(m && strstr(m, "X1ZOEE") && strstr(m, "\"value\":\"add\""));
+    /* Not of our line: no chip to dismiss her. */
+    CHECK(m && !strstr(m, "\"value\":\"d:X1ZOEE\"")); }
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"ogm:#LISBOA\",\"prompt_value\":\"add\"}");
+  module_handle_event();
+  CHECK(prompt_with("oga:#LISBOA") != 0);
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"oga:#LISBOA\",\"prompt_input\":\"x1anna\"}");
+  module_handle_event();
+  CHECK(mock_og_is_mod("X1ANNA"));
+  /* Anna, whom we appointed, appointed Bobb: both are of our line. */
+  mock_og_mod("X1BOBB", "X1ANNA");
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#LISBOA\"}");
+  module_handle_event();
+  { const char *m = prompt_with("ogm:#LISBOA");
+    CHECK(m && strstr(m, "\"value\":\"d:X1ANNA\"") && strstr(m, "\"value\":\"d:X1BOBB\"")); }
+  /* Dismissing Anna is asked once more, takes Bobb with her, and Bobb (not
+   * Anna, not Zoee) is written to. */
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"ogm:#LISBOA\",\"prompt_value\":\"d:X1ANNA\"}");
+  module_handle_event();
+  CHECK(prompt_with("ogd:#LISBOA|X1ANNA") != 0);
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"ogd:#LISBOA|X1ANNA\",\"prompt_value\":\"no\"}");
+  module_handle_event();
+  CHECK(mock_og_is_mod("X1ANNA"));
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"ogd:#LISBOA|X1ANNA\",\"prompt_value\":\"yes\"}");
+  module_handle_event();
+  CHECK(!mock_og_is_mod("X1ANNA") && !mock_og_is_mod("X1BOBB") && mock_og_is_mod("X1ZOEE"));
+  CHECK(mock_og_notes() == 1 && mock_og_noted("X1BOBB"));
+
+  /* A moderator of the public rooms dismisses anybody. */
+  mock_og_self(4);
+  cap_clear();
+  inbox_set("{\"command\":\"rooms_members\",\"rooms_convo\":\"#LISBOA\"}");
+  module_handle_event();
+  { const char *m = prompt_with("ogm:#LISBOA"); CHECK(m && strstr(m, "\"value\":\"d:X1ZOEE\"")); }
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"ogd:#LISBOA|X1ZOEE\",\"prompt_value\":\"yes\"}");
+  module_handle_event();
+  CHECK(!mock_og_is_mod("X1ZOEE"));
+
+  /* The other kind of group is still one tap away. */
+  cap_clear();
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgkind:\",\"prompt_value\":\"members\"}");
+  module_handle_event();
+  CHECK(prompt_with("xgnew:") != 0);
+  mock_og_reset(0);
+}
+
 TEST(moderation_is_final_for_the_author_and_ranked) {
   moderated_group(2);
   /* The author tries to put the number back after the moderator edited it. */
@@ -1701,6 +1816,9 @@ TEST(new_group_asks_for_a_name_and_opens_the_room_the_core_minted) {
   /* The menu's New group asks for a name; the wapp mints nothing itself. */
   inbox_set("{\"type\":\"action\",\"action\":\"rooms_newgroup\"}");
   module_handle_event();
+  /* It asks which kind first; a group with members is the second choice. */
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgkind:\",\"prompt_value\":\"members\"}");
+  module_handle_event();
   CHECK(cap_contains("\"type\":\"ui.prompt\",\"id\":\"xgnew:\""));
   /* The answer goes to the core, and the room the core named opens at once
    * under the group's name, without waiting for core.groups. */
@@ -1727,6 +1845,9 @@ TEST(new_group_turns_through_offered_callsigns_and_creates_the_pick) {
   /* The prompt carries the callsigns the core offered, for the dialog to
    * turn through (next, and back to the one before). */
   inbox_set("{\"type\":\"action\",\"action\":\"rooms_newgroup\"}");
+  module_handle_event();
+  /* It asks which kind first; a group with members is the second choice. */
+  inbox_set("{\"command\":\"prompt\",\"prompt_id\":\"xgkind:\",\"prompt_value\":\"members\"}");
   module_handle_event();
   CHECK(cap_contains("\"cycle\":{"));
   CHECK(cap_contains("\"values\":[\"X5AAA1\",\"X5BBB2\",\"X5CCC3\"]"));
@@ -2561,6 +2682,7 @@ int main(void) {
   run_a_group_post_is_corrected_with_a_wire_the_core_signs();
   run_a_moderators_edit_replaces_the_text_and_says_who();
   run_a_public_rooms_moderator_removes_and_everybody_sees_it_go();
+  run_an_open_group_is_made_by_naming_it_and_looks_after_itself();
   run_moderation_is_final_for_the_author_and_ranked();
   run_a_voided_moderator_edit_brings_the_original_back_but_a_removal_stays_gone();
   run_a_moderator_acts_through_the_core_and_a_member_cannot();

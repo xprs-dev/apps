@@ -132,3 +132,10 @@
   tree (bots list, kv, event queue, message queue, what was said). Copy it
   for a new wapp that needs no chat network.
 
+- **An open group's moderators** (Chat, XPRS.md 10.10.4): `ogmods_open`
+  shows them from `hal_xprs_group_roster(name)` (each row has `by`, who
+  appointed them), `og_under(call, top)` walks a line, and a dismissal reads
+  the line BEFORE asking the core, then writes to each of them with
+  `hal_xprs_message`. All in `ui.prompt` dialogs (chips, input): no screen of
+  its own. `opengroup_open` is the check and the opening of a `#name`.
+
