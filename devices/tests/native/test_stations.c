@@ -297,9 +297,9 @@ static void test_lora_mode(void)
     last_id(id);
     result(ST, id, "code:200 wifi:up ip:192.168.1.40 ap:off lora:xprs "
                    "freq:433.900MHz region:eu nick:roof zone:+01:00");
-    const char *st3 = cap_last("\"field\":\"st_station\"");
+    const char *st3 = cap_last("\"field\":\"info\"");
     CHECK(st3 && strstr(st3, "\"label\":\"Channel\",\"value\":\"433.900MHz\""),
-          "and shown: %s", st3 ? st3 : "");
+          "and shown with its setup: %s", st3 ? st3 : "");
     cap_clear();
     int aired2 = g_aired_n;
     command("{\"command\":\"station_apply\",\"fields\":{\"nick\":\"\",\"zone\":\"+01:00\",\"hotspot\":\"same\",\"lora\":\"same\",\"freq\":\"433.900MHz\"}}");
@@ -469,13 +469,15 @@ static void test_stats_from_the_core(void)
              "\"serve\":[\"archive\"],\"hears\":[\"X1WATT\",\"X3MEAV\"],\"sig\":\"verified\"}",
              g_st[g_sel].call);
     int before = g_aired_n;
-    command("{\"command\":\"open_stats\",\"fields\":{}}");
-    CHECK(g_aired_n == before + 3, "opening the screen asks: policy, mail, zdiag (%d)", g_aired_n - before);
+    char tap[120];
+    snprintf(tap, sizeof tap, "{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"%s\"}}", g_st[g_sel].call);
+    g_st[g_sel].ask_pol = 0;
+    command(tap);
+    CHECK(g_aired_n == before + 3, "opening the station asks: policy, mail, zdiag (%d)", g_aired_n - before);
     {
         /* The station's earlier figures stay on the screen; a tile it never
          * filled says the ask is out. */
-        const char *d = cap_last("\"field\":\"st_policy\"");
-        CHECK(d && strstr(d, "\"value\":\"...\""), "an empty tile says it is being asked for: %s", d ? d : "-");
+        CHECK(g_st[g_sel].asking, "the screen knows the asks are out: an empty tile reads ...");
     }
     {   /* the answers land, and the screen is redrawn with them */
         char id[7]; last_id(id);
@@ -485,16 +487,20 @@ static void test_stats_from_the_core(void)
         CHECK(strstr(kv_dump(), "stx.") != 0, "kept for the next open");
     }
     cap_clear();
-    command("{\"command\":\"open_stats\",\"fields\":{}}");
+    command(tap);
     const char *st = cap_last("\"field\":\"st_station\"");
     CHECK(st && strstr(st, "\"label\":\"Lifetime\",\"value\":\"38day\""), "lifetime, as aired");
     CHECK(st && strstr(st, "\"label\":\"Records\",\"value\":\"1234\""), "the archive's count");
     CHECK(st && strstr(st, "\"label\":\"Signal\",\"value\":\"-71\",\"unit\":\"dBm\",\"hint\":\"BLE, 12 s ago\""),
           "signal and freshness from the core: %s", st ? st : "");
     CHECK(st && strstr(st, "\"label\":\"Lanes\",\"value\":\"2\",\"hint\":\"ble, lan\""), "every bearer it came in on");
-    CHECK(cap_last("\"field\":\"st_hears\"") && strstr(cap_last("\"field\":\"st_hears\""), "X1WATT, X3MEAV"),
-          "who it hears");
-    CHECK(cap_count("\"ui.screen.open\",\"name\":\"Statistics\"") == 1, "the Statistics screen opens");
+    {
+        const char *r = cap_last("\"field\":\"reaches\"");
+        CHECK(r && strstr(r, "\"title\":\"Reaches 4 stations\"") && strstr(r, "\"id\":\"X1WATT\"")
+              && strstr(r, "\"id\":\"X3MEAV\""), "who it reaches, each a row, the true count as the title: %s", r ? r : "-");
+        CHECK(st && strstr(st, "\"label\":\"Disk\",\"value\":\"has room\""), "an archiver that did not say room:no has room");
+    }
+    CHECK(cap_count("\"ui.screen.open\",\"name\":\"Station\"") == 1, "the one Station screen opens");
     {   /* close the open's zdiag so Refresh may send */
         char id[7]; last_id(id);
         result(g_st[g_sel].call, id, "code:200 fw:0.4.0 uptime:26h peers:4 zr:sw zm:60/40/30 zh:3/3 zn:0/0/0/0 zs:0/0/0 zp:ota_1/1");
@@ -511,8 +517,27 @@ static void test_stats_from_the_core(void)
              g_st[g_sel].call);
     deliver("xprs.observation", row_to("observation", g_st[g_sel].call, "verified", 1, w));
     const char *po = cap_last("\"field\":\"st_policy\"");
-    CHECK(po && strstr(po, "\"label\":\"Owner\",\"value\":\"X1ME77\"") && strstr(po, "\"label\":\"Serve\",\"value\":\"archive\""),
-          "the policy, on the screen");
+    CHECK(po && strstr(po, "\"label\":\"Administrators\",\"value\":\"X1ME77\"")
+          && strstr(po, "\"label\":\"Keeps their messages\",\"value\":\"yes, it is an archiver\"")
+          && strstr(po, "\"label\":\"May send through it\",\"value\":\"anybody\""),
+          "the policy, in words: %s", po ? po : "-");
+    CHECK(cap_count("\"field\":\"room_stop__hidden\",\"value\":false") >= 1, "its owner may stop it taking new people");
+    {
+        int a0 = g_aired_n;
+        char id0[7]; last_id(id0);
+        result(g_st[g_sel].call, id0, "code:200 fw:0.4.0 uptime:26h peers:4 zr:sw zm:60/40/30 zh:3/3 zn:0/0/0/0 zs:0/0/0 zp:ota_1/1");
+        command("{\"command\":\"room_stop\",\"fields\":{}}");
+        CHECK(g_aired_n == a0 + 1 && strstr(last_aired(), " cmd:set room:no"), "room:no, a policy key: %s", last_aired());
+        char id1[7]; last_id(id1);
+        cap_clear();
+        result(g_st[g_sel].call, id1, "code:200 owner:X1ME77 use:all first:none serve:archive room:no");
+        const char *t = cap_last("\"field\":\"st_station\"");
+        CHECK(t && strstr(t, "\"label\":\"Disk\",\"value\":\"full\""), "the station says it, and the tile shows it: %s", t ? t : "-");
+        CHECK(cap_count("\"field\":\"room_take__hidden\",\"value\":false") >= 1, "and offers to take people again");
+        command("{\"command\":\"room_take\",\"fields\":{}}");
+        last_id(id1);
+        result(g_st[g_sel].call, id1, "code:200 owner:X1ME77 use:all first:none serve:archive room:yes");
+    }
     CHECK(!subscribed("xprs.observation"), "and observations are let go");
     snprintf(w, sizeof w, "t:observation f:%s d:X1ME77 s:mail mail:7 ts:2026-09-10_12:05:01 sig:KKKK", g_st[g_sel].call);
     deliver("xprs.observation", row_to("observation", g_st[g_sel].call, "verified", 1, w));
@@ -1042,18 +1067,20 @@ static void test_station_facts_and_update_over_the_air(void)
     cap_clear();
     claim_over_cable("X3UPDT", 21);
     const char *list = cap_last("\"field\":\"devices\"");
-    CHECK(list && strstr(list, "\"id\":\"X3UPDT\",\"title\":\"X3UPDT\",\"subtitle\":\"WiFi network, 2 s ago\",\"tags\":[\"XPRS 0.3.1\",\"update available\"],\"icon\":\"wifi\""),
+    CHECK(list && strstr(list, "\"id\":\"X3UPDT\",\"title\":\"X3UPDT\",\"subtitle\":\"WiFi network · reaches 3\",\"tags\":[\"update available\",\"XPRS 0.3.1\"],\"icon\":\"wifi\""),
           "a station of ours behind the catalogue says so on the list: %s", list ? list : "");
 
     cap_clear();
     command("{\"command\":\"devices_tap\",\"fields\":{\"devices_id\":\"X3UPDT\"}}");
     const char *info = cap_last("\"field\":\"info\"");
-    CHECK(info && strstr(info, "{\"title\":\"Firmware\",\"items\":[{\"label\":\"Version\",\"value\":\"XPRS 0.3.1\"},{\"label\":\"Newest\",\"value\":\"0.4.0 is available\"}"),
-          "what it runs and what is newer, first: %s", info ? info : "");
+    const char *tl = cap_last("\"field\":\"st_station\"");
+    const char *po = cap_last("\"field\":\"st_policy\"");
+    CHECK(tl && strstr(tl, "{\"id\":\"fw\",\"label\":\"Firmware\",\"value\":\"0.3.1\",\"hint\":\"0.4.0 is available\",\"alert\":true}"),
+          "what it runs and what is newer, as a tile: %s", tl ? tl : "");
     CHECK(info && strstr(info, "\"label\":\"Installed\",\"value\":\"today, from this device\""), "when this device installed it");
-    CHECK(info && strstr(info, "\"label\":\"Running\",\"value\":\"5day in total\""), "how long it has run");
-    CHECK(info && strstr(info, "\"label\":\"Heard over\",\"value\":\"WiFi network, 2 s ago\""), "how it is reached, in words");
-    CHECK(info && strstr(info, "\"label\":\"Owner\",\"value\":\"You\""), "whose it is");
+    CHECK(tl && strstr(tl, "\"label\":\"Lifetime\",\"value\":\"5day\""), "how long it has run");
+    CHECK(tl && strstr(tl, "\"label\":\"Signal\",\"value\":\"LAN\",\"hint\":\"LAN, 2 s ago\""), "how it is reached: %s", tl ? tl : "");
+    CHECK(po && strstr(po, "\"label\":\"Owner\",\"value\":\"You\""), "whose it is");
     CHECK(info && !strstr(info, "\"value\":\"?\""), "no row of question marks: a fact not known is left out");
     CHECK(cap_last("\"field\":\"update__hidden\",\"value\":false") &&
           cap_last("\"field\":\"update__label\",\"value\":\"Update to 0.4.0\""), "Update to 0.4.0 offered");
@@ -1268,13 +1295,13 @@ static void test_a_station_owned_elsewhere_is_listed_unheard(void)
      * answered by a phone in the words every station uses. */
     g_st[g_sel].pend_id[0] = 0;
     cap_clear();
-    command("{\"command\":\"open_stats\",\"fields\":{}}");
-    CHECK(strstr(last_aired(), "d:X3HOME") && strstr(last_aired(), "cmd:zdiag"), "opening Statistics asks: %s", last_aired());
+    command("{\"command\":\"stats\",\"fields\":{}}");
+    CHECK(strstr(last_aired(), "d:X3HOME") && strstr(last_aired(), "cmd:zdiag"), "asking again asks: %s", last_aired());
     char id[7];
     last_id(id);
     result("X3HOME", id, "code:200 uptime:26h count:1200 size:3GB mail:4");
     CHECK(cap_count("\"label\":\"Records\",\"value\":\"1200\"") >= 1, "records held");
-    CHECK(cap_count("\"label\":\"Room left\",\"value\":\"3GB\"") >= 1, "room left");
+    CHECK(cap_count("\"label\":\"Disk free\",\"value\":\"3GB\"") >= 1, "the disk room left, to its owner");
     CHECK(cap_count("\"label\":\"Mail held\",\"value\":\"4\"") >= 1, "mail held");
     g_mock_owned = "";
 }

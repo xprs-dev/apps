@@ -59,10 +59,61 @@
    },
    {
     "$": "field",
-    "name": "info",
+    "name": "st_station",
+    "$type": "stats"
+   },
+   {
+    "$": "field",
+    "name": "st_diag",
+    "$type": "stats"
+   },
+   {
+    "$": "action",
+    "name": "crash",
+    "label": "Crash report",
+    "icon": "bug_report"
+   },
+   {
+    "$": "field",
+    "name": "reaches",
+    "$type": "people",
+    "layout": "list",
+    "empty": "It has not said which stations it hears."
+   },
+   {
+    "$": "field",
+    "name": "st_place",
+    "$type": "place",
+    "zoom": 13
+   },
+   {
+    "$": "field",
+    "name": "st_policy",
     "$type": "details",
     "empty": "",
     "layout": "rows"
+   },
+   {
+    "$": "action",
+    "name": "room_stop",
+    "label": "Stop taking new people",
+    "icon": "block",
+    "confirm": true,
+    "confirm-label": "Stop taking new people?",
+    "confirm-text": "The people it already keeps messages for stay. Newcomers choose another archiver. Every station that hears it learns this from its next announcement."
+   },
+   {
+    "$": "action",
+    "name": "room_take",
+    "label": "Take new people again",
+    "icon": "person_add"
+   },
+   {
+    "$": "action",
+    "name": "open_checkin",
+    "label": "Check-in",
+    "icon": "where_to_vote",
+    "tip": "Whether people can check in here, its kind of place, greeting and badge. Opens the Check-in app on this station."
    },
    {
     "$": "action",
@@ -89,10 +140,18 @@
     "icon": "people"
    },
    {
+    "$": "field",
+    "name": "info",
+    "$type": "details",
+    "empty": "",
+    "layout": "rows"
+   },
+   {
     "$": "action",
-    "name": "open_stats",
-    "label": "Statistics",
-    "icon": "monitor_heart"
+    "name": "stats",
+    "label": "Ask again",
+    "icon": "refresh",
+    "tip": "Ask it again for its figures and who owns it. Opening it already asks."
    },
    {
     "$": "action",
@@ -622,66 +681,6 @@
     "name": "callsign_now",
     "$type": "details",
     "empty": ""
-   }
-  ]
- },
- {
-  "$": "screen",
-  "name": "Statistics",
-  "icon": "monitor_heart",
-  "hidden": true,
-  "children": [
-   {
-    "$": "group",
-    "name": "Station",
-    "children": [
-     {
-      "$": "field",
-      "name": "st_station",
-      "$type": "stats"
-     },
-     {
-      "$": "field",
-      "name": "st_hears",
-      "$type": "details",
-      "empty": ""
-     }
-    ]
-   },
-   {
-    "$": "group",
-    "name": "Policy",
-    "children": [
-     {
-      "$": "field",
-      "name": "st_policy",
-      "$type": "stats"
-     }
-    ]
-   },
-   {
-    "$": "group",
-    "name": "Diagnostics",
-    "children": [
-     {
-      "$": "field",
-      "name": "st_diag",
-      "$type": "stats"
-     }
-    ]
-   },
-   {
-    "$": "action",
-    "name": "stats",
-    "label": "Refresh",
-    "style": "primary",
-    "icon": "refresh"
-   },
-   {
-    "$": "action",
-    "name": "crash",
-    "label": "Crash report",
-    "icon": "bug_report"
    }
   ]
  },

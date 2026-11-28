@@ -82,6 +82,7 @@ typedef struct {
                                    * answered the diagnostics ask with what it
                                    * holds and none of a board's own figures */
     char pol_owner[40], pol_use[12], pol_first[40], pol_serve[40];
+    char pol_room[4];             /* 13.0.2 room: yes|no, takes new people */
     char bearer[8];
     int  rssi;
     unsigned long long heard_ms;
@@ -585,19 +586,6 @@ static void bearer_of(const st_t *s, int have, char *out, unsigned cap)
     for (char *p = out; *p; p++) if (*p >= 'A' && *p <= 'Z') *p = (char)(*p + 32);
 }
 
-/* "Bluetooth, -87 dBm, 12 s ago", or "not heard lately". */
-static void reach_words(const st_t *s, int have, char *out, unsigned cap)
-{
-    char b[12];
-    bearer_of(s, have, b, sizeof b);
-    int rssi = 0;
-    signal_parts(s, have, out, cap, &rssi);
-    dv_cpy(out, bearer_name(b), cap);
-    if (!out[0]) { dv_cpy(out, "not heard lately", cap); return; }
-    if (rssi) { dv_cat(out, ", -", cap); dv_cat_u(out, (unsigned)(rssi < 0 ? -rssi : rssi), cap); dv_cat(out, " dBm", cap); }
-    if (have) { char ago[24]; ago_words(host_num("agoMs"), ago, sizeof ago); dv_cat(out, ", ", cap); dv_cat(out, ago, cap); }
-}
-
 /* The firmware version it runs: what the core heard last, else what it
  * told us. */
 static void fw_of(const st_t *s, int have, char *out, unsigned cap)
@@ -671,104 +659,207 @@ static void det_end(void)
     say(g_out);
 }
 
-/* The Station screen: what can be learned about it, then what can be done.
- * Facts as rows a person reads top to bottom; the buttons that do not apply
- * to this station (not yours, nothing newer) are left off. */
+static void stats_tiles(void);
+static void item_full(const char *id, const char *title, const char *sub,
+                      const char *tags, int dim, const char *icon,
+                      const char *picture, int *first);
+static void tag(char *tags, unsigned cap, const char *prefix, const char *v);
+
+/* Does the comma list [words] hold [w]? */
+static int has_word(const char *words, const char *w)
+{
+    unsigned n = dv_len(w);
+    for (const char *p = words; *p; ) {
+        while (*p == ',') p++;
+        const char *e = p;
+        while (*e && *e != ',') e++;
+        if ((unsigned)(e - p) == n && dv_starts(p, w)) return 1;
+        p = e;
+    }
+    return 0;
+}
+
+/* What it serves: what the core heard it announce, else its policy answer. */
+static void serve_of(const st_t *s, int have, char *out, unsigned cap)
+{
+    out[0] = 0;
+    if (have) dv_json_list(g_host, "serve", out, cap);
+    if (!out[0]) dv_cpy(out, s->pol_serve, cap);
+}
+
+/* Who it reaches: the stations it says it hears (15.5 `hears:`), each a
+ * row that opens that station here. The list on the air is cut to fit a
+ * packet; `peers:` is the true count, so the title says it. */
+static char g_peer[1536];
+static void push_reaches(const st_t *s, int have)
+{
+    char list[400] = "", peers[8] = "";
+    if (have) {
+        dv_json_list(g_host, "hears", list, sizeof list);
+        dv_json(g_host, "peers", peers, sizeof peers);
+    }
+    if (!peers[0]) dv_cpy(peers, s->peers, sizeof peers);
+    dv_cpy(g_out, "{\"type\":\"ui.people.set\",\"field\":\"reaches\",\"sections\":[", sizeof g_out);
+    if (list[0]) {
+        char t[64] = "Reaches";
+        if (peers[0]) {
+            dv_cat(t, " ", sizeof t);
+            dv_cat(t, peers, sizeof t);
+            dv_cat(t, dv_eq(peers, "1") ? " station" : " stations", sizeof t);
+        }
+        dv_cat(g_out, "{\"title\":\"", sizeof g_out);
+        dv_jesc(g_out, t, sizeof g_out);
+        dv_cat(g_out, "\",\"items\":[", sizeof g_out);
+        int first = 1, shown = 0;
+        for (const char *p = list; *p && shown < 24; ) {
+            char call[16];
+            unsigned k = 0;
+            while (*p == ',' || *p == ' ') p++;
+            while (*p && *p != ',') { if (k < sizeof call - 1) call[k++] = *p; p++; }
+            call[k] = 0;
+            if (!k) continue;
+            shown++;
+            int j = find(call);
+            const st_t *o = j >= 0 ? &g_st[j] : 0;
+            /* How THIS device reaches it, when it does: a fact about here. */
+            char sub[64] = "", b[12] = "", tags[96] = "";
+            int n = hal_xprs_station(call, dv_len(call), g_peer, sizeof g_peer - 1);
+            if (n > 0) {
+                g_peer[n] = 0;
+                dv_json(g_peer, "bearer", b, sizeof b);
+                for (char *q = b; *q; q++) if (*q >= 'A' && *q <= 'Z') *q = (char)(*q + 32);
+                dv_cpy(sub, "you hear it too, ", sizeof sub);
+                dv_cat(sub, bearer_name(b), sizeof sub);
+            } else dv_cpy(sub, "only through it", sizeof sub);
+            if (o && o->mine) tag(tags, sizeof tags, "", "yours");
+            if (o && o->nick[0]) tag(tags, sizeof tags, "", call);
+            item_full(call, o && o->nick[0] ? o->nick : call, sub, tags, n <= 0,
+                      b[0] ? bearer_icon(b) : "router", "", &first);
+        }
+        dv_cat(g_out, "]}", sizeof g_out);
+    }
+    dv_cat(g_out, "]}", sizeof g_out);
+    say(g_out);
+}
+
+/* Where it is, on the small still map, when it said so (decimal lat,lon). */
+static void push_place(const st_t *s, int have)
+{
+    char pos[48] = "", m[200];
+    if (have) dv_json(g_host, "pos", pos, sizeof pos);
+    int digits = 0, commas = 0, bad = 0;
+    for (const char *p = pos; *p; p++) {
+        if (*p == ',') commas++;
+        else if ((*p >= '0' && *p <= '9') || *p == '.' || *p == '-') digits++;
+        else bad = 1;
+    }
+    dv_cpy(m, "{\"type\":\"ui.field.set\",\"field\":\"st_place\",\"value\":", sizeof m);
+    if (bad || !digits || commas != 1 || pos[0] == ',' || pos[dv_len(pos) - 1] == ',') {
+        dv_cat(m, "\"\"}", sizeof m);
+    } else {
+        char *c = pos;
+        while (*c != ',') c++;
+        *c = 0;
+        dv_cat(m, "{\"lat\":", sizeof m); dv_cat(m, pos, sizeof m);
+        dv_cat(m, ",\"lon\":", sizeof m); dv_cat(m, c + 1, sizeof m);
+        dv_cat(m, ",\"label\":\"", sizeof m);
+        dv_jesc(m, s->nick[0] ? s->nick : s->call, sizeof m);
+        dv_cat(m, "\"}}", sizeof m);
+    }
+    say(m);
+}
+
+/* The Station screen, top to bottom: one line of what is happening, its
+ * figures as tiles (the owner's diagnostics among them), who it reaches,
+ * where it is, what it does for other people, then the owner's buttons and
+ * how it is set up. Opening it asked for everything (devices_tap), so there
+ * is nothing to press to read it. */
 static void push_hub(void)
 {
     if (g_sel < 0 || g_sel >= g_nst) return;
     st_t *s = &g_st[g_sel];
     int have = host_facts(s);
-    char v[96], w[64];
+    char v[96], w[64], serve[48];
+    int self = is_this_device(s);
+    int soft = self || s->soft;
 
     if (!s->now[0])
-        dv_cpy(s->now, is_this_device(s) ? "This device. You administer it."
+        dv_cpy(s->now, self ? "This device. You administer it."
                      : s->mine ? "Yours" : s->unowned ? "Waiting for an owner. Claim it to set it up."
                      : s->theirs ? "Somebody else's station" : "Asking whose it is...", sizeof s->now);
     one_line("now", "Now", s->now);
 
-    det_begin("info");
-    /* The phone or computer in the person's hand has no firmware to report
-     * to itself, and is not "heard" by itself. */
-    int self = is_this_device(s);
-    int soft = self || s->soft;
-    fw_of(s, have, w, sizeof w);
-    if (soft) {
-        det_section("Kind");
-        det_row("This is", self ? "the device in your hand" : "a phone or a computer");
-        if (s->count[0]) det_row("Keeps", s->count);
-        if (s->room[0]) det_row("Room left", s->room);
-        if (s->mail[0]) det_row("Mail held", s->mail);
-    } else if (!self || w[0]) {
-        det_section("Firmware");
-        if (w[0]) { dv_cpy(v, "XPRS ", sizeof v); dv_cat(v, w, sizeof v); }
-        else dv_cpy(v, s->asking ? "asking..." : "not reported yet", sizeof v);
-        det_row("Version", v);
-    }
-    if (w[0] && g_latest[0]) {
-        if (behind(w)) { dv_cpy(v, g_latest, sizeof v); dv_cat(v, " is available", sizeof v); }
-        else dv_cpy(v, "this is the newest", sizeof v);
-        det_row("Newest", v);
-    }
-    if (installed_words(s->call, v, sizeof v)) det_row("Installed", v);
-    v[0] = 0; if (have) dv_json(g_host, "lifetime", v, sizeof v);
-    if (v[0]) { char l[48] = ""; dv_cat(l, v, sizeof l); dv_cat(l, " in total", sizeof l); det_row("Running", l); }
-    v[0] = 0; if (have) dv_json(g_host, "uptime", v, sizeof v);
-    if (!v[0]) dv_cpy(v, s->uptime, sizeof v);
-    if (v[0]) { char l[48] = ""; dv_cat(l, v, sizeof l); dv_cat(l, " since its last restart", sizeof l); det_row("Up", l); }
+    stats_tiles();
+    have = host_facts(s);               /* stats_tiles read it; read again */
+    push_reaches(s, have);
+    push_place(s, have);
 
-    det_section("Connection");
-    if (self) dv_cpy(v, "this device", sizeof v);
-    else reach_words(s, have, v, sizeof v);
-    det_row("Heard over", v);
-    if (s->mine && s->pol_owner[0] && !dv_eq(s->pol_owner, "none"))
-        det_row("Admins", s->pol_owner);
+    /* What it does for other people (11.9, 13.0.2), as one short block. */
+    serve_of(s, have, serve, sizeof serve);
+    int arch = has_word(serve, "archive");
+    int closed = dv_eq(s->pol_room, "no");
+    det_begin("st_policy");
+    det_section("For other people");
+    det_row("Keeps their messages", serve[0] ? (arch ? "yes, it is an archiver" : "no") : "");
+    if (arch) det_row("New people", closed ? "not taken: full or closed" : "taken");
+    det_row("Relays", serve[0] ? (has_word(serve, "relay") ? "yes" : "no") : "");
+    det_row("May send through it",
+            dv_eq(s->pol_use, "all") ? "anybody" : dv_eq(s->pol_use, "owners") ? "its owners"
+          : dv_eq(s->pol_use, "listed") ? "its owners and listed people"
+          : dv_eq(s->pol_use, "none") ? "nobody" : "");
     det_row("Owner", s->mine ? "You" : s->unowned ? "Nobody yet" : s->theirs ? "Somebody else" : "");
-    {
-        int on_lan = 0;
-        char lanes[64] = "";
-        if (have) dv_json_list(g_host, "bearers", lanes, sizeof lanes);
-        for (const char *p = lanes; *p; p++) if (dv_starts(p, "lan")) on_lan = 1;
-        v[0] = 0;
-        if (dv_eq(s->wifi, "joining")) dv_cpy(v, "joining...", sizeof v);
-        else if (dv_eq(s->wifi, "failed")) dv_cpy(v, "could not join", sizeof v);
-        else if (dv_eq(s->wifi, "off")) dv_cpy(v, "off", sizeof v);
-        else if (s->wifi[0] || on_lan) dv_cpy(v, "connected", sizeof v);
-        if (v[0] && s->ip[0]) { dv_cat(v, ", ", sizeof v); dv_cat(v, s->ip, sizeof v); }
-        det_row("WiFi", v);
-    }
-    if (s->ap[0]) det_row("Own hotspot", dv_eq(s->ap, "on") ? "on" : dv_eq(s->ap, "off") ? "off" : s->ap);
-    v[0] = 0; if (have) dv_json(g_host, "peers", v, sizeof v);
-    if (!v[0]) dv_cpy(v, s->peers, sizeof v);
-    if (v[0]) { dv_cat(v, " in reach", sizeof v); det_row("Stations", v); }
-
-    det_section("Options");
-    det_row("Name", s->nick);
-    det_row("Time zone", s->zone);
-    if (s->lora[0])
-        det_row("LoRa", dv_eq(s->lora, "meshtastic") ? "XPRS + Meshtastic"
-                      : dv_eq(s->lora, "meshcore") ? "XPRS + MeshCore" : "XPRS");
-    det_row("Channel", s->freq);
+    if (s->mine && s->pol_owner[0] && !dv_eq(s->pol_owner, "none"))
+        det_row("Administrators", s->pol_owner);
     det_end();
 
+    /* How it is set up: its owner's business. */
+    det_begin("info");
+    if (s->mine) {
+        det_section("Setup");
+        if (installed_words(s->call, v, sizeof v)) det_row("Installed", v);
+        if (!soft) {
+            int on_lan = 0;
+            char lanes[64] = "";
+            if (have) dv_json_list(g_host, "bearers", lanes, sizeof lanes);
+            for (const char *p = lanes; *p; p++) if (dv_starts(p, "lan")) on_lan = 1;
+            v[0] = 0;
+            if (dv_eq(s->wifi, "joining")) dv_cpy(v, "joining...", sizeof v);
+            else if (dv_eq(s->wifi, "failed")) dv_cpy(v, "could not join", sizeof v);
+            else if (dv_eq(s->wifi, "off")) dv_cpy(v, "off", sizeof v);
+            else if (s->wifi[0] || on_lan) dv_cpy(v, "connected", sizeof v);
+            if (v[0] && s->ip[0]) { dv_cat(v, ", ", sizeof v); dv_cat(v, s->ip, sizeof v); }
+            det_row("WiFi", v);
+        }
+        if (s->ap[0]) det_row("Own hotspot", dv_eq(s->ap, "on") ? "on" : dv_eq(s->ap, "off") ? "off" : s->ap);
+        det_row("Name", s->nick);
+        det_row("Time zone", s->zone);
+        if (s->lora[0])
+            det_row("LoRa", dv_eq(s->lora, "meshtastic") ? "XPRS + Meshtastic"
+                          : dv_eq(s->lora, "meshcore") ? "XPRS + MeshCore" : "XPRS");
+        det_row("Channel", s->freq);
+    }
+    det_end();
+
+    fw_of(s, have, w, sizeof w);
     flag_hidden("claim", !(s->unowned && !s->mine));
-    flag_hidden("update", !(s->mine && behind(w)));
+    flag_hidden("update", !(s->mine && behind(w)) || soft);
     if (s->mine && behind(w)) {
         char l[40] = "Update to ";
         dv_cat(l, g_latest, sizeof l);
         field_set("update__label", l);
     }
-    /* A phone or a computer administering itself has no WiFi to be given,
-     * no board settings and no firmware to be sent: its owner is holding
-     * it. What is left is who else may administer it. */
-    /* The same holds for somebody's phone run from afar: its WiFi, name and
-     * key are set on the phone. */
+    /* Taking new people is an archiver's switch (13.0.2): shown when it is
+     * one, and the button names the change it makes. */
+    flag_hidden("room_stop", !s->mine || !arch || closed);
+    flag_hidden("room_take", !s->mine || !arch || !closed);
+    flag_hidden("open_checkin", !s->mine);
+    /* A phone or a computer: its WiFi, name and key are set on it. */
     flag_hidden("open_wifi", !s->mine || soft);
     flag_hidden("open_name", !s->mine || soft);
     flag_hidden("open_admins", !s->mine);
     flag_hidden("open_identity", !s->mine || soft);
+    flag_hidden("crash", !s->mine || !s->crash[0]);
     flag_hidden("forget", self);
-    if (soft) flag_hidden("update", 1);
 }
 
 static void item_full(const char *id, const char *title, const char *sub,
@@ -848,21 +939,41 @@ const char *st_sections(int part)
             }
             int have = host_facts(s);
             unsigned long long agoms = have ? host_num("agoMs") : 0;
-            char sub[96] = "", b[12], fw[24];
-            if (s->nick[0]) { dv_cat(sub, s->call, sizeof sub); dv_cat(sub, ", ", sizeof sub); }
+            char sub[128] = "", b[12], fw[24], v[24];
+            /* The figures that tell one station from the next, on the row:
+             * how it is heard from here, what it holds, how many it
+             * reaches. Opening it is for the rest. */
+            if (s->nick[0]) { dv_cat(sub, s->call, sizeof sub); dv_cat(sub, " · ", sizeof sub); }
             if (is_this_device(s)) {
                 dv_cat(sub, "This device", sizeof sub);
             } else {
-                char r[64];
-                reach_words(s, have, r, sizeof r);
+                char r[24], bb[12];
+                int rssi = 0;
+                signal_parts(s, have, r, sizeof r, &rssi);
+                bearer_of(s, have, bb, sizeof bb);
+                dv_cpy(r, bearer_name(bb), sizeof r);
+                if (!r[0] || !have) dv_cpy(r, "not heard lately", sizeof r);
+                else if (agoms > 600000ULL) { dv_cpy(r, "heard ", sizeof r); ago_words(agoms, r + 6, sizeof r - 6); }
+                else if (rssi) { dv_cat(r, " -", sizeof r); dv_cat_u(r, (unsigned)(rssi < 0 ? -rssi : rssi), sizeof r); }
                 dv_cat(sub, r, sizeof sub);
             }
-            if (pass == 0) dv_cat(sub, ". Tap to claim it", sizeof sub);
+            v[0] = 0; if (have) dv_json(g_host, "count", v, sizeof v);
+            if (!v[0]) dv_cpy(v, s->count, sizeof v);
+            if (v[0]) { dv_cat(sub, " · ", sizeof sub); dv_cat(sub, v, sizeof sub); dv_cat(sub, " records", sizeof sub); }
+            v[0] = 0; if (have) dv_json(g_host, "mail", v, sizeof v);
+            if (!v[0]) dv_cpy(v, s->mail, sizeof v);
+            if (v[0] && !dv_eq(v, "0")) { dv_cat(sub, " · ", sizeof sub); dv_cat(sub, v, sizeof sub); dv_cat(sub, " mail", sizeof sub); }
+            v[0] = 0; if (have) dv_json(g_host, "peers", v, sizeof v);
+            if (!v[0]) dv_cpy(v, s->peers, sizeof v);
+            if (v[0]) { dv_cat(sub, " · reaches ", sizeof sub); dv_cat(sub, v, sizeof sub); }
+            if (pass == 0) dv_cat(sub, " · tap to claim it", sizeof sub);
             bearer_of(s, have, b, sizeof b);
             fw_of(s, have, fw, sizeof fw);
-            char tags[160] = "";
-            tag(tags, sizeof tags, "XPRS ", fw);
+            char tags[160] = "", serve[48];
+            serve_of(s, have, serve, sizeof serve);
             if (pass == 1 && behind(fw)) tag(tags, sizeof tags, "", "update available");
+            if (has_word(serve, "archive")) tag(tags, sizeof tags, "", dv_eq(s->pol_room, "no") ? "archiver, full" : "archiver");
+            tag(tags, sizeof tags, "XPRS ", fw);
             item_full(s->call, s->nick[0] ? s->nick : s->call, sub, tags,
                       !is_this_device(s) && (!have || agoms > 600000ULL), bearer_icon(b), "", &first);
         }
@@ -907,7 +1018,7 @@ static int slashes(const char *v, char out[4][16])
     return n;
 }
 
-static void push_stats(void)
+static void stats_tiles(void)
 {
     if (g_sel < 0 || g_sel >= g_nst) return;
     st_t *s = &g_st[g_sel];
@@ -917,59 +1028,60 @@ static void push_stats(void)
 
     /* 15.5: what the core heard the station say about itself. */
     tiles_begin("st_station");
-    v[0] = 0; if (have) dv_json(g_host, "fw", v, sizeof v);
-    if (!(s->soft || is_this_device(s)) || v[0] || s->fw[0])
-        tile("fw", "Firmware", v[0] ? v : s->fw, "", "", "", 0);
+    /* What a person comes here to learn first: what it holds, whether it
+     * has room, how many it reaches, how it is heard; then how long it has
+     * been up and what it runs. */
+    v[0] = 0; if (have) dv_json(g_host, "count", v, sizeof v);
+    tile("count", "Records", v[0] ? v : s->count, "", "messages and posts it keeps", "", 0);
+    v[0] = 0; if (have) dv_json(g_host, "mail", v, sizeof v);
+    tile("mail", "Mail held", v[0] ? v : s->mail, "", "waiting for other people", "", 0);
+    {   /* Disk: the room it still offers, which only its owner is told
+         * (zdiag size:); anybody may read whether it takes new people
+         * (13.0.2 room:). */
+        char serve[48];
+        serve_of(s, have, serve, sizeof serve);
+        int closed = dv_eq(s->pol_room, "no");
+        if (s->room[0])
+            tile("room", "Disk free", s->room, "", closed ? "not taking new people" : "for other people's messages", "", closed);
+        else if (has_word(serve, "archive"))
+            tile("room", "Disk", closed ? "full" : "has room", "", closed ? "not taking new people" : "takes new people", "", closed);
+    }
+    v[0] = 0; if (have) dv_json(g_host, "peers", v, sizeof v);
+    tile("peers", "Reaches", v[0] ? v : s->peers, "", "stations it hears", "", 0);
+    if (!is_this_device(s)) signal_tile(s, have, have ? host_num("agoMs") : 0, 0);
     v[0] = 0; if (have) dv_json(g_host, "uptime", v, sizeof v);
     tile("up", "Up", v[0] ? v : s->uptime, "", "since its last restart", "", 0);
     v[0] = 0; if (have) dv_json(g_host, "lifetime", v, sizeof v);
-    tile("life", "Lifetime", v[0] ? v : s->life, "", "across every restart", "", 0);
-    v[0] = 0; if (have) dv_json(g_host, "peers", v, sizeof v);
-    tile("peers", "Peers", v[0] ? v : s->peers, "", "stations it reaches", "", 0);
-    v[0] = 0; if (have) dv_json(g_host, "mail", v, sizeof v);
-    tile("mail", "Mail held", v[0] ? v : s->mail, "", "for other stations", "", 0);
-    v[0] = 0; if (have) dv_json(g_host, "count", v, sizeof v);
-    tile("count", "Records", v[0] ? v : s->count, "", "messages and posts it keeps", "", 0);
-    if (s->room[0]) tile("room", "Room left", s->room, "", "storage it still offers", "", 0);
-    if (!is_this_device(s)) signal_tile(s, have, have ? host_num("agoMs") : 0, 0);
+    if (v[0] || s->life[0]) tile("life", "Lifetime", v[0] ? v : s->life, "", "across every restart", "", 0);
+    v[0] = 0; if (have) dv_json(g_host, "fw", v, sizeof v);
+    if (!v[0]) dv_cpy(v, s->fw, sizeof v);
+    if (!(s->soft || is_this_device(s)) || v[0]) {
+        char hint[40] = "";
+        if (behind(v)) { dv_cpy(hint, g_latest, sizeof hint); dv_cat(hint, " is available", sizeof hint); }
+        tile("fw", "Firmware", v, "", hint, "", behind(v));
+    }
     v[0] = 0; if (have) dv_json_list(g_host, "bearers", v, sizeof v);
     {   /* the count as the figure, the lanes as the hint: a phone-width
          * tile has room for "2" and not for "ble, lan" */
         char n[4] = "";
-        if (v[0]) { int c = 1; for (const char *p = v; *p; p++) if (*p == ',') c++; dv_cat_u(n, (unsigned)c, sizeof n); }
-        tile("bearers", "Lanes", n, "", v, "", 0);
+        if (v[0]) { int c = 1; for (const char *p = v; *p; p++) if (*p == ',') c += 1; dv_cat_u(n, (unsigned)c, sizeof n); }
+        if (!is_this_device(s)) tile("bearers", "Lanes", n, "", v, "", 0);
     }
     v[0] = 0; if (have) dv_json(g_host, "sig", v, sizeof v);
-    tile("sig", "Signatures", v, "", "", "", dv_eq(v, "forged"));
+    if (dv_eq(v, "forged")) tile("sig", "Signatures", v, "", "somebody is using its callsign", "", 1);
     if (s->lora[0])
         tile("lora", "LoRa", dv_eq(s->lora, "meshtastic") ? "XPRS+Meshtastic"
                            : dv_eq(s->lora, "meshcore") ? "XPRS+MeshCore" : "XPRS",
              "", "which network shares its channel", "", 0);
-    if (s->freq[0])
-        tile("freq", "Channel", s->freq, "", "the frequency its radio is on",
-             "", 0);
-    tiles_end();
-    v[0] = 0; if (have) dv_json_list(g_host, "hears", v, sizeof v);
-    one_line("st_hears", "Hears", v[0] ? v : "nobody reported");
-
-    /* 11.9: the policy, what anybody may ask. */
-    tiles_begin("st_policy");
-    tile("owner", "Owner", s->pol_owner, "", "", "", 0);
-    tile("use", "Use", s->pol_use, "", "who may send through it", "", 0);
-    tile("first", "First", s->pol_first, "", "served ahead of others", "", 0);
-    tile("serve", "Serve", s->pol_serve, "", "what it does for others", "", 0);
     tiles_end();
 
-    /* The firmware's own words (cmd:zdiag, its owner only). */
+    /* The firmware's own words (cmd:zdiag, its owner only). Nothing at
+     * all for anybody else, nor for a phone or a server, which answers the
+     * same ask with what it holds (the tiles above). */
     tiles_begin("st_diag");
     int board = s->heap[0] || s->reset[0] || s->health[0] || s->slot[0] || s->radio[0] || s->crash[0];
-    if (!board && (s->soft || is_this_device(s))) {
-        /* A phone or a server answers the same ask with what it holds
-         * (shown above); the board's own figures are not its to give. */
-        tile("kind", "Kind", is_this_device(s) ? "This device" : s->count[0] || s->room[0] ? "Phone or computer" : "",
-             "", s->mine ? "" : "its owner may ask", "", 0);
+    if (!s->mine || (!board && (s->soft || is_this_device(s)))) {
         tiles_end();
-        flag_hidden("crash", 1);
         g_empty = "?";
         return;
     }
@@ -979,7 +1091,7 @@ static void push_stats(void)
         if (n >= 3) { dv_cpy(hint, "largest ", sizeof hint); dv_cat(hint, w[1], sizeof hint); dv_cat(hint, ", lowest ", sizeof hint); dv_cat(hint, w[2], sizeof hint); }
         tile("heap", "Free memory", w[0], "KB", hint, "", 0);
     } else {
-        tile("heap", "Free memory", "", "KB", s->mine ? "tap Refresh" : "its owner may ask", "", 0);
+        tile("heap", "Free memory", "", "KB", "", "", 0);
     }
     tile("reset", "Last reset", s->reset, "", "", "", dv_eq(s->reset, "panic"));
     if (s->health[0]) { health_words(s->health, v, sizeof v); tile("health", "Health", v, "", s->health, "", !dv_eq(v, "all up")); }
@@ -1004,7 +1116,6 @@ static void push_stats(void)
     }
     if (s->crash[0]) tile("crash", "Crashed in", s->crash, "", "tap Crash report", "", 1);
     tiles_end();
-    flag_hidden("crash", !s->crash[0]);
     g_empty = "?";
 }
 
@@ -1269,6 +1380,7 @@ static void take_state(st_t *s, const char *wire)
     /* 11.9: a result to a policy command states all four, as they are. */
     if (dv_field(wire, "owner", v, sizeof v)) dv_cpy(s->pol_owner, v, sizeof s->pol_owner);
     if (dv_field(wire, "serve", v, sizeof v)) dv_cpy(s->pol_serve, v, sizeof s->pol_serve);
+    if (dv_field(wire, "room", v, sizeof v)) dv_cpy(s->pol_room, v, sizeof s->pol_room);
     if (dv_field(wire, "zone", v, sizeof v)) dv_cpy(s->zone, v, sizeof s->zone);
     if (dv_field(wire, "lora", v, sizeof v)) dv_cpy(s->lora, v, sizeof s->lora);
     if (dv_field(wire, "freq", v, sizeof v)) dv_cpy(s->freq, v, sizeof s->freq);
@@ -1475,6 +1587,7 @@ static void on_observation(const char *row)
         if (dv_field(wire, "use", v, sizeof v)) dv_cpy(s->pol_use, v, sizeof s->pol_use);
         if (dv_field(wire, "first", v, sizeof v)) dv_cpy(s->pol_first, v, sizeof s->pol_first);
         if (dv_field(wire, "serve", v, sizeof v)) dv_cpy(s->pol_serve, v, sizeof s->pol_serve);
+        if (dv_field(wire, "room", v, sizeof v)) dv_cpy(s->pol_room, v, sizeof s->pol_room);
         /* Who it belongs to, from its own mouth: mine, nobody's, or another's. */
         if (dv_eq(s->pol_owner, "none")) { s->unowned = 1; s->mine = 0; s->theirs = 0; }
         else if (owner_is_me(s->pol_owner)) {
@@ -1500,10 +1613,10 @@ static void on_observation(const char *row)
         listen();
         save();
         push_list();
-        if (g_sel == i) { push_hub(); push_stats(); }
+        if (g_sel == i) push_hub();
     } else if (dv_eq(sub, "mail")) {
         if (dv_field(wire, "mail", v, sizeof v)) dv_cpy(s->mail, v, sizeof s->mail);
-        if (g_sel == i) push_stats();
+        if (g_sel == i) push_hub();
     }
 }
 
@@ -1695,7 +1808,7 @@ static void on_result(const char *row)
     }
     save();
     push_list();
-    if (g_sel == i) { push_hub(); if (dv_eq(what, "zdiag") || dv_eq(what, "zcore")) push_stats(); }
+    if (g_sel == i) push_hub();
 }
 
 /* The core gave up on a command: nothing final came back in 11.4's
@@ -1718,7 +1831,7 @@ static void on_status(const char *row)
         set_now(s, line);
         s->asking = 0;
         done_pending(s);
-        if (g_sel == i) { push_hub(); push_stats(); }
+        if (g_sel == i) push_hub();
         return;
     }
 }
@@ -2446,7 +2559,7 @@ void st_command(void)
         dv_cpy(was, g_screen, sizeof was);
         g_screen[0] = 0;
         if ((dv_eq(was, "WiFi") || dv_eq(was, "Settings") || dv_eq(was, "Callsign") ||
-             dv_eq(was, "Statistics") || dv_eq(was, "Administrators") || dv_eq(was, "History")) && g_sel >= 0 && g_sel < g_nst) {
+             dv_eq(was, "Administrators") || dv_eq(was, "History")) && g_sel >= 0 && g_sel < g_nst) {
             push_hub();
             screen_open("Station", g_st[g_sel].nick[0] ? g_st[g_sel].nick : g_st[g_sel].call);
         } else if (dv_eq(was, "Firmware") && g_dev[0]) {
@@ -2476,10 +2589,35 @@ void st_command(void)
          * claimed stops asking, and silence is not a fact the list can
          * read. One request, answered by an observation. */
         if (!g_me[0]) who_am_i();
-        if (host_facts(st) && !st->ask_pol && !(st->pend_id[0] && !st->pend_final)) do_ask(st);
+        if (host_facts(st) && !st->ask_pol && !(st->pend_id[0] && !st->pend_final)) { do_ask(st); st->asking = 1; }
         /* One that is ours is also asked how it is doing: the answer is what
          * tells a board from a phone, and so what this page offers. Not the
          * device in the person's hand, which has nothing to learn by asking. */
+        if (st->mine && !is_this_device(st) && (!st->pend_id[0] || st->pend_final)) {
+            if (st->pend_id[0]) done_pending(st);
+            do_cmd(st, "cmd:zdiag", "zdiag");
+            st->asking = 1;
+        }
+        push_hub();
+        screen_open("Station", st->nick[0] ? st->nick : id);
+        return;
+    }
+    if (dv_eq(cmd, "reaches_tap")) {
+        /* A station the open one hears: open it here, the same way, so the
+         * mesh is walked one station at a time. One not listed yet is
+         * added and asked whose it is, like one heard by this device. */
+        char id[16];
+        if (!fields("reaches_id", id, sizeof id) || !id[0]) return;
+        int i = find(id);
+        if (i < 0) {
+            if (!g_me[0]) who_am_i();
+            i = add(id);
+            if (i < 0) return;
+            g_st[i].probe = 1;
+        }
+        g_sel = i;
+        st_t *st = &g_st[i];
+        if (!st->ask_pol && !(st->pend_id[0] && !st->pend_final)) { do_ask(st); st->asking = 1; }
         if (st->mine && !is_this_device(st) && (!st->pend_id[0] || st->pend_final)) {
             if (st->pend_id[0]) done_pending(st);
             do_cmd(st, "cmd:zdiag", "zdiag");
@@ -2600,17 +2738,13 @@ void st_command(void)
         screen_open("Callsign", s->call);
         return;
     }
-    if (dv_eq(cmd, "open_stats")) {
-        /* Opening the screen is the ask: the policy and the mail count
-         * from anybody's station, the diagnostics from one that is ours. */
-        if (!s->pend_id[0] || s->pend_final) {
-            if (s->pend_id[0]) done_pending(s);
-            do_ask(s);
-            if (s->mine) do_cmd(s, "cmd:zdiag", "zdiag");
-            s->asking = 1;
-        }
-        push_stats();
-        screen_open("Statistics", s->call);
+    if (dv_eq(cmd, "open_checkin")) {
+        /* The check-in point is the station's own setting (XPRS.md 11.9.1),
+         * set from the Check-in wapp, which this opens on this station. */
+        char m[120] = "{\"type\":\"wapp.open\",\"wapp\":\"checkin\",\"view\":\"station:";
+        dv_cat(m, s->call, sizeof m);
+        dv_cat(m, "\"}", sizeof m);
+        say(m);
         return;
     }
     if (dv_eq(cmd, "open_answers")) { screen_open("History", s->call); return; }
@@ -2696,6 +2830,11 @@ void st_command(void)
         } else do_wifi(s, ssid, pass);
         for (unsigned i = 0; pass[i]; i++) pass[i] = 0;
         field_set("wifi_pass", "");
+    } else if (dv_eq(cmd, "room_stop") || dv_eq(cmd, "room_take")) {
+        /* 13.0.2: whether it takes new people. Those it already keeps for
+         * stay kept; newcomers go to an archiver with room. */
+        if (!s->mine) log_line(s->call, "Only its owner can change that");
+        else do_set(s, dv_eq(cmd, "room_stop") ? "room:no" : "room:yes", "set");
     } else if (dv_eq(cmd, "wifi_off")) {
         if (!s->mine) log_line(s->call, "Claim it first");
         else do_set(s, "wifi:off", "wifi");
@@ -2781,7 +2920,7 @@ void st_command(void)
         s->asking = 1;
         if (s->mine) do_cmd(s, "cmd:zdiag", "zdiag");
         else set_now(s, "Asking what it does for others...");
-        push_stats();
+        push_hub();
     } else if (dv_eq(cmd, "crash")) {
         if (!s->mine) log_line(s->call, "Only its owner may read that");
         else do_cmd(s, "cmd:zcore", "zcore");
