@@ -1202,12 +1202,6 @@ static void do_ask(st_t *s)
  * when the page opens, and kept if the answer names us. Only into free
  * rows, so a probe never pushes a listed station out, and a station that
  * said it is somebody else's is not asked again this session. */
-static char *find_in(char *hay, const char *needle)
-{
-    for (; *hay; hay++) if (dv_starts(hay, needle)) return hay;
-    return 0;
-}
-
 static int notmine(const char *call)
 {
     for (int i = 0; i < 8; i++) if (dv_eq(g_notmine[i], call)) return 1;
@@ -1224,24 +1218,24 @@ static void discover(void)
     if (n <= 0) return;
     g_heard[n] = 0;
     /* Only the first section: in earshot now. A station heard forty
-     * minutes ago, or only over Reticulum, would not hear the ask. */
-    const char *later = "\"title\":\"Heard this hour";
-    for (char *p = g_heard + 1; *p; p++)
-        if (dv_starts(p, later) || dv_starts(p, "\"title\":\"On Reticulum")) { *p = 0; break; }
+     * minutes ago, or only over Reticulum, would not hear the ask. Each row
+     * is read as the object it is: it holds objects of its own (`heard`), and
+     * a scan for the first closing brace stopped inside one, found no
+     * `kind` and so recognised no station at all (bench, 2026-11-28). */
     if (!g_me[0]) who_am_i();
-    for (char *p = g_heard; (p = find_in(p, "{\"id\":\"")) != 0 && g_nst < ST_MAX; ) {
-        p += 7;
-        char call[12];
-        unsigned k = 0;
-        while (p[k] && p[k] != '"' && k < sizeof call - 1) { call[k] = p[k]; k++; }
-        call[k] = 0;
-        char *close = find_in(p, "}");
-        if (!close) break;
-        char save = *close;
-        *close = 0;
-        int station = find_in(p, "\"kind\":\"station\"") != 0;
-        *close = save;
-        p = close;
+    const char *sec = dv_json_arr(g_heard, "items");
+    static char row[1400];
+    /* Each new station costs one ask on the air, so a look asks a dozen at
+     * most; the next look asks the next ones (those that said they are
+     * somebody else's are remembered and not asked again). */
+    int asked = 0;
+    for (const char *p = sec; p && asked < 12; ) {
+        p = dv_json_next(p, row, sizeof row);
+        if (!p) break;
+        char call[12] = "", kind[12] = "";
+        dv_json(row, "id", call, sizeof call);
+        dv_json(row, "kind", kind, sizeof kind);
+        int station = dv_eq(kind, "station");
         if (!station || !call[0] || notmine(call)) continue;
         int was = find(call);
         if (was >= 0) {
@@ -1257,6 +1251,7 @@ static void discover(void)
         st_t *st = &g_st[i];
         st->probe = 1;
         do_ask(st);
+        asked++;
     }
 }
 

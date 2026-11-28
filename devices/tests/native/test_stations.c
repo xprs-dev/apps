@@ -935,7 +935,9 @@ static void test_owned_station_is_found(void)
     cap_clear();
     snprintf(g_stations_json, sizeof g_stations_json,
         "[{\"title\":\"Heard over the air (4)\",\"items\":["
-        "{\"id\":\"X3OWN1\",\"title\":\"X3OWN1\",\"subtitle\":\"BLE\",\"tags\":[\"5s\",\"BLE\"],\"kind\":\"station\"},"
+        /* the row as the core really writes it: an object (`heard`) inside,
+         * before `kind`, which the first parser stopped at */
+        "{\"id\":\"X3OWN1\",\"title\":\"X3OWN1\",\"subtitle\":\"BLE\",\"tags\":[\"5s\",\"BLE\"],\"heard\":{\"ble\":5,\"lan\":12},\"rssi\":-60,\"kind\":\"station\"},"
         "{\"id\":\"X3THEM\",\"title\":\"X3THEM\",\"subtitle\":\"LAN\",\"tags\":[\"9s\",\"LAN\"],\"kind\":\"station\"},"
         "{\"id\":\"X1ME77\",\"title\":\"X1ME77\",\"subtitle\":\"BLE\",\"tags\":[],\"kind\":\"user\"},"
         "{\"id\":\"X1PAL2\",\"title\":\"X1PAL2\",\"subtitle\":\"BLE\",\"tags\":[],\"kind\":\"user\"}]},"
