@@ -261,7 +261,7 @@ int main(void)
 
     /* Choosing people instead of typing callsigns. */
     g_ui_n = 0;
-    message("{\"command\":\"pick_open\",\"fields\":{\"b_list\":\"x1abcd\"}}");
+    message("{\"command\":\"pick_open\",\"fields\":{\"b_list\":\"x1abcd\",\"b_talk\":\"list\",\"b_allow\":\"owner\"}}");
     CHECK(ui_has("\"ui.screen.open\",\"name\":\"People\""), "the picker opens");
     CHECK(ui_has("\"title\":\"People I know\"") && ui_has("\"title\":\"Rui\",\"subtitle\":\"X1RUI9\""),
           "a person from the People list is offered under the callsign they were met with");
@@ -281,6 +281,7 @@ int main(void)
     message("{\"command\":\"pick_done\"}");
     CHECK(ui_has("\"ui.screen.open\",\"name\":\"Bot\"") && ui_has("\"field\":\"b_list\",\"value\":\"X1RUI9\""),
           "Done returns to the bot's page with the chosen people in it");
+    CHECK(ui_has("\"field\":\"b_talk\",\"value\":\"list\""), "and the choice made before picking is still made");
     message("{\"command\":\"b_save\",\"fields\":{\"b_nick\":\"Weather\",\"b_about\":\"\","
             "\"b_rules\":\"forecast = Rain from 16:00\",\"b_hello\":\"\",\"b_ai\":true,"
             "\"b_prompt\":\"\",\"b_allow\":\"owner\",\"b_talk\":\"list\",\"b_reach\":\"global\",\"b_list\":\"X1RUI9\"}}");

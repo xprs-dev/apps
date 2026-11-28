@@ -86,7 +86,7 @@
         ]
       },
       { "$": "action", "name": "b_save", "label": "Save", "style": "primary", "icon": "check" },
-      { "$": "field", "name": "b_log", "$type": "details", "empty": "" },
+      { "$": "field", "name": "b_log", "$type": "details", "empty": "Nobody has written to it yet." },
       { "$": "action", "name": "b_delete", "label": "Delete this bot", "icon": "delete" },
       { "$": "action", "name": "back", "label": "Back", "icon": "close" }
     ]

@@ -666,6 +666,11 @@ static struct { char call[12]; char name[40]; int known; } g_pick[PICK_MAX];
 static int g_pick_n;
 static char g_chosen[160];       /* the callsigns chosen, comma-separated */
 static int g_picking;            /* the picker is the screen on top */
+static char g_pick_talk[12], g_pick_allow[12];   /* the choices made before it opened */
+
+/* Back on the bot's page after choosing: the people chosen, and the two
+ * choices as they were (saved with nobody chosen they read "Only me"). */
+static void pick_back(void);
 static char g_big[32768];        /* the host's lists */
 
 static int chosen_has(const char *call)
@@ -867,6 +872,16 @@ static void pick_draw(void)
     say(g_big);
 }
 
+static void pick_back(void)
+{
+    g_picking = 0;
+    if (!g_sel[0] || !bot_of(g_sel)) return;
+    open_bot(g_sel);
+    field_str("b_list", g_chosen);
+    if (g_pick_talk[0]) field_str("b_talk", g_pick_talk);
+    if (g_pick_allow[0]) field_str("b_allow", g_pick_allow);
+}
+
 static void update_on(const char *call, int on)
 {
     b_cpy(g_io, "{\"op\":\"update\",\"call\":\"", sizeof g_io);
@@ -944,14 +959,7 @@ static void on_command(void)
     }
     if (b_eq(cmd, "screen_closed") || b_eq(cmd, "back")) {
         /* The picker closing leaves the bot's page open under it. */
-        if (g_picking) {
-            g_picking = 0;
-            if (g_sel[0] && bot_of(g_sel)) {
-                open_bot(g_sel);
-                field_str("b_list", g_chosen);
-            }
-            return;
-        }
+        if (g_picking) { pick_back(); return; }
         if (b_eq(cmd, "back")) say("{\"type\":\"ui.screen.close\"}");
         g_sel[0] = 0;
         draw_list();
@@ -963,6 +971,8 @@ static void on_command(void)
         static char list[160];
         j_get(g_msg, "b_list", list, sizeof list);
         tidy_calls(g_chosen, sizeof g_chosen, list);
+        j_get(g_msg, "b_talk", g_pick_talk, sizeof g_pick_talk);
+        j_get(g_msg, "b_allow", g_pick_allow, sizeof g_pick_allow);
         /* The host shows one screen over the list at a time, so the picker
          * takes the bot page's place: keep what was typed there first. */
         save_bot(g_sel, 1);
@@ -991,9 +1001,7 @@ static void on_command(void)
         /* Back to the bot's page, which opening the picker replaced (the
          * host says `screen_closed` only for its own back arrow, so this
          * button does the same work itself). */
-        g_picking = 0;
-        open_bot(g_sel);
-        field_str("b_list", g_chosen);
+        pick_back();
         return;
     }
     if (b_eq(cmd, "b_start")) { update_on(g_sel, 1); return; }
