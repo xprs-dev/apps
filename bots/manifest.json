@@ -1,6 +1,6 @@
 {
   "id": "tools.xprs.bots",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "app",
   "title": "Bots",
   "description": "Bots: programs with a callsign of their own that answer commands and messages.",
