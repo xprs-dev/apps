@@ -1,0 +1,68 @@
+{
+  "id": "tools.xprs.devices",
+  "version": "1.0.0",
+  "kind": "app",
+  "title": "Devices",
+  "description": "Find, set up and look after the stations and equipment around you.",
+  "summary": "One list of every machine around you. A board on a USB cable gets XPRS installed and is made yours (a phone needs a USB OTG adapter). Stations on your WiFi or near you over Bluetooth are listed with what they run and how they are doing. A station you own can be changed from here, in the room or from anywhere on the internet: its WiFi, name, callsign, settings and firmware. That includes a Linux server or a phone left at home as a station. Cameras, doorbells, sensors and plugs are listed too, each with the screen that fits it. A doorbell camera offers a picture and a live view, and can tell you when somebody rings.",
+  "icon": "media/icons/devices.svg",
+  "color": "#37474F",
+  "tags": [
+    "xprs",
+    "devices",
+    "station",
+    "firmware",
+    "setup",
+    "esp32",
+    "sensors",
+    "doorbell",
+    "camera",
+    "x4"
+  ],
+  "entry_ui": "screens/home.ui.json",
+  "tick_interval_ms": 400,
+  "permissions": [
+    "archive.read",
+    "transport.socket",
+    "device.flash"
+  ],
+  "platforms": [
+    "android",
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "hardware": [
+    "N/A",
+    "intel",
+    "arm"
+  ],
+  "provides": {
+    "functions": [],
+    "events": [],
+    "variables": [],
+    "functionalities": []
+  },
+  "requires": {
+    "hal": [
+      "archive",
+      "crypto",
+      "event",
+      "flash",
+      "http",
+      "kv",
+      "log",
+      "msg",
+      "socket",
+      "video",
+      "xprs"
+    ],
+    "events": [],
+    "libraries": [],
+    "variables": []
+  },
+  "replaces": [
+    "tools.xprs.firmwares",
+    "tools.xprs.things"
+  ]
+}

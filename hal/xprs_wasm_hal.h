@@ -56,6 +56,23 @@ uint32_t hal_platform(char *buf, uint32_t buf_len);
 __attribute__((import_module("hal"), import_name("identity")))
 uint32_t hal_identity(char *buf, uint32_t buf_len);
 
+/* The callsign of this device's own station (its `X3`, docs/architecture.md
+ * "The device and its people"), written into buf: the station the profiles
+ * on this device own, and the one a `t:command` is addressed to when the
+ * device itself is being set up. Returns bytes written; 0 when the device has
+ * no station of its own beside the profile (a headless station IS its
+ * profile) or it is not made yet. */
+__attribute__((import_module("hal"), import_name("identity_device")))
+uint32_t hal_identity_device(char *buf, uint32_t buf_len);
+
+/* The stations the active profile owns, by each station's own signed word
+ * (XPRS.md 11.9; the core believes a verified `owner:` naming us and nothing
+ * else), as a JSON array of callsigns: ["X3RLY7","X2CARD"]. They are owned
+ * wherever they are, heard or not. Returns bytes written, 0 for none, -2
+ * when out_cap is too small. */
+__attribute__((import_module("hal"), import_name("xprs_owned")))
+int32_t hal_xprs_owned(char *out, uint32_t out_cap);
+
 /* This device's public key — the active profile's Nostr public key in bech32
  * form ("npub1..."), written into buf. Returns bytes written (0 if none).
  * Lets a wapp publish its identity key so peers can map callsign -> pubkey

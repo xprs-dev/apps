@@ -13,11 +13,11 @@
   into the media store as a token, with the same preview a picked file gets.
   No temporary file needed.
 - **`sdk/wapp_ai.h`**: asking the person's AI from any wapp (`ai.chat`).
-- **`fw_ver_cmp` in `firmwares/wire.c`**: orders firmware versions the way
+- **`dv_ver_cmp` in `devices/wire.c`**: orders firmware versions the way
   people mean them (0.10.0 after 0.9.1, 0.6.0-beta.9 before 0.6.0). Lift it
   into the SDK the next time another wapp compares versions.
 - **`det_begin` / `det_section` / `det_row` / `det_end` in
-  `firmwares/main.c`**: a `$type:"details"` field as titled sections of
+  `devices/stations.c`**: a `$type:"details"` field as titled sections of
   label/value rows, leaving out a row with no value instead of printing "?".
   The shape every "what is known about X" screen wants; candidate for the SDK.
 - **`ui.callsign.pick` {field, prefix, length}**: any wapp can ask the
@@ -30,7 +30,23 @@
   arrows (Chat's new group).
 - **`screen_closed`**: the host sends it when the back arrow or the back
   gesture closes a panel. A wapp with nested panels reopens the parent there
-  (Firmwares: WiFi -> Station -> list) instead of adding a Back button.
+  (Devices: WiFi -> Station -> list) instead of adding a Back button.
+- **Two wapps in one, `devices/main.c` + `devices.h`**: how Firmwares and
+  Things became one wapp without rewriting either. A wapp has one inbox and
+  one event queue, so a small shell reads both and hands each command and
+  event to the half it belongs to; `dv_sub(who, topic, want)` holds a
+  subscription while either half wants it (one half letting go must not
+  silence the other); each half writes its list sections with no envelope
+  (`st_sections`, `th_sections`) and the shell draws the one list. Reuse the
+  shape the next time two wapps merge.
+- **Testing one half of a merged wapp, `devices/tests/native/`**: the real
+  shell and one real half are linked against a stub of the other half
+  (`stub_things.c`, `stub_stations.c`), so each suite keeps its own mock HAL.
+- **`devices/wire.c` (`dv_*`)**: the one copy of the no-libc strings, wire
+  field reader, small JSON reader, base64 and the 11.9/11.10 command
+  builders that Firmwares and Things each carried. Candidate for the SDK.
+- **`hal_identity_device`**: this device's own station callsign (its `X3`),
+  for a wapp that lists or administers the device it runs on.
 - **`sdk/wapp_stations.c` / `.h` (`wst_*`): every XPRS station on a map and
   in a list**, the portal's map (portal/page/chat_page.html `mapStations`,
   `mapPos`, `mapDraw`, `mapList`, `mapChips`) for wapps. Check-in and Mesh
