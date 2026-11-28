@@ -749,16 +749,16 @@ static void t_edits(void){
   mock_set_time(1700000200);
   cap_clear();
   edit_cmd(A,"rooms_unsend","X1BOBB",mid,0);
-  CHECK(cap_contains("\"deleted\":true"));
+  CHECK(cap_contains("ui.convo.remove"));
   cap_clear(); pump(B);
   /* The sim restarts a node each time it is driven, and a restart restates the
    * rail as it was; what counts is the LAST row stated, after the withdrawal. */
   { const char* last=0;
     for(int i=cap_n()-1;i>=0 && !last;i--)
       if(strstr(cap_nth(i),"ui.convo.upsert") && strstr(cap_nth(i),"\"id\":\"X1ANNA\"")) last=cap_nth(i);
-    CHECK(cap_contains("\"deleted\":true") && last && !strstr(last,"meet at")); }
+    CHECK(cap_contains("ui.convo.remove") && last && !strstr(last,"meet at")); }
   cap_clear(); open_room(B,"X1ANNA");
-  CHECK(cap_contains("\"deleted\":true") && !cap_contains("meet at six") && !cap_contains("meet at seven"));
+  CHECK(cap_contains("ui.convo.remove") && !cap_contains("meet at six") && !cap_contains("meet at seven"));
 }
 
 static void t_moderation(void){
@@ -807,10 +807,10 @@ static void t_moderation(void){
   mock_set_time(1700000300);
   cap_clear();
   edit_cmd(A,"rooms_unsend","#X5SIMG",mid,0);
-  CHECK(cap_contains("\"deleted\":true"));
+  CHECK(cap_contains("ui.convo.remove"));
   cap_clear(); pump(C);
   cap_clear(); open_room(C,"#X5SIMG");
-  CHECK(cap_contains("\"deleted\":true") && !cap_contains("912 345 678") && !cap_contains("number removed"));
+  CHECK(cap_contains("ui.convo.remove") && !cap_contains("912 345 678") && !cap_contains("number removed"));
   (void)A;
 }
 

@@ -468,8 +468,14 @@ static void destroy_text(int h, const char *mid) {
   db_exec(h, "DELETE FROM versions WHERE root=? AND kind IN (0,2)", pj_done(&p));
 }
 
-/* What an already-drawn bubble should now show. */
+static void emit_remove(const char *id, const char *key);
+
+/* What an already-drawn bubble should now show. A withdrawn or removed
+ * message shows nothing: its bubble is taken away, not replaced by a line
+ * saying it was deleted (a room a moderator cleaned of spam was a column of
+ * those lines, which told the reader nothing). */
 static void emit_view(const char *room, const char *mid, const room_view_t *v) {
+  if (v->deleted) { emit_remove(room, mid); return; }
   static char m[1500];
   s_cpy(m, "{\"type\":\"ui.convo.edit\",\"id\":\"", sizeof(m)); jesc(m, sizeof(m), room);
   s_cat(m, "\",\"mid\":\"", sizeof(m)); jesc(m, sizeof(m), mid);
@@ -499,6 +505,8 @@ static void emit_msg(const char *id, const char *mid, const char *dir,
    * the words, the lock and the ticks of its newest version, and whether it
    * was edited and by whom. */
   if (v) {
+    /* Withdrawn or removed: no bubble, and one the host still holds goes. */
+    if (v->deleted) { emit_remove(id, mid); return; }
     body = v->text; enc = v->enc; rid = v->rid; status = v->status;
   }
   char t[8]; fmt_time_at(t, ts);

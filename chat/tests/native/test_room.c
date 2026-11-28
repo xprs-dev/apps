@@ -616,6 +616,17 @@ static const char *find_msg(const char *mid) {
   }
   return 0;
 }
+/* A withdrawn or removed message is taken off the screen: a ui.convo.remove
+ * naming it, after anything that drew it. */
+static int removed(const char *mid) {
+  char want[40]; snprintf(want, sizeof(want), "\"key\":\"%s\"", mid);
+  char drawn[40]; snprintf(drawn, sizeof(drawn), "\"mid\":\"%s\"", mid);
+  int gone = 0;
+  for (int i = 0; i < cap_n(); i++) { const char *m = cap_nth(i);
+    if (strstr(m, "ui.convo.remove") && strstr(m, want)) gone = 1;
+    else if ((strstr(m, "ui.convo.msg") || strstr(m, "ui.convo.edit")) && strstr(m, drawn)) gone = 0; }
+  return gone;
+}
 static void dm(const char *call, const char *id, const char *content, int sealed,
                const char *edit, const char *remove, const char *sig, long ts) {
   char row[1400];
@@ -714,14 +725,12 @@ TEST(a_withdrawal_destroys_the_text_of_every_version) {
   dm("X1PEER", "bbb222", "a different secret", 1, "aaa111", "", "verified", 1700000100);
   cap_clear();
   dm("X1PEER", "ddd444", "", 0, "", "aaa111", "verified", 1700000200);
-  { const char *m = cap_find("ui.convo.edit");
-    CHECK(m && strstr(m, "\"deleted\":true") && strstr(m, "\"text\":\"\"")); }
-  /* Gone from the store too: opening draws a place that says so, no words. */
+  CHECK(removed("aaa111") && !cap_contains("\"deleted\":true"));
+  /* Gone from the store too: opening draws nothing of it, no words. */
   cap_clear();
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"X1PEER\"}");
   module_handle_event();
-  { const char *m = find_msg("aaa111");
-    CHECK(m && strstr(m, "\"deleted\":true") && !strstr(m, "a secret") && !strstr(m, "different secret")); }
+  CHECK(!find_msg("aaa111") && removed("aaa111") && !cap_contains("a secret"));
   cap_clear();
   inbox_set("{\"command\":\"rooms_history\",\"rooms_convo\":\"X1PEER\",\"rooms_mid\":\"aaa111\"}");
   module_handle_event();
@@ -729,7 +738,7 @@ TEST(a_withdrawal_destroys_the_text_of_every_version) {
   /* And it cannot be withdrawn: a later correction brings nothing back. */
   cap_clear();
   dm("X1PEER", "eee555", "back again", 0, "aaa111", "", "verified", 1700000300);
-  CHECK(!cap_contains("back again\"") || cap_contains("\"deleted\":true"));
+  CHECK(!cap_contains("back again\"") || removed("aaa111"));
 }
 
 TEST(a_withdrawal_must_be_verified_and_from_the_author) {
@@ -746,8 +755,7 @@ TEST(a_withdrawal_must_be_verified_and_from_the_author) {
   cap_clear();
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#LOCAL\"}");
   module_handle_event();
-  { const char *m = find_msg("aaa111");
-    CHECK(m && strstr(m, "\"deleted\":true") && !strstr(m, "stays")); }
+  CHECK(!find_msg("aaa111") && removed("aaa111") && !cap_contains("stays"));
 }
 
 TEST(we_correct_and_withdraw_our_own_messages) {
@@ -775,7 +783,7 @@ TEST(we_correct_and_withdraw_our_own_messages) {
   inbox_set(cmd); module_handle_event();
   { char want[80]; snprintf(want, sizeof(want), "X1PEER|%s", mid);
     CHECK(strcmp(mock_withdraw_ask(), want) == 0); }
-  CHECK(cap_contains("\"deleted\":true"));
+  CHECK(cap_contains("ui.convo.remove"));
 }
 
 TEST(somebody_elses_message_in_a_1to1_is_not_ours_to_correct) {
@@ -818,7 +826,7 @@ TEST(a_group_post_is_corrected_with_a_wire_the_core_signs) {
   inbox_set(cmd); module_handle_event();
   { const char *w = mock_last_wire();
     CHECK(w && strstr(w, "remove:message") && strstr(w, "r:") && !strstr(w, "m:")); }
-  CHECK(cap_contains("\"deleted\":true"));
+  CHECK(cap_contains("ui.convo.remove"));
   mock_set_groups("[]");
 }
 
@@ -877,14 +885,7 @@ static int row_says(const char *room, const char *what) {
     if (strstr(m, "ui.convo.upsert") && strstr(m, want) && strstr(m, what)) return 1; }
   return 0;
 }
-static int bubble_deleted(const char *mid) {
-  char want[40]; snprintf(want, sizeof(want), "\"mid\":\"%s\"", mid);
-  int gone = 0;
-  for (int i = 0; i < cap_n(); i++) { const char *m = cap_nth(i);
-    if (strstr(m, want) && (strstr(m, "ui.convo.msg") || strstr(m, "ui.convo.edit")))
-      gone = strstr(m, "\"deleted\":true") != 0; }
-  return gone;
-}
+static int bubble_deleted(const char *mid) { return removed(mid); }
 TEST(a_public_rooms_moderator_removes_and_everybody_sees_it_go) {
   fresh();
   mock_public_reset(0);
@@ -974,7 +975,8 @@ TEST(moderation_is_final_for_the_author_and_ranked) {
   module_handle_event();
   { int ok = 0;
     for (int i = 0; i < cap_n(); i++) { const char *m = cap_nth(i);
-      if (strstr(m, "ui.convo.msg") && strstr(m, "\"mid\":\"ppp222\"")) ok = strstr(m, "\"deleted\":true") && !strstr(m, "a moderator speaking"); }
+      (void)m; }
+    ok = removed("ppp222") && !cap_contains("a moderator speaking");
     CHECK(ok); }
   mock_set_groups("[]");
 }
@@ -997,7 +999,7 @@ TEST(a_voided_moderator_edit_brings_the_original_back_but_a_removal_stays_gone) 
   cap_clear();
   inbox_set("{\"command\":\"rooms_open\",\"rooms_convo\":\"#X5GRPA\"}");
   module_handle_event();
-  CHECK(cap_contains("\"deleted\":true"));
+  CHECK(cap_contains("ui.convo.remove"));
   mock_set_groups("[]");
 }
 
