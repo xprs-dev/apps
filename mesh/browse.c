@@ -107,6 +107,7 @@ static const char *kind_name(const char *k)
     if (al_eq(k, "user")) return "Person";
     if (al_eq(k, "station")) return "Station";
     if (al_eq(k, "device")) return "Device";
+    if (al_eq(k, "bot")) return "Bot";
     return "XPRS";
 }
 
