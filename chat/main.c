@@ -1297,6 +1297,9 @@ static void on_core_packet(const char *topic, const char *row) {
     jstr(row, "scope", scope, sizeof(scope));
     const char *xroom = jbool_def(row, "inRange", 1) ? xroom_of(scope) : 0;
     if (!xroom) return;
+    /* A hidden-text reply aired by an older build carries its reply marker
+     * in the words ("+432195 ..."): show the reply, not the marker. */
+    if (obf && !parent[0]) strip_reply6(m, parent);
     admit(xroom, id, "in", from, m, parent, bearer, auth, 0, ts, "", "", 0, obf, path);
     return;
   }
@@ -1313,9 +1316,6 @@ static void on_core_packet(const char *topic, const char *row) {
    * says, not a lock (XPRS.md 10.7). */
   /* Somebody outside the group asking to join (10.3): the core hands it only
    * to the group's admin and moderators. Kept as a request, not a post. */
-    /* A hidden-text reply aired by an older build carries its reply marker
-     * in the words ("+432195 ..."): show the reply, not the marker. */
-    if (obf && !parent[0]) strip_reply6(m, parent);
   if (closed && jbool(row, "request")) { join_request_note(gid, from, m, ts); return; }
   /* A post in the clear is public by its nature (10.7.1): anybody who opened
    * the group reads it. A private group's posts are sealed, and only its
