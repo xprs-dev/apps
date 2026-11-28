@@ -1,0 +1,1060 @@
+[
+ {
+  "$": "screen",
+  "name": "Devices",
+  "icon": "developer_board",
+  "children": [
+   {
+    "$": "field",
+    "name": "devices",
+    "$type": "people",
+    "empty_art": "media/art/stations.svg",
+    "empty_title": "Looking for devices",
+    "empty": "Stations and equipment on your WiFi, or near this device over Bluetooth, show up here. So do the stations you own, wherever they are.\n\nTo install XPRS on a new board, connect it with a USB cable.",
+    "layout": "headers"
+   },
+   {
+    "$": "field",
+    "name": "th_scan",
+    "$type": "details",
+    "empty": ""
+   },
+   {
+    "$": "action",
+    "name": "refresh",
+    "label": "Look again",
+    "icon": "refresh"
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "Station",
+  "icon": "memory",
+  "hidden": true,
+  "children": [
+   {
+    "$": "field",
+    "name": "now",
+    "$type": "details",
+    "empty": ""
+   },
+   {
+    "$": "action",
+    "name": "claim",
+    "label": "Claim",
+    "style": "primary",
+    "icon": "how_to_reg",
+    "tip": "Make it yours. The first owner to answer a fresh station keeps it."
+   },
+   {
+    "$": "action",
+    "name": "update",
+    "label": "Update firmware",
+    "style": "primary",
+    "icon": "system_update",
+    "confirm": true,
+    "confirm-label": "Update its firmware?",
+    "confirm-text": "It downloads the newest XPRS, checks its signature, restarts into it and says how it went. If the new one does not come up, it goes back to the old one by itself."
+   },
+   {
+    "$": "field",
+    "name": "info",
+    "$type": "details",
+    "empty": "",
+    "layout": "rows"
+   },
+   {
+    "$": "action",
+    "name": "open_wifi",
+    "label": "WiFi",
+    "icon": "wifi"
+   },
+   {
+    "$": "action",
+    "name": "open_name",
+    "label": "Settings",
+    "icon": "settings"
+   },
+   {
+    "$": "action",
+    "name": "open_identity",
+    "label": "Callsign",
+    "icon": "key"
+   },
+   {
+    "$": "action",
+    "name": "open_admins",
+    "label": "Administrators",
+    "icon": "group"
+   },
+   {
+    "$": "action",
+    "name": "open_stats",
+    "label": "Statistics",
+    "icon": "monitor_heart"
+   },
+   {
+    "$": "action",
+    "name": "open_answers",
+    "label": "History",
+    "icon": "history"
+   },
+   {
+    "$": "action",
+    "name": "forget",
+    "label": "Forget",
+    "style": "danger",
+    "icon": "delete",
+    "confirm": true,
+    "confirm-label": "Forget this station?",
+    "confirm-text": "It leaves the list. It is not changed, and it comes back if it is heard again."
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "Flash",
+  "icon": "usb",
+  "hidden": true,
+  "children": [
+   {
+    "$": "field",
+    "name": "fl_pic",
+    "$type": "image",
+    "shape": "wide",
+    "readonly": true,
+    "label": ""
+   },
+   {
+    "$": "field",
+    "name": "dev_now",
+    "$type": "details",
+    "empty": ""
+   },
+   {
+    "$": "field",
+    "name": "dev_hub",
+    "$type": "stats"
+   },
+   {
+    "$": "action",
+    "name": "flash_write",
+    "label": "Install XPRS",
+    "style": "primary",
+    "icon": "download",
+    "confirm": true,
+    "confirm-label": "Install XPRS on this board?",
+    "confirm-text": "Its firmware is replaced and checked. Keep the cable in until it says done."
+   },
+   {
+    "$": "action",
+    "name": "flash_cancel",
+    "label": "Stop",
+    "style": "danger",
+    "icon": "stop"
+   },
+   {
+    "$": "field",
+    "name": "fl_info",
+    "$type": "details",
+    "empty": "",
+    "layout": "rows"
+   },
+   {
+    "$": "field",
+    "name": "fl_adv",
+    "$type": "bool",
+    "label": "Advanced options",
+    "default": false,
+    "apply": "fl_adv"
+   },
+   {
+    "$": "group",
+    "name": "fl_advanced",
+    "children": [
+     {
+      "$": "action",
+      "name": "flash_choose",
+      "label": "Choose the board",
+      "icon": "list"
+     },
+     {
+      "$": "action",
+      "name": "fl_callsign",
+      "label": "Choose a callsign",
+      "icon": "key"
+     },
+     {
+      "$": "action",
+      "name": "fl_callsign_clear",
+      "label": "Let the board make one",
+      "icon": "close"
+     },
+     {
+      "$": "field",
+      "name": "wipe",
+      "$type": "bool",
+      "label": "Erase its settings",
+      "default": false,
+      "apply": "fl_wipe",
+      "tip": "Off keeps the station's key, owner and WiFi. On makes it a new station."
+     },
+     {
+      "$": "action",
+      "name": "flash_identify",
+      "label": "Identify it again",
+      "icon": "search"
+     }
+    ],
+    "label": ""
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "Firmware",
+  "icon": "memory",
+  "hidden": true,
+  "tip": "Pick your board by its picture. The ones that fit its chip come first.",
+  "children": [
+   {
+    "$": "field",
+    "name": "flash_pick",
+    "$type": "people",
+    "empty": "No catalogue yet. Go back and tap Look again."
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "WiFi",
+  "icon": "wifi",
+  "hidden": true,
+  "tip": "The password is sealed to the station's key before it leaves this phone and kept nowhere on it. The station keeps a network only once it has joined it, remembers up to ten and joins whichever is in range; none can be removed from here, only on the station's own screen.",
+  "children": [
+   {
+    "$": "group",
+    "name": "Network",
+    "children": [
+     {
+      "$": "field",
+      "name": "ssid",
+      "$type": "string",
+      "label": "Network",
+      "hint": "its name"
+     },
+     {
+      "$": "field",
+      "name": "wifi_pass",
+      "$type": "secret",
+      "label": "Password",
+      "hint": "empty for an open network"
+     }
+    ]
+   },
+   {
+    "$": "action",
+    "name": "wifi_apply",
+    "label": "Join",
+    "style": "primary",
+    "icon": "wifi"
+   },
+   {
+    "$": "action",
+    "name": "wifi_off",
+    "label": "Leave WiFi",
+    "icon": "power",
+    "confirm": true,
+    "confirm-label": "Leave the network?",
+    "confirm-text": "The station drops its WiFi and stays reachable over Bluetooth and its own hotspot."
+   },
+   {
+    "$": "field",
+    "name": "wifi_now",
+    "$type": "details",
+    "empty": ""
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "Settings",
+  "icon": "settings",
+  "hidden": true,
+  "children": [
+   {
+    "$": "group",
+    "name": "Station",
+    "children": [
+     {
+      "$": "field",
+      "name": "nick",
+      "$type": "string",
+      "label": "Name",
+      "hint": "roof-north",
+      "max": 16
+     },
+     {
+      "$": "field",
+      "name": "zone",
+      "$type": "enum",
+      "label": "Time zone",
+      "default": "auto",
+      "children": [
+       {
+        "$": "option",
+        "name": "auto",
+        "label": "Auto (looked up online)"
+       },
+       {
+        "$": "option",
+        "name": "-12:00",
+        "label": "-12:00"
+       },
+       {
+        "$": "option",
+        "name": "-11:00",
+        "label": "-11:00"
+       },
+       {
+        "$": "option",
+        "name": "-10:00",
+        "label": "-10:00"
+       },
+       {
+        "$": "option",
+        "name": "-09:00",
+        "label": "-09:00"
+       },
+       {
+        "$": "option",
+        "name": "-08:00",
+        "label": "-08:00"
+       },
+       {
+        "$": "option",
+        "name": "-07:00",
+        "label": "-07:00"
+       },
+       {
+        "$": "option",
+        "name": "-06:00",
+        "label": "-06:00"
+       },
+       {
+        "$": "option",
+        "name": "-05:00",
+        "label": "-05:00"
+       },
+       {
+        "$": "option",
+        "name": "-04:00",
+        "label": "-04:00"
+       },
+       {
+        "$": "option",
+        "name": "-03:00",
+        "label": "-03:00"
+       },
+       {
+        "$": "option",
+        "name": "-02:00",
+        "label": "-02:00"
+       },
+       {
+        "$": "option",
+        "name": "-01:00",
+        "label": "-01:00"
+       },
+       {
+        "$": "option",
+        "name": "+00:00",
+        "label": "+00:00 UTC"
+       },
+       {
+        "$": "option",
+        "name": "+01:00",
+        "label": "+01:00"
+       },
+       {
+        "$": "option",
+        "name": "+02:00",
+        "label": "+02:00"
+       },
+       {
+        "$": "option",
+        "name": "+03:00",
+        "label": "+03:00"
+       },
+       {
+        "$": "option",
+        "name": "+04:00",
+        "label": "+04:00"
+       },
+       {
+        "$": "option",
+        "name": "+05:00",
+        "label": "+05:00"
+       },
+       {
+        "$": "option",
+        "name": "+05:30",
+        "label": "+05:30"
+       },
+       {
+        "$": "option",
+        "name": "+06:00",
+        "label": "+06:00"
+       },
+       {
+        "$": "option",
+        "name": "+07:00",
+        "label": "+07:00"
+       },
+       {
+        "$": "option",
+        "name": "+08:00",
+        "label": "+08:00"
+       },
+       {
+        "$": "option",
+        "name": "+09:00",
+        "label": "+09:00"
+       },
+       {
+        "$": "option",
+        "name": "+10:00",
+        "label": "+10:00"
+       },
+       {
+        "$": "option",
+        "name": "+11:00",
+        "label": "+11:00"
+       },
+       {
+        "$": "option",
+        "name": "+12:00",
+        "label": "+12:00"
+       },
+       {
+        "$": "option",
+        "name": "+13:00",
+        "label": "+13:00"
+       },
+       {
+        "$": "option",
+        "name": "+14:00",
+        "label": "+14:00"
+       }
+      ]
+     },
+     {
+      "$": "field",
+      "name": "hotspot",
+      "$type": "enum",
+      "label": "Hotspot",
+      "default": "same",
+      "children": [
+       {
+        "$": "option",
+        "name": "same",
+        "label": "Keep"
+       },
+       {
+        "$": "option",
+        "name": "on",
+        "label": "On"
+       },
+       {
+        "$": "option",
+        "name": "off",
+        "label": "Off"
+       }
+      ]
+     },
+     {
+      "$": "field",
+      "name": "lora",
+      "$type": "enum",
+      "label": "LoRa",
+      "default": "same",
+      "hint": "taken at once, the station stays up",
+      "children": [
+       {
+        "$": "option",
+        "name": "same",
+        "label": "Keep"
+       },
+       {
+        "$": "option",
+        "name": "xprs",
+        "label": "XPRS"
+       },
+       {
+        "$": "option",
+        "name": "meshtastic",
+        "label": "XPRS+Meshtastic"
+       },
+       {
+        "$": "option",
+        "name": "meshcore",
+        "label": "XPRS+MeshCore"
+       }
+      ]
+     },
+     {
+      "$": "field",
+      "name": "freq",
+      "$type": "text",
+      "label": "Channel",
+      "hint": "433.900MHz, or preset for the region's own",
+      "placeholder": "leave empty to keep it"
+     }
+    ]
+   },
+   {
+    "$": "action",
+    "name": "station_apply",
+    "label": "Save",
+    "style": "primary",
+    "icon": "save"
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "Callsign",
+  "icon": "key",
+  "hidden": true,
+  "tip": "A station's callsign comes from its key: X3 and the first letters of the key. A new key is a new callsign. A licensed callsign replaces it on the air and keeps the key.",
+  "children": [
+   {
+    "$": "action",
+    "name": "pick_callsign",
+    "label": "Choose a callsign",
+    "style": "primary",
+    "icon": "search",
+    "tip": "Search for a key whose callsign has the letters you like, and give it to the station."
+   },
+   {
+    "$": "group",
+    "name": "Key",
+    "children": [
+     {
+      "$": "field",
+      "name": "identity",
+      "$type": "enum",
+      "label": "Key",
+      "default": "new",
+      "children": [
+       {
+        "$": "option",
+        "name": "new",
+        "label": "New key"
+       },
+       {
+        "$": "option",
+        "name": "import",
+        "label": "Import nsec"
+       }
+      ]
+     },
+     {
+      "$": "field",
+      "name": "nsec",
+      "$type": "secret",
+      "label": "nsec",
+      "hint": "nsec1..., sealed to the station"
+     }
+    ]
+   },
+   {
+    "$": "action",
+    "name": "identity_apply",
+    "label": "Apply",
+    "style": "primary",
+    "icon": "key",
+    "confirm": true,
+    "confirm-label": "Change its key?",
+    "confirm-text": "The station restarts under a new callsign. Anyone who knew the old one has to learn the new one."
+   },
+   {
+    "$": "group",
+    "name": "Licensed callsign",
+    "children": [
+     {
+      "$": "field",
+      "name": "call",
+      "$type": "string",
+      "label": "Callsign",
+      "hint": "CT1ABC",
+      "max": 11
+     }
+    ]
+   },
+   {
+    "$": "action",
+    "name": "call_apply",
+    "label": "Use this callsign",
+    "icon": "cell_tower",
+    "confirm": true,
+    "confirm-label": "Transmit under this callsign?",
+    "confirm-text": "The station restarts and transmits under it, with the same key. Only a callsign issued to you may be used on amateur bands."
+   },
+   {
+    "$": "action",
+    "name": "call_derived",
+    "label": "Use derived callsign",
+    "icon": "key",
+    "confirm": true,
+    "confirm-label": "Go back to its derived callsign?",
+    "confirm-text": "The station restarts under the callsign its key derives."
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "Statistics",
+  "icon": "monitor_heart",
+  "hidden": true,
+  "children": [
+   {
+    "$": "group",
+    "name": "Station",
+    "children": [
+     {
+      "$": "field",
+      "name": "st_station",
+      "$type": "stats"
+     },
+     {
+      "$": "field",
+      "name": "st_hears",
+      "$type": "details",
+      "empty": ""
+     }
+    ]
+   },
+   {
+    "$": "group",
+    "name": "Policy",
+    "children": [
+     {
+      "$": "field",
+      "name": "st_policy",
+      "$type": "stats"
+     }
+    ]
+   },
+   {
+    "$": "group",
+    "name": "Diagnostics",
+    "children": [
+     {
+      "$": "field",
+      "name": "st_diag",
+      "$type": "stats"
+     }
+    ]
+   },
+   {
+    "$": "action",
+    "name": "stats",
+    "label": "Refresh",
+    "style": "primary",
+    "icon": "refresh"
+   },
+   {
+    "$": "action",
+    "name": "crash",
+    "label": "Crash report",
+    "icon": "bug_report"
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "History",
+  "icon": "history",
+  "hidden": true,
+  "children": [
+   {
+    "$": "field",
+    "name": "log",
+    "$type": "log",
+    "label": "What the station said"
+   },
+   {
+    "$": "action",
+    "name": "log_clear",
+    "label": "Clear",
+    "icon": "delete"
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "Thing",
+  "icon": "monitor_heart",
+  "hidden": true,
+  "children": [
+   {
+    "$": "field",
+    "name": "th_pic",
+    "$type": "image",
+    "shape": "wide",
+    "readonly": true,
+    "label": ""
+   },
+   {
+    "$": "action",
+    "name": "live",
+    "label": "Watch live",
+    "style": "primary",
+    "icon": "videocam"
+   },
+   {
+    "$": "action",
+    "name": "unlive",
+    "label": "Stop watching",
+    "icon": "stop"
+   },
+   {
+    "$": "action",
+    "name": "snap",
+    "label": "Picture now",
+    "icon": "image"
+   },
+   {
+    "$": "field",
+    "name": "th_picnote",
+    "$type": "details",
+    "empty": ""
+   },
+   {
+    "$": "field",
+    "name": "th_conn",
+    "$type": "details",
+    "empty": ""
+   },
+   {
+    "$": "action",
+    "name": "connect",
+    "label": "Connect",
+    "style": "primary",
+    "icon": "link"
+   },
+   {
+    "$": "field",
+    "name": "th_now",
+    "$type": "stats"
+   },
+   {
+    "$": "action",
+    "name": "watch",
+    "label": "Warn when it rings",
+    "style": "primary",
+    "icon": "campaign"
+   },
+   {
+    "$": "action",
+    "name": "unwatch",
+    "label": "Stop warning",
+    "icon": "campaign"
+   },
+   {
+    "$": "action",
+    "name": "watch_move",
+    "label": "Warn when it sees movement",
+    "icon": "radar"
+   },
+   {
+    "$": "action",
+    "name": "unwatch_move",
+    "label": "Stop warning about movement",
+    "icon": "radar"
+   },
+   {
+    "$": "field",
+    "name": "th_events",
+    "$type": "details",
+    "empty": "Nothing reported yet."
+   },
+   {
+    "$": "action",
+    "name": "th_more",
+    "label": "Details and settings",
+    "icon": "settings"
+   },
+   {
+    "$": "action",
+    "name": "th_less",
+    "label": "Hide details",
+    "icon": "expand_less"
+   },
+   {
+    "$": "action",
+    "name": "disconnect",
+    "label": "Disconnect",
+    "icon": "link_off"
+   },
+   {
+    "$": "action",
+    "name": "pin",
+    "label": "Pin",
+    "style": "primary",
+    "icon": "star"
+   },
+   {
+    "$": "action",
+    "name": "unpin",
+    "label": "Unpin",
+    "icon": "star"
+   },
+   {
+    "$": "group",
+    "name": "About",
+    "children": [
+     {
+      "$": "field",
+      "name": "th_about",
+      "$type": "details",
+      "empty": ""
+     },
+     {
+      "$": "field",
+      "name": "th_totals",
+      "$type": "details",
+      "empty": ""
+     },
+     {
+      "$": "field",
+      "name": "th_can",
+      "$type": "details",
+      "empty": ""
+     }
+    ]
+   },
+   {
+    "$": "group",
+    "name": "Settings",
+    "children": [
+     {
+      "$": "field",
+      "name": "th_name",
+      "$type": "string",
+      "label": "Name on this device",
+      "hint": "front door, garage, shed - what you call it"
+     },
+     {
+      "$": "field",
+      "name": "th_class",
+      "$type": "enum",
+      "label": "Treat it as",
+      "default": "auto",
+      "children": [
+       {
+        "$": "option",
+        "name": "auto",
+        "label": "Work it out from what it says"
+       },
+       {
+        "$": "option",
+        "name": "doorbell",
+        "label": "Doorbell"
+       },
+       {
+        "$": "option",
+        "name": "camera",
+        "label": "Camera"
+       },
+       {
+        "$": "option",
+        "name": "motion",
+        "label": "Movement sensor"
+       },
+       {
+        "$": "option",
+        "name": "lock",
+        "label": "Lock"
+       },
+       {
+        "$": "option",
+        "name": "cover",
+        "label": "Gate or valve"
+       },
+       {
+        "$": "option",
+        "name": "thermostat",
+        "label": "Thermostat"
+       },
+       {
+        "$": "option",
+        "name": "meter",
+        "label": "Meter"
+       },
+       {
+        "$": "option",
+        "name": "switch",
+        "label": "Switch"
+       },
+       {
+        "$": "option",
+        "name": "sensor",
+        "label": "Sensor"
+       },
+       {
+        "$": "option",
+        "name": "thing",
+        "label": "Device"
+       }
+      ]
+     },
+     {
+      "$": "field",
+      "name": "th_url",
+      "$type": "string",
+      "label": "Picture address",
+      "hint": "http://192.168.1.9/door/snapshot.jpg"
+     },
+     {
+      "$": "field",
+      "name": "th_vendor",
+      "$type": "enum",
+      "label": "How to reach it",
+      "default": "link",
+      "children": [
+       {
+        "$": "option",
+        "name": "link",
+        "label": "Fetch the address above"
+       },
+       {
+        "$": "option",
+        "name": "reolink",
+        "label": "Reolink camera (log in to it)"
+       }
+      ]
+     },
+     {
+      "$": "field",
+      "name": "th_host",
+      "$type": "string",
+      "label": "Address on the network",
+      "hint": "192.168.1.9"
+     },
+     {
+      "$": "field",
+      "name": "th_user",
+      "$type": "string",
+      "label": "User",
+      "hint": "admin"
+     },
+     {
+      "$": "field",
+      "name": "th_pass",
+      "$type": "secret",
+      "label": "Password",
+      "hint": "kept sealed to this device; empty leaves it unchanged"
+     },
+     {
+      "$": "field",
+      "name": "th_path",
+      "$type": "string",
+      "label": "Picture path",
+      "hint": "/door/snapshot.jpg"
+     },
+     {
+      "$": "action",
+      "name": "th_apply",
+      "label": "Save",
+      "style": "primary",
+      "icon": "check"
+     },
+     {
+      "$": "action",
+      "name": "th_forget",
+      "label": "Work it out again",
+      "icon": "refresh"
+     }
+    ]
+   },
+   {
+    "$": "action",
+    "name": "back",
+    "label": "Back",
+    "icon": "close"
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "Live",
+  "icon": "videocam",
+  "hidden": true,
+  "children": [
+   {
+    "$": "group",
+    "name": "live-surface",
+    "$type": "video",
+    "controls": "none",
+    "fit": "contain"
+   }
+  ]
+ },
+ {
+  "$": "screen",
+  "name": "Administrators",
+  "icon": "group",
+  "hidden": true,
+  "tip": "The people who may change this station, by callsign. Each of them can do everything here, from the same room or from anywhere on the internet. A station has at most four.",
+  "children": [
+   {
+    "$": "field",
+    "name": "owners",
+    "$type": "string",
+    "label": "Administrators",
+    "hint": "X1ABCD, X1EFGH",
+    "max": 48
+   },
+   {
+    "$": "field",
+    "name": "backups",
+    "$type": "enum",
+    "label": "Backups for other people",
+    "default": "same",
+    "children": [
+     {
+      "$": "option",
+      "name": "same",
+      "label": "Leave as it is"
+     },
+     {
+      "$": "option",
+      "name": "on",
+      "label": "Let people choose it for backups"
+     },
+     {
+      "$": "option",
+      "name": "off",
+      "label": "Do not offer backups"
+     }
+    ]
+   },
+   {
+    "$": "action",
+    "name": "admins_apply",
+    "label": "Save",
+    "style": "primary",
+    "icon": "save"
+   },
+   {
+    "$": "field",
+    "name": "admins_now",
+    "$type": "details",
+    "empty": ""
+   }
+  ]
+ }
+]

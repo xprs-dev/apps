@@ -210,12 +210,12 @@ not restored on the next open. The keyboard is told not to suggest or learn
 it, there is no copy button, and an eye shows it on request. The wapp's half
 of the bargain is to use it at once (seal it with `hal_encrypt`, say), clear
 its own buffer, and send `ui.field.set` with `""` to empty the box. The
-Firmwares wapp does exactly that with a WiFi password and an nsec.
+Devices wapp does exactly that with a WiFi password and an nsec.
 
 **A field or an action can be hidden by the wapp.** Setting `<name>__hidden`
 to `true` with `ui.field.set` leaves that field or button off the screen
 until it is set to `false`, the way `<name>__readonly` disables a field.
-What a screen offers then follows the state it shows: the Firmwares station
+What a screen offers then follows the state it shows: the Devices station
 screen shows Claim only while nobody owns the station, and WiFi, Name and
 Identity only once it is yours. A run of actions that are all hidden takes
 no space at all.
@@ -1338,8 +1338,8 @@ once and redraws; it never polls.
 Device ids are the platform's (`/dev/ttyACM1`, Android's
 `/dev/bus/usb/001/004`); board ids are the catalogue's (`tdongle-s3`).
 `supported` is false where there is no USB serial (the web build) and the
-wapp says so instead of offering buttons. The Firmwares wapp is the
-reference: `firmwares/main.c`, the Flash, Device and Board screens.
+wapp says so instead of offering buttons. The Devices wapp is the
+reference: `devices/stations.c`, the Flash, Device and Board screens.
 
 ---
 
