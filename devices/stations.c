@@ -64,7 +64,7 @@
 #include "wire.h"
 #include "devices.h"
 
-#define ST_MAX       16
+#define ST_MAX       32
 
 typedef struct {
     char call[12];
@@ -136,9 +136,11 @@ static void forget_wanted(void)
 #define g_buf   dv_buf
 static char g_out[8192];
 static char g_host[1536];         /* one hal_xprs_station answer */
-static char g_heard[16384];       /* one hal_xprs_stations answer: a busy
-                                   * place with Meshtastic and MeshCore nodes
-                                   * heard this hour is well past 4 KB */
+static char g_heard[65536];       /* one hal_xprs_stations answer. A busy place
+                                   * is far past 16 KB: with 71 stations heard
+                                   * (bench, 2026-11-28) the answer did not
+                                   * fit, and a list that does not fit found
+                                   * NO station at all, yours included. */
 /* Stations that said they are somebody else's, this session: not asked
  * again every time the page opens. */
 static char g_notmine[8][12];
@@ -832,6 +834,11 @@ const char *st_sections(int part)
                    : pass == 1 ? s->mine
                    : (s->theirs && !s->mine && !s->unowned);
             if (!in) continue;
+            /* A station that asked for an owner an hour ago and has not been
+             * heard since is not waiting here any more: it was claimed, or it
+             * left. It is kept (it comes back if it asks again), not shown. */
+            if (pass == 0 && !host_facts(s) &&
+                (!s->heard_ms || hal_time_ms() - s->heard_ms > 3600000ULL)) continue;
             if (first) {
                 if (any) dv_cat(g_out, ",", sizeof g_out);
                 dv_cat(g_out, titles[pass], sizeof g_out);
