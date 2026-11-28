@@ -875,7 +875,7 @@ static void update_on(const char *call, int on)
     hal_bots(g_io, b_len(g_io), 0, 0);
 }
 
-static void save_bot(const char *call)
+static void save_bot(const char *call, int quiet)
 {
     static char nick[40], about[120], how[12], who[12], reach[12], list[160], ai[8];
     j_get(g_msg, "b_nick", nick, sizeof nick);
@@ -917,8 +917,8 @@ static void save_bot(const char *call)
     b_cat(g_io, "\",\"reach\":\"", sizeof g_io);
     b_cat(g_io, reach, sizeof g_io);
     b_cat(g_io, "\"}", sizeof g_io);
-    if (hal_bots(g_io, b_len(g_io), 0, 0) == 0) snack("Saved");
-    else snack("Could not save");
+    int ok = hal_bots(g_io, b_len(g_io), 0, 0) == 0;
+    if (!quiet) snack(ok ? "Saved" : "Could not save");
 }
 
 static void on_command(void)
@@ -944,7 +944,14 @@ static void on_command(void)
     }
     if (b_eq(cmd, "screen_closed") || b_eq(cmd, "back")) {
         /* The picker closing leaves the bot's page open under it. */
-        if (g_picking) { g_picking = 0; if (g_sel[0]) field_str("b_list", g_chosen); return; }
+        if (g_picking) {
+            g_picking = 0;
+            if (g_sel[0] && bot_of(g_sel)) {
+                open_bot(g_sel);
+                field_str("b_list", g_chosen);
+            }
+            return;
+        }
         if (b_eq(cmd, "back")) say("{\"type\":\"ui.screen.close\"}");
         g_sel[0] = 0;
         draw_list();
@@ -956,6 +963,9 @@ static void on_command(void)
         static char list[160];
         j_get(g_msg, "b_list", list, sizeof list);
         tidy_calls(g_chosen, sizeof g_chosen, list);
+        /* The host shows one screen over the list at a time, so the picker
+         * takes the bot page's place: keep what was typed there first. */
+        save_bot(g_sel, 1);
         g_picking = 1;
         say("{\"type\":\"ui.screen.open\",\"name\":\"People\",\"title\":\"Who it is there for\"}");
         pick_load("");
@@ -978,14 +988,14 @@ static void on_command(void)
         return;
     }
     if (b_eq(cmd, "pick_done")) {
-        g_picking = 0;
+        /* The host answers the close with `screen_closed`, which is what
+         * ends the picking: the bot's page stays selected under it. */
         say("{\"type\":\"ui.screen.close\"}");
-        field_str("b_list", g_chosen);
         return;
     }
     if (b_eq(cmd, "b_start")) { update_on(g_sel, 1); return; }
     if (b_eq(cmd, "b_stop")) { update_on(g_sel, 0); return; }
-    if (b_eq(cmd, "b_save")) { save_bot(g_sel); return; }
+    if (b_eq(cmd, "b_save")) { save_bot(g_sel, 0); return; }
     if (b_eq(cmd, "b_delete")) {
         b_cpy(g_io, "{\"op\":\"remove\",\"call\":\"", sizeof g_io);
         b_cat(g_io, g_sel, sizeof g_io);

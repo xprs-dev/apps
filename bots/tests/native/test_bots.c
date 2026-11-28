@@ -280,7 +280,8 @@ int main(void)
     g_ui_n = 0;
     message("{\"command\":\"pick_done\"}");
     message("{\"command\":\"screen_closed\"}");
-    CHECK(ui_has("\"field\":\"b_list\",\"value\":\"X1RUI9\""), "Done leaves the chosen people in the bot's page");
+    CHECK(ui_has("\"ui.screen.open\",\"name\":\"Bot\"") && ui_has("\"field\":\"b_list\",\"value\":\"X1RUI9\""),
+          "Done returns to the bot's page with the chosen people in it");
     message("{\"command\":\"b_save\",\"fields\":{\"b_nick\":\"Weather\",\"b_about\":\"\","
             "\"b_rules\":\"forecast = Rain from 16:00\",\"b_hello\":\"\",\"b_ai\":true,"
             "\"b_prompt\":\"\",\"b_allow\":\"owner\",\"b_talk\":\"list\",\"b_reach\":\"global\",\"b_list\":\"X1RUI9\"}}");
